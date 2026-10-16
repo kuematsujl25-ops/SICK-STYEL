@@ -20,7 +20,8 @@
     "migrate:export:d1": "node scripts/export-d1.js",
     "admin:create:remote": "node scripts/create-admin-remote.js",
     "test:node": "node --test tests/app.test.js tests/instagram.test.js tests/amazon.test.js tests/password.test.js",
-    "cloud:setup": "node scripts/cloud-setup.js"
+    "cloud:setup": "node scripts/cloud-setup.js",
+    "admin:reset:remote": "node scripts/create-admin-remote.js --reset"
   },
   "engines": {
     "node": "24.x"

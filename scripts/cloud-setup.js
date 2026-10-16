@@ -62,5 +62,5 @@ step(7,'公開版の管理者');
 r=spawnSync(process.execPath,['scripts/create-admin-remote.js'],{stdio:'inherit',env:{...env,CLOUDFLARE_ACCOUNT_ID:account.id}});if(r.status)console.log('管理者作成は未完了です。あとで npm run admin:create:remote を実行してください。');
 // 8. 動作確認
 step(8,'公開URLでの動作確認');
-if(await yes('いま作成した管理者で動作確認（一時データの登録・更新・削除）を実行しますか？')){r=spawnSync(process.execPath,['scripts/verify-deployment.js',url],{stdio:'inherit'});}
-console.log(`\n完了しました。スマートフォンで ${url} を開いてログインしてください。`);
+let verified=null;if(await yes('いま作成した管理者で動作確認（一時データの登録・更新・削除）を実行しますか？')){r=spawnSync(process.execPath,['scripts/verify-deployment.js',url],{stdio:'inherit'});verified=r.status===0;}
+console.log(verified===false?`\n公開は完了しましたが、動作確認が失敗しました。上のメッセージを確認してください（URL: ${url}）。`:`\n公開が完了しました。スマートフォンで ${url} を開いてログインしてください。`);
