@@ -1,8 +1,10 @@
 import {runtime} from '../lib/runtime.js';
 import {getStore} from '../lib/runtime.js';
 import {empty,validate} from '../lib/domain.js';
-import {hash,token,equal,scrypt} from '../lib/security.js';
+import {hash,token,equal} from '../lib/security.js';
+import {hashPassword,verifyPassword} from '../lib/password.js';
 import * as instagram from '../integrations/instagram.js';
+import * as amazon from '../integrations/amazon.js';
 
 function json(res,status,value){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(value));}
 export async function rawBody(req){if(req._sickstyleRaw)return req._sickstyleRaw;let n=0;const chunks=[];for await(const c of req){const b=Buffer.from(c);n+=b.length;if(n>2_000_000)throw Error('データが大きすぎます');chunks.push(b);}return req._sickstyleRaw=Buffer.concat(chunks);}
@@ -16,7 +18,7 @@ export default async function handler(req,res){
  const url=new URL(req.url,'http://localhost');const route=url.pathname;const store=await getStore();
  if(route==='/api/instagram/cron'&&req.method==='GET'){
   if(!runtime().CRON_SECRET||!equal(req.headers.authorization||'','Bearer '+runtime().CRON_SECRET))return json(res,401,{error:'認証が必要です'});
-  const status=await instagram.safeStatus(store);if(!status.connected)return json(res,200,{ok:true,skipped:true});await instagram.sync(store);return json(res,200,{ok:true});
+  const result={};for(const [name,mod] of [['instagram',instagram],['amazon',amazon]]){try{if((await mod.safeStatus(store)).connected){await mod.sync(store);result[name]='synced';}else result[name]='skipped';}catch{result[name]='failed';}}return json(res,200,{ok:true,result});
  }
  if(route==='/api/instagram/webhook'){
   if(req.method==='GET'){if(!runtime().META_WEBHOOK_VERIFY_TOKEN||!equal(url.searchParams.get('hub.verify_token')||'',runtime().META_WEBHOOK_VERIFY_TOKEN)||url.searchParams.get('hub.mode')!=='subscribe')return json(res,403,{error:'検証できません'});res.writeHead(200,{'Content-Type':'text/plain'});return res.end(url.searchParams.get('hub.challenge')||'');}
@@ -30,7 +32,7 @@ export default async function handler(req,res){
  const configured=!!(await store.query('SELECT id FROM ss_users WHERE id=1'))[0];
  const rawToken=(req.headers.cookie||'').split(';').map(x=>x.trim()).find(x=>x.startsWith('session='))?.slice(8)||'';const sessionHash=hash(rawToken);
  const session=(await store.query('SELECT expires FROM ss_sessions WHERE token=$1 AND expires>$2',[sessionHash,Date.now()]))[0];const authorized=!!session;
- if(route==='/api/session'&&req.method==='GET')return json(res,200,{configured,authenticated:authorized,setupAllowed:!!runtime().SETUP_TOKEN,storage:store.kind});
+ if(route==='/api/session'&&req.method==='GET')return json(res,200,{configured,authenticated:authorized,setupAllowed:!configured&&!!runtime().SETUP_TOKEN,storage:store.kind,hosted:!!runtime().CLOUDFLARE&&runtime().CF_LOCAL_DEV!=='true'});
  if(['/api/setup','/api/login'].includes(route)&&req.method==='POST'){
   const b=await body(req);
   // Shared DB counters survive serverless invocations. Avoid retaining raw email/IP.
@@ -47,14 +49,22 @@ export default async function handler(req,res){
    if(!b.setupToken)return json(res,403,{error:'管理者用の初期設定キーを入力してください（ログインパスワードとは別です）'});
    if(!equal(b.setupToken,runtime().SETUP_TOKEN))return json(res,403,{error:'初期設定キーが一致しません。サーバーに設定されたキーを使用してください'});
    if(runtime().ADMIN_EMAIL&&email!==runtime().ADMIN_EMAIL.toLowerCase())return json(res,403,{error:'許可された管理者メールアドレスではありません'});
-   const salt=token();const passwordHash=(await scrypt(b.password,salt,64)).toString('hex');
+   const {hash:passwordHash,salt}=await hashPassword(b.password);
    const row=await store.query('INSERT INTO ss_users(id,email,hash,salt) VALUES (1,$1,$2,$3) ON CONFLICT(id) DO NOTHING RETURNING id',[email,passwordHash,salt]);if(!row.length)return json(res,409,{error:'初期設定は完了しています'});
   }
   const user=(await store.query('SELECT * FROM ss_users WHERE id=1 AND email=$1',[email]))[0];
-  const candidate=(await scrypt(b.password,user?.salt||'dummy-timing-salt',64)).toString('hex');if(!user||!equal(candidate,user.hash))return json(res,401,{error:'ログイン情報が正しくありません'});
+  if(!(await verifyPassword(b.password,user)))return json(res,401,{error:'ログイン情報が正しくありません'});
   const t=token();await store.transaction([['DELETE FROM ss_sessions WHERE expires<$1',[Date.now()]],['DELETE FROM ss_attempts WHERE key=$1',['email:'+hash(email)]],['INSERT INTO ss_sessions(token,expires) VALUES ($1,$2)',[hash(t),Date.now()+86400000]]]);res.setHeader('Set-Cookie',cookie(t,86400));return json(res,200,{ok:true});
  }
+ const redirect=location=>{res.writeHead(303,{Location:location,'Cache-Control':'no-store'});res.end();};
+ if(['/api/amazon/login','/api/amazon/callback','/api/instagram/callback'].includes(route)&&req.method==='GET'&&!authorized)return redirect('/?auth=required');
  if(!authorized)return json(res,401,{error:'ログインしてください'});
+ if(route==='/api/amazon/status'&&req.method==='GET')return json(res,200,await amazon.safeStatus(store));
+ if(route==='/api/amazon/connect'&&req.method==='POST')return json(res,200,{url:await amazon.begin(store,sessionHash)});
+ if(route==='/api/amazon/login'&&req.method==='GET'){try{return redirect(await amazon.login(store,sessionHash,url));}catch(e){console.error(JSON.stringify({event:'amazon_login',error:'invalid_request'}));return redirect('/?amazon=error');}}
+ if(route==='/api/amazon/callback'&&req.method==='GET'){try{await amazon.connect(store,sessionHash,url);return redirect('/?amazon=connected');}catch(e){console.error(JSON.stringify({event:'amazon_callback',error:e instanceof amazon.AmazonError?String(e.code):'authorization_failed'}));return redirect('/?amazon=error');}}
+ if(route==='/api/amazon/sync'&&req.method==='POST'){try{await amazon.sync(store);}catch(e){return json(res,502,{error:e.message,status:await amazon.safeStatus(store)});}return json(res,200,await amazon.safeStatus(store));}
+ if(route==='/api/amazon/disconnect'&&req.method==='POST')return json(res,200,await amazon.disconnect(store));
  if(route==='/api/logout'&&req.method==='POST'){await store.query('DELETE FROM ss_sessions WHERE token=$1',[sessionHash]);res.setHeader('Set-Cookie',cookie('',0));return json(res,200,{ok:true});}
  if(route==='/api/data'&&req.method==='GET')return json(res,200,await revisionOf(store));
  if(route==='/api/data'&&req.method==='PUT'){
@@ -84,5 +94,5 @@ export default async function handler(req,res){
  }
  if(route==='/api/instagram/resolve'&&req.method==='POST'){const b=await body(req);await instagram.resolveConversation(store,String(b.peer||''));return json(res,200,{ok:true});}
  return json(res,404,{error:'見つかりません'});
- }catch(e){const validation=/データ|形式|バックアップ|認可|Instagram|Meta|同期|トークン|アカウント|キー|コード/.test(e.message);console.error(JSON.stringify({event:'api_error',type:e.name,code:e instanceof instagram.MetaError?e.code:undefined}));return json(res,validation?400:503,{error:validation?e.message:'サービスに接続できません。管理者はデータベース設定を確認してください。'});}
+ }catch(e){const validation=/データ|形式|バックアップ|認可|Instagram|Meta|Amazon|同期|トークン|アカウント|キー|コード/.test(e.message);console.error(JSON.stringify({event:'api_error',type:e.name,code:e instanceof instagram.MetaError?e.code:undefined}));return json(res,validation?400:503,{error:validation?e.message:'サービスに接続できません。管理者はデータベース設定を確認してください。'});}
 }

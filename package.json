@@ -17,7 +17,9 @@
     "build:cloudflare": "wrangler deploy --dry-run --outdir .wrangler/build",
     "db:local": "wrangler d1 migrations apply sickstyle-db --local",
     "deploy": "node scripts/cloudflare-deploy.js",
-    "migrate:export:d1": "node scripts/export-d1.js"
+    "migrate:export:d1": "node scripts/export-d1.js",
+    "admin:create:remote": "node scripts/create-admin-remote.js",
+    "test:node": "node --test tests/app.test.js tests/instagram.test.js tests/amazon.test.js tests/password.test.js"
   },
   "engines": {
     "node": "24.x"

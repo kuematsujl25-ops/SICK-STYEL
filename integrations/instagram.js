@@ -26,11 +26,11 @@ export async function connect(store,session,url){
  if(!short.access_token)throw Error('認可トークンを取得できませんでした');
  const u=new URL('https://graph.instagram.com/access_token');u.search=new URLSearchParams({grant_type:'ig_exchange_token',client_secret:runtime().INSTAGRAM_APP_SECRET,access_token:short.access_token});
  const long=await remote(u);if(!long.access_token||!long.expires_in)throw Error('長期トークンを取得できませんでした');
- const profile=await graph('me',long.access_token,{fields:'user_id,username'});const id=String(profile.user_id||profile.id||short.user_id);if(!/^\d+$/.test(id))throw Error('アカウントIDが正しくありません');
+ const profile=await graph('me',long.access_token,{fields:'id,user_id,username'});const id=String(profile.user_id||profile.id||short.user_id);if(!/^\d+$/.test(id))throw Error('アカウントIDが正しくありません');
  if(runtime().INSTAGRAM_ALLOWED_USER_ID&&id!==runtime().INSTAGRAM_ALLOWED_USER_ID)throw Error('許可されたInstagramアカウントと一致しません');
  const previous=await privateData(store);if(previous&&previous.id!==id)throw Error('別のアカウントに切り替える場合は、先に現在の接続を解除してください');
  const granted=Array.isArray(short.permissions)?short.permissions:String(short.permissions||'').split(',').filter(Boolean);
- const data={id,username:profile.username,granted,encrypted:encrypt({access:long.access_token}),issuedAt:Date.now(),expiresAt:Date.now()+long.expires_in*1000,connectedAt:previous?.connectedAt||new Date().toISOString(),dmStartedAt:previous?.dmStartedAt||null,webhookError:null};
+ const data={id,scopedId:profile.id?String(profile.id):null,username:profile.username,granted,encrypted:encrypt({access:long.access_token}),issuedAt:Date.now(),expiresAt:Date.now()+long.expires_in*1000,connectedAt:previous?.connectedAt||new Date().toISOString(),dmStartedAt:previous?.dmStartedAt||null,webhookError:null};
  if(runtime().INSTAGRAM_ENABLE_MESSAGING==='true'&&granted.includes('instagram_business_manage_messages')){
   try{await graph(`${id}/subscribed_apps`,long.access_token,{subscribed_fields:'messages'},'POST');data.dmStartedAt=data.dmStartedAt||new Date().toISOString();}catch(e){data.webhookError=e.message;}
  }
@@ -49,28 +49,45 @@ async function acquireConnectionLease(store){
  if(!lease.length)throw Error('Instagramの同期・接続処理中です。完了後に再試行してください');
  return ()=>store.query('DELETE FROM ss_attempts WHERE key=$1',['instagram-sync']);
 }
+// Conversations API（過去履歴）による対応待ちDMの推定。最新メッセージの送信者が相手の会話を「対応待ち」とします。
+// 公式の制限: 詳細取得は各会話の最新20件のみ、リクエストフォルダで30日間動きのない会話は返りません。
+export const DM_DAYS=30;
+export async function pendingConversations(call,access,own,budget,warnings,now=Date.now()){
+ try{
+  const since=now-DM_DAYS*86400000;
+  const list=await call('me/conversations',access,{platform:'instagram',fields:'updated_time,messages.limit(1){from,created_time}',limit:'25'});
+  const recent=(list.data||[]).filter(c=>Date.parse(c.updated_time)>=since);let pending=0,checked=0,unknown=0;
+  for(const c of recent){
+   let last=c.messages?.data?.[0];
+   if(!last?.from){if(budget()<2){unknown++;continue;}try{const m=await call(c.id,access,{fields:'messages'});const id=m.messages?.data?.[0]?.id;last=id?await call(id,access,{fields:'from,created_time'}):null;}catch{last=null;}}
+   if(!last?.from?.id){unknown++;continue;}checked++;const mine=own.ids.includes(String(last.from.id))||(!!own.username&&last.from.username===own.username);if(!mine)pending++;
+  }
+  return {pending,checked,unknown,periodDays:DM_DAYS,truncated:!!list.paging?.next,checkedAt:new Date(now).toISOString()};
+ }catch(e){warnings.push('DM（Conversations API）: '+e.message);return null;}
+}
 export async function sync(store){
- const release=await acquireConnectionLease(store);
+ const release=await acquireConnectionLease(store);let used=0;const call=(...args)=>{used++;return graph(...args);};
  let cache={};
  try{
   let p=await privateData(store);if(!p)throw Error('Instagramを接続してください');
   const old=await store.doc('instagram-cache');cache=old?JSON.parse(old.body):{};
   if(p.expiresAt<=Date.now())throw Error('Instagramの認可期限が切れました。再接続してください');
   let {access}=decrypt(p.encrypted);
-  if(p.expiresAt-Date.now()<7*86400000&&Date.now()-p.issuedAt>86400000){const u=new URL('https://graph.instagram.com/refresh_access_token');u.search=new URLSearchParams({grant_type:'ig_refresh_token',access_token:access});const fresh=await remote(u);if(!fresh.access_token||!fresh.expires_in)throw Error('トークン更新に失敗しました');access=fresh.access_token;p={...p,encrypted:encrypt({access}),issuedAt:Date.now(),expiresAt:Date.now()+fresh.expires_in*1000};await store.put('instagram-private',p);}
+  if(p.expiresAt-Date.now()<7*86400000&&Date.now()-p.issuedAt>86400000){const u=new URL('https://graph.instagram.com/refresh_access_token');u.search=new URLSearchParams({grant_type:'ig_refresh_token',access_token:access});used++;const fresh=await remote(u);if(!fresh.access_token||!fresh.expires_in)throw Error('トークン更新に失敗しました');access=fresh.access_token;p={...p,encrypted:encrypt({access}),issuedAt:Date.now(),expiresAt:Date.now()+fresh.expires_in*1000};await store.put('instagram-private',p);}
   const warnings=[];let followers=null;
-  try{const profile=await graph(p.id,access,{fields:'user_id,username,followers_count'});followers=typeof profile.followers_count==='number'?profile.followers_count:null;}catch(e){warnings.push('フォロワー数: '+e.message);}
-  const media=await graph(`${p.id}/media`,access,{fields:'id,caption,media_product_type,timestamp,permalink',limit:'25'});
+  try{const profile=await call(p.id,access,{fields:'user_id,username,followers_count'});followers=typeof profile.followers_count==='number'?profile.followers_count:null;}catch(e){warnings.push('フォロワー数: '+e.message);}
+  const media=await call(`${p.id}/media`,access,{fields:'id,caption,media_product_type,timestamp,permalink',limit:'25'});
   const reels=[]; // Limit the visible scope honestly to the latest 25 media, avoiding unbounded sync work.
   const source=(media.data||[]).filter(x=>x.media_product_type==='REELS');
   for(let offset=0;offset<source.length;offset+=5){const group=await Promise.all(source.slice(offset,offset+5).map(async m=>{
    const values={};let response;
-   try{response=await graph(`${m.id}/insights`,access,{metric:'views,reach,total_interactions,likes,comments,saved,shares'});for(const n of ['views','reach','total_interactions','likes','comments','saved','shares'])values[n]=metricValue(response,n);}
+   try{response=await call(`${m.id}/insights`,access,{metric:'views,reach,total_interactions,likes,comments,saved,shares'});for(const n of ['views','reach','total_interactions','likes','comments','saved','shares'])values[n]=metricValue(response,n);}
    catch(e){for(const n of ['views','reach','total_interactions','likes','comments','saved','shares'])values[n]=null;warnings.push(`リール ${m.id}: ${e.message}`);}
    return {id:m.id,caption:m.caption||'リール',timestamp:m.timestamp,permalink:m.permalink,values};
   }));reels.push(...group);}
+  const dm=p.granted?.includes('instagram_business_manage_messages')?await pendingConversations(call,access,{ids:[p.id,p.scopedId].filter(Boolean).map(String),username:p.username},()=>45-used,warnings):null;
   const day=new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'});const history=(cache.history||[]).filter(x=>x.date!==day);const previous=history.at(-1);if(followers!==null)history.push({date:day,followers});
-  const next={syncedAt:new Date().toISOString(),attemptedAt:new Date().toISOString(),error:null,warnings,followers,delta:followers!==null&&previous?followers-previous.followers:null,deltaSince:previous?.date||null,history:history.slice(-730),reels,scope:'最新25件のメディアに含まれるリール（Instagramのオーガニック実績・累計）',hasMore:!!media.paging?.next};await store.put('instagram-cache',next);return next;
+  const next={syncedAt:new Date().toISOString(),attemptedAt:new Date().toISOString(),error:null,warnings,followers,delta:followers!==null&&previous?followers-previous.followers:null,deltaSince:previous?.date||null,history:history.slice(-730),reels,dm,scope:'最新25件のメディアに含まれるリール（Instagramのオーガニック実績・累計）',hasMore:!!media.paging?.next};await store.put('instagram-cache',next);return next;
  }catch(e){if(await privateData(store))await store.put('instagram-cache',{...cache,error:e.message,attemptedAt:new Date().toISOString()});throw e;}finally{await release();}
 }
 export async function disconnect(store){const release=await acquireConnectionLease(store);try{const p=await privateData(store);let revokeError=null;if(p){try{await graph(`${p.id}/permissions`,decrypt(p.encrypted).access,{},'DELETE');}catch{revokeError='ローカル接続は解除しました。Meta側の認可取消に失敗したため、Instagramの「アプリとウェブサイト」からも削除してください。';}}

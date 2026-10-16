@@ -3,7 +3,8 @@ import {httpServerHandler} from 'cloudflare:node';
 import handler from '../api/index.js';
 import {withRuntime} from '../lib/runtime.js';
 import {createD1Store} from '../lib/d1-store.js';
-import {sync,safeStatus} from '../integrations/instagram.js';
+import * as instagram from '../integrations/instagram.js';
+import * as amazon from '../integrations/amazon.js';
 const api=httpServerHandler(createServer(handler));
 const security={
  'X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY','Referrer-Policy':'no-referrer',
@@ -21,7 +22,9 @@ export default {
  async scheduled(event,env,ctx){
   if(env.MAINTENANCE_MODE==='true'||!env.DB)return;
   ctx.waitUntil(withRuntime({...env,CLOUDFLARE:true,STORE:createD1Store(env.DB)},async()=>{
-   try{const store=createD1Store(env.DB);if((await safeStatus(store)).connected)await sync(store);}catch{console.error(JSON.stringify({event:'scheduled_instagram_sync_failed'}));}
+   const store=createD1Store(env.DB);// 1回の実行あたりの外部リクエスト上限（Free: 50）を超えないよう、サービスごとに別のCronで実行します。
+   const targets=event.cron==='10 0 * * *'?[['amazon',amazon]]:[['instagram',instagram]];
+   for(const [name,mod] of targets){try{if((await mod.safeStatus(store)).connected)await mod.sync(store);}catch{console.error(JSON.stringify({event:'scheduled_sync_failed',service:name}));}}
   }));
  }
 };
