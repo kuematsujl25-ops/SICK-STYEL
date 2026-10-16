@@ -1,0 +1,31 @@
+{
+  "name": "sickstyle-manager",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "npm run build:cloudflare --silent && node --test tests/*.test.js",
+    "build": "node scripts/build.js",
+    "migrate:check": "node scripts/migrate.js",
+    "migrate:apply": "node scripts/migrate.js --apply",
+    "verify:deployment": "node scripts/verify-deployment.js",
+    "setup:local": "node scripts/setup-local.js",
+    "admin:create": "node scripts/create-admin.js",
+    "dev:cloudflare": "wrangler dev",
+    "build:cloudflare": "wrangler deploy --dry-run --outdir .wrangler/build",
+    "db:local": "wrangler d1 migrations apply sickstyle-db --local",
+    "deploy": "node scripts/cloudflare-deploy.js",
+    "migrate:export:d1": "node scripts/export-d1.js"
+  },
+  "engines": {
+    "node": "24.x"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.2.0"
+  },
+  "devDependencies": {
+    "wrangler": "^4.151.1"
+  }
+}

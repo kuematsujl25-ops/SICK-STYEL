@@ -1,0 +1,14 @@
+import http from 'node:http';
+import {readFileSync} from 'node:fs';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import handler from './api/index.js';
+import {getStore as getNodeStore} from './lib/store.js';
+import {withRuntime} from './lib/runtime.js';
+import {loadLocalEnv} from './lib/local-env.js';
+const root=path.dirname(fileURLToPath(import.meta.url));
+const envStatus=loadLocalEnv(root);
+console.log('管理者初期設定: '+(envStatus.setupReady?'利用可能（秘密値は非表示）':'未設定。npm run setup:local を実行してください'));
+const files={'/':'index.html','/app.js':'app.js','/style.css':'style.css','/manifest.webmanifest':'manifest.webmanifest','/sw.js':'sw.js','/icon.svg':'icon.svg','/icon-192.png':'icon-192.png','/icon-512.png':'icon-512.png','/offline.html':'offline.html','/privacy.html':'privacy.html','/data-deletion.html':'data-deletion.html'};
+const server=http.createServer(async(req,res)=>{res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('X-Frame-Options','DENY');res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");const pathname=new URL(req.url,'http://localhost').pathname;if(pathname.startsWith('/api/'))return withRuntime({...process.env,STORE:getNodeStore()},()=>handler(req,res));const file=files[pathname];if(!file){res.writeHead(404);return res.end('Not found');}try{const ext=path.extname(file);res.setHeader('Content-Type',({'.js':'text/javascript','.css':'text/css','.webmanifest':'application/manifest+json','.svg':'image/svg+xml','.png':'image/png','.html':'text/html'})[ext]+'; charset=utf-8');res.setHeader('Cache-Control','no-cache');res.end(readFileSync(path.join(root,'public',file)));}catch{res.writeHead(404);res.end('Not found');}});
+server.listen(Number(process.env.PORT||3000),process.env.HOST||'127.0.0.1',()=>console.log(`SICKSTYLE: http://${process.env.HOST||'127.0.0.1'}:${server.address().port}`));

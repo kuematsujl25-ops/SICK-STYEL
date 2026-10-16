@@ -1,0 +1,17 @@
+node_modules/
+data/*
+!data/.gitkeep
+.env
+.env.*
+!.env.example
+.vercel/
+node_modules/
+.vercel
+.env*
+
+!.env.example
+.wrangler/
+.dev.vars*
+.migration/
+.local-admin-input*
+.cloudflare-free.json
