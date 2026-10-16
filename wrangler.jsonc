@@ -26,7 +26,7 @@
   "vars": {
     "COOKIE_SECURE": "true",
     "META_API_VERSION": "v26.0",
-    "INSTAGRAM_ENABLE_MESSAGING": "false",
+    "INSTAGRAM_ENABLE_MESSAGING": "true",
     "MAINTENANCE_MODE": "false",
     "APP_ORIGIN": "https://sickstyle-manager.sickstyle-74h4.workers.dev"
   },

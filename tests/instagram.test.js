@@ -6,7 +6,7 @@ import path from 'node:path';
 import {createHmac,randomBytes} from 'node:crypto';
 import {createStore} from '../lib/store.js';
 import {encrypt,decrypt,hash} from '../lib/security.js';
-import {begin,connect,metricValue,verifySignature,receiveWebhook,safeStatus,sync,disconnect} from '../integrations/instagram.js';
+import {breakdownValues,begin,connect,metricValue,verifySignature,receiveWebhook,safeStatus,sync,disconnect} from '../integrations/instagram.js';
 
 test('本番環境は外部DBなしで起動できない',async()=>{await assert.rejects(createStore({VERCEL:'1'}),/DATABASE_URL/);await assert.rejects(createStore({NODE_ENV:'production'}),/DATABASE_URL/);});
 test('取得できない指標を0にしない・実際の0は保存する',()=>{assert.equal(metricValue({data:[]},'views'),null);assert.equal(metricValue({data:[{name:'views',values:[{value:0}]}]},'views'),0);assert.equal(metricValue({data:[{name:'reach',total_value:{value:15}}]},'reach'),15);});
@@ -42,3 +42,5 @@ test('認可stateのセッション固定・暗号化・同期・DMの重複/順
  assert.ok((await disconnect(store)).warning);assert.equal((await safeStatus(store)).connected,false);assert.equal((await safeStatus(store)).cache,null);assert.equal((await store.query('SELECT * FROM ss_events')).length,0);
  const value=encrypt({access:'test'});assert.throws(()=>decrypt(value.slice(0,-5)+'aaaaa'));
 });
+
+test('フォロー/フォロー解除の内訳を解析',()=>{assert.deepEqual(breakdownValues({data:[{name:'follows_and_unfollows',total_value:{breakdowns:[{dimension_keys:['follow_type'],results:[{dimension_values:['FOLLOWER'],value:12},{dimension_values:['NON_FOLLOWER'],value:3}]}]}}]},'follows_and_unfollows'),{FOLLOWER:12,NON_FOLLOWER:3});assert.equal(breakdownValues({data:[]},'follows_and_unfollows'),null);});

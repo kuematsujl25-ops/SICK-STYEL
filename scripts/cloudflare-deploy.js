@@ -4,11 +4,10 @@
 import {readFileSync,existsSync,writeFileSync,chmodSync} from 'node:fs';
 import {randomBytes} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
+import {ensureFree} from './lib/free-check.js';
 const config=JSON.parse(readFileSync('wrangler.jsonc','utf8'));
-const checkFile='.cloudflare-free.json';
-if(!existsSync(checkFile))throw Error('公開前にCloudflareダッシュボードでWorkersのプランがFreeであることを確認し、.cloudflare-free.json に記録してください。課金プランへの切替は行いません。');
-const check=JSON.parse(readFileSync(checkFile,'utf8'));
-if(check.plan!=='free'||!check.accountId||check.accountId!==config.account_id||!Number.isFinite(Date.parse(check.checkedAt))||Date.parse(check.checkedAt)>Date.now()+300000||Date.now()-Date.parse(check.checkedAt)>86400000||!check.source?.startsWith('https://dash.cloudflare.com/'))throw Error('対象アカウントの無料プラン確認が無効です（24時間以内の確認記録が必要）。再確認してください');
+await ensureFree(config.account_id);
+const check=JSON.parse(readFileSync('.cloudflare-free.json','utf8'));
 if(config.d1_databases[0].database_id==='00000000-0000-0000-0000-000000000000')throw Error('本物のD1データベースを接続してから公開してください');
 if(!config.workers_dev||config.routes?.length||config.route)throw Error('無料のworkers.dev標準URLだけを使用してください');
 if(config.r2_buckets||config.durable_objects||config.queues||config.ai||config.browser||config.images||config.containers||config.kv_namespaces||config.limits)throw Error('不要なサービスへの接続があるため停止しました');
