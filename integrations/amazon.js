@@ -68,4 +68,4 @@ export async function sync(store,now=new Date()){
   await store.put('amazon-cache',next);return next;
  }catch(e){await store.put('amazon-cache',{...cache,error:e.message,attemptedAt:new Date().toISOString()});throw e;}finally{await release();}
 }
-export async function disconnect(store){await store.transaction([['DELETE FROM ss_documents WHERE name IN ($1,$2)',['amazon-private','amazon-cache']]]);return {ok:true,warning:env().AMAZON_REFRESH_TOKEN?'セルフ認可のトークン（AMAZON_REFRESH_TOKEN）はCloudflareのSecretsから削除してください。':'Seller Central → 設定 → ユーザー権限 →「アプリとサービスの管理」から認可の取り消しもできます。'};}
+export async function disconnect(store){await store.transaction([['DELETE FROM ss_documents WHERE name IN ($1,$2)',['amazon-private','amazon-cache']]]);return {ok:true,warning:env().AMAZON_REFRESH_TOKEN?'セルフ認可のトークン（AMAZON_REFRESH_TOKEN）はCloudflareのSecretsから削除してください。':'Seller Centralの「アプリとサービス」メニュー内の認可済みアプリの管理画面からも認可を取り消せます。'};}

@@ -12,31 +12,27 @@ npm test
 npm run build
 ```
 
-ローカルの安全な初期設定:
+ローカルで使う場合:
 
 ```sh
 npm run setup:local
-npm run admin:create
-npm start
+npm run admin:create   # 対話式。メール・パスワード（このアプリ専用）を入力。キー入力は不要
+npm start              # http://127.0.0.1:3000
 ```
 
-管理者作成コマンドで本人がメールアドレスとパスワードを入力します。パスワードは非表示、キーの表示・コピーは不要です。http://127.0.0.1:3000 を開いてログインしてください。既存管理者は上書きしません。
-
-初期設定キーの環境変数名は`SETUP_TOKEN`です。`.env.local` / `.env` / `.env.bootstrap`をサーバー起動時に読み込むよう修正しました。シェル環境変数を優先し、秘密値はログに出しません。詳細は [管理者作成手順](docs/local-admin.md) を参照してください。
-
-Cloudflareのローカル実行は `npm run db:local` → `npm run dev:cloudflare` です。こちらの開発D1と通常のNodeサーバーのSQLiteは別データです。本番D1にも自動でコピーしません。移行手順で照合してから移します。
-
+公開（スマホ・別PCから利用）する場合は `npm run cloud:setup` の1コマンドです。詳細は [公開手順と無料枠](docs/deployment.md)、管理者作成・「初期設定キー」の意味は [管理者作成手順](docs/local-admin.md) を参照してください。
 
 ## 機能
 
 - 最終／月間目標と達成率
 - タスク・期限・優先度・完了管理
 - 発送リスト・発送期限・配送会社・追跡番号・状況
-- Amazon売上・注文、Instagram指標の手入力
+- Amazon売上・注文、Instagram指標の手入力とCSV取込（Amazon）
 - 理念・起源・Mission・Vision・Values
 - ログイン、端末間で共通のDB保存、JSONバックアップ・復元
 - ホーム画面への追加（Web App Manifest / Service Worker）
-- Instagram Loginの接続・解除、サーバー側トークン暗号化・更新、公式Insights同期、DMのWebhook観測
+- Instagram Loginの接続・解除、サーバー側トークン暗号化・更新、公式Insights同期、対応待ちDMの推定（Conversations API）とWebhook観測
+- Amazon SP-API（Amazon.co.jp）のLWA認可、Sales APIの日別売上・Orders APIの配送状況の同期（[手順](docs/amazon-setup.md)）
 
 手入力実績とInstagram公式取得値は分離しています。公式データはInstagram連携画面に表示します。取得できない指標は「未取得」、実際に取得した0は0で表示します。
 
@@ -51,7 +47,7 @@ Cloudflareのローカル実行は `npm run db:local` → `npm run dev:cloudflar
 
 Workers FreeとD1の上限に達すると動的操作が停止し、課金プランへ切り替えません。主な上限は100,000リクエスト/日、CPU10ms/回、D1読取500万行/日・書込10万行/日・1DB500MBです。アカウント全体の利用状況にも影響されます。定期的にJSONバックアップを取得してください。
 
-Instagram設定は [本人認可・Webhook手順](docs/instagram-setup.md) を参照してください。SecretsはCloudflare側に保管し、ブラウザーやGitへ含めません。Instagram未認可でも業務データは手入力で利用できます。Amazonの公式API同期は未実装です。
+Instagram設定は [本人認可・Webhook手順](docs/instagram-setup.md) を参照してください。SecretsはCloudflare側に保管し、ブラウザーやGitへ含めません。Instagram・Amazonとも未認可でも業務データは手入力（AmazonはCSVも可）で利用できます。
 
 
 ## 共有と競合
@@ -66,7 +62,7 @@ Instagram設定は [本人認可・Webhook手順](docs/instagram-setup.md) を�
 
 ## セキュリティと運用
 
-- パスワードはsalt付きscrypt。セッションはDB保存、24時間有効。
+- パスワードはsalt付きPBKDF2-SHA256（10万回、旧scrypt形式も検証可）。セッションはDB保存、24時間有効。
 - CookieはHttpOnly・SameSite=Lax。Cloudflare本番ではSecure強制。OAuthからの復帰を可能にし、書き込みにはOrigin / Fetch Metadataの確認を追加。
 - ログイン回数制限は外部DBで管理し、サーバーレスの複数インスタンス間で共有。
 - 業務API・バックアップ・Instagram取得APIはログイン必須。

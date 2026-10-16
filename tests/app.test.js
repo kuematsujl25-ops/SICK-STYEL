@@ -16,7 +16,7 @@ test('管理者登録・認証・業務データ保存・復元・永続化', as
  assert.equal((await req('setup','POST',{email:'a@example.com',password:'short'})).status,400);
  assert.equal((await req('setup','POST',{email:'bad@example.com',password:'bad-password-12345'})).status,403);
  const creds={email:'owner@example.com',password:'Test-password-2026',setupToken:'test-setup-key'};const signup=await req('setup','POST',creds);assert.equal(signup.status,200);assert.match(signup.cookie,/HttpOnly/);cookie=signup.cookie.split(';')[0];
- assert.equal((await req('setup','POST',creds)).status,409);
+ assert.equal((await req('setup','POST',creds)).status,409);assert.equal((await req('session')).data.setupAllowed,false);
  const primaryCookie=cookie;const secondLogin=await req('login','POST',creds);const secondCookie=secondLogin.cookie.split(';')[0];cookie=primaryCookie;
  const d=(await req('data')).data;
  d.goals.push({id:'g1',title:'売上目標',type:'monthly',month:'2026-10',current:10000,target:50000,unit:'円'});
@@ -32,7 +32,7 @@ test('管理者登録・認証・業務データ保存・復元・永続化', as
  const stale=structuredClone(d);stale.revision=0;assert.equal((await req('data','PUT',stale)).status,409);
  d.tasks[0].done=true;assert.equal((await req('data','PUT',d)).status,200);assert.equal((await req('restore','POST',{version:0,data:d,revision:2})).status,400);assert.equal((await req('restore','POST',{...backup,revision:2})).status,200);assert.equal((await req('data')).data.tasks[0].done,false);
  await stop();await start();assert.equal((await req('data')).data.shipments[0].tracking,'123456');
- assert.equal((await req('logout','POST',{})).status,200);assert.equal((await req('data')).status,401);assert.equal((await req('backup')).status,401);assert.equal((await req('instagram/status')).status,401);cookie=secondCookie;assert.equal((await req('data')).status,200);cookie='';
+ assert.equal((await req('logout','POST',{})).status,200);assert.equal((await req('data')).status,401);assert.equal((await req('backup')).status,401);assert.equal((await req('instagram/status')).status,401);assert.equal((await req('amazon/status')).status,401);cookie=secondCookie;assert.equal((await req('data')).status,200);cookie='';
  assert.equal((await req('login','POST',{...creds,password:'wrong-password-123'})).status,401);const login=await req('login','POST',creds);assert.equal(login.status,200);cookie=login.cookie.split(';')[0];assert.equal((await req('session')).data.authenticated,true);
  const html=await fetch(base);assert.equal(html.status,200);assert.match(await html.text(),/lang="ja"/);assert.match(html.headers.get('content-security-policy'),/default-src 'self'/);
  assert.equal((await fetch(base+'/server.js')).status,404);assert.equal((await fetch(base+'/manifest.webmanifest')).status,200);assert.equal((await fetch(base+'/icon-192.png')).status,200);assert.equal((await req('instagram/cron')).status,401);assert.equal((await req('instagram/webhook','POST',{})).status,403);

@@ -20,7 +20,14 @@ InstagramのパスワードはSICKSTYLEでは入力・使用・保存しませ�
 8. Cloudflare Workerに `TOKEN_ENCRYPTION_KEY`、`APP_ORIGIN`、`META_API_VERSION=v26.0` を設定して再デプロイします。
 9. SICKSTYLEへログイン → Instagram連携 → Instagramを接続 → Metaの公式画面で対象アカウントを本人認可 → 戻った画面で「今すぐ同期」。必要なら `INSTAGRAM_ALLOWED_USER_ID` で接続を1つのIDに固定できます。
 
-## DMのWebhookを使う場合
+## 対応待ちDM（Conversations API・推奨）
+
+- `INSTAGRAM_ENABLE_MESSAGING=true` をWorkerの変数に設定し、Metaアプリで `instagram_business_manage_messages` を利用可能にして再認可します。
+- 同期時に `GET /me/conversations?platform=instagram` で直近30日に更新された会話（最大25件）を取得し、最新メッセージの送信者が自分以外の会話を「対応待ち」と数えます。
+- 公式の制限: メッセージ詳細は各会話の最新20件のみ取得可能。リクエストフォルダで30日間動きのない会話は返りません。未読数・受信箱の表示とは一致しません。
+- 1回の実行で外部リクエスト50件の上限があるため、判定できなかった会話は「判定不能」として件数を表示します。
+
+## DMのWebhookを使う場合（任意）
 
 - `INSTAGRAM_ENABLE_MESSAGING=true` をCloudflare Workerに設定し、`instagram_business_manage_messages` をアプリで利用可能にして再認可します。
 - Meta App Dashboard → Webhooks（Instagram Login用設定）に callback URL `https://実際の公開ドメイン/api/instagram/webhook` を設定します。
