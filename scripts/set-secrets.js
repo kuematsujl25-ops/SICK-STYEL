@@ -9,7 +9,7 @@ const cfg=JSON.parse(readFileSync('wrangler.jsonc','utf8'));const origin=cfg.var
 const target=process.argv[2];
 const plans={
  instagram:{title:'Instagram（Meta）',fields:[['INSTAGRAM_APP_ID','Instagram App ID（数字）',false,/^\d{5,30}$/],['INSTAGRAM_APP_SECRET','Instagram App Secret（非表示で入力）',true,/^[0-9a-f]{16,64}$/i]],note:`Metaの「Business login settings」の OAuth redirect URIs に次を登録済みか確認してください:\n  ${origin}/api/instagram/callback`},
- amazon:{title:'Amazon SP-API',fields:[['AMAZON_LWA_CLIENT_ID','LWA クライアントID（amzn1.application-oa2-client. で始まる）',false,/^amzn1\.application-oa2-client\.[0-9a-z]+$/],['AMAZON_LWA_CLIENT_SECRET','LWA クライアントシークレット（非表示で入力）',true,/^\S{20,}$/],['AMAZON_APP_ID','アプリID（amzn1.sp.solution. で始まる。セルフ認可のみなら空欄でEnter）',false,/^(amzn1\.sp\.solution\.[0-9a-z-]+)?$/]],note:`Webサイト認可を使う場合、アプリの設定に次を登録してください:\n  OAuthログインURI: ${origin}/api/amazon/login\n  OAuthリダイレクトURI: ${origin}/api/amazon/callback`},
+ amazon:{title:'Amazon SP-API',fields:[['AMAZON_LWA_CLIENT_ID','LWA クライアントID（amzn1.application-oa2-client. で始まる）',false,/^amzn1\.application-oa2-client\.[0-9a-z]+$/],['AMAZON_LWA_CLIENT_SECRET','LWA クライアントシークレット（非表示で入力）',true,/^\S{20,}$/],['AMAZON_APP_ID','アプリID（amzn1.sp.solution. で始まる。セルフ認可のみなら空欄でEnter）',false,/^(amzn1\.sp\.solution\.[0-9a-z-]+)?$/]],note:`自社アカウントはセルフ認可を推奨します（アプリIDは空欄でEnter）。この後 npm run integrations:amazon-refresh でリフレッシュトークンを登録します。\n（Webサイト認可を使う場合のみ: OAuthログインURI ${origin}/api/amazon/login / リダイレクトURI ${origin}/api/amazon/callback）`},
  'amazon-refresh':{title:'Amazon セルフ認可のリフレッシュトークン',fields:[['AMAZON_REFRESH_TOKEN','リフレッシュトークン（Atzr| で始まる・非表示で入力）',true,/^Atzr\|\S+$/]],note:''},
 };
 const plan=plans[target];if(!plan)throw Error('使い方: node scripts/set-secrets.js instagram|amazon|amazon-refresh');

@@ -2,6 +2,21 @@
 
 2026-10-16にMeta公式ドキュメントをブラウザーで確認しました。Business Loginは2026-03-13更新、Media Insightsは2026-09-11更新、Webhook権限表は2026-10-14更新の内容を参照しています。APIは公式リファレンスに記載の `v26.0` を明示して利用します。
 
+## 現在の状態と再開手順（2026-10-17）
+
+- コード側の準備・公開は完了（認可画面への遷移、トークン暗号化保存、フォロワー・30日指標・リール・DM推定の同期）。
+- Meta for Developers の開発者登録が「普段使用していないデバイス」の安全制限で保留中。制限の回避はせず、**普段Facebookを使っているブラウザー/端末で、Metaが変更を許可した後**に再開します。
+- 再開時の順番:
+  1. https://developers.facebook.com で開発者登録（規約同意・メール認証）を完了
+  2. 「マイアプリ」→「アプリを作成」→ ユースケース「Instagramでメッセージとコンテンツを管理」を選択（ビジネスポートフォリオは任意）
+  3. 「InstagramログインによるAPI設定」→「アクセストークンを生成」で対象のプロアカウントを追加（Instagramテスターの招待をInstagramアプリで承認）
+  4. 「Instagramビジネスログインを設定」→ Business login settings の OAuth redirect URIs に `https://sickstyle-manager.sickstyle-74h4.workers.dev/api/instagram/callback` を登録
+  5. 同じ画面の Instagram App ID / App Secret を、Macのターミナル `npm run integrations:instagram` の非表示入力で登録（チャットに貼らない）
+  6. アプリの基本設定にプライバシーポリシー `…/privacy.html`、データ削除 `…/data-deletion.html` を登録
+  7. SICKSTYLE →「Instagram連携」→「Instagramを接続」→ Metaの公式画面で許可 →「今すぐ同期」で実データを確認
+
+画面名はMetaの更新で変わることがあります。
+
 ## 対象と方式
 
 ビジネス／クリエイターのプロアカウントにInstagram Loginで接続します。この方式はFacebookページとのリンクが不要です。個人用アカウントはこのInsights APIの対象外です。対象アカウント種別は所有者の回答・認可で最終確認します。
