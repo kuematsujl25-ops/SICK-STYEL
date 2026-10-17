@@ -1,0 +1,31 @@
+name: Claude Code (Issue-driven implementation)
+
+on:
+  issues:
+    types: [opened, assigned, labeled]
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  claude-response:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Issueに "claude" ラベルを付けると実装が起動する
+          label_trigger: "claude"
+          # コメント・Issue本文・PRレビューで "@claude" と書くと応答する
+          trigger_phrase: "@claude"
+          branch_prefix: "claude/"
+          claude_args: |
+            --max-turns 30

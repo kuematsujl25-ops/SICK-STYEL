@@ -1,0 +1,73 @@
+name: Codex Review
+
+on:
+  pull_request:
+    types: [opened]
+
+jobs:
+  codex:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      final_message: ${{ steps.run_codex.outputs.final-message }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge
+          persist-credentials: false
+
+      - name: Pre-fetch base and head refs for the PR
+        env:
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          git fetch --no-tags origin \
+            "$PR_BASE_REF" \
+            "+refs/pull/$PR_NUMBER/head"
+
+      - name: Run Codex
+        id: run_codex
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          permission-profile: ":workspace"
+          prompt: |
+            これは ${{ github.repository }} の PR #${{ github.event.pull_request.number }} です。
+
+            このPRで導入された変更のみをレビューしてください（下記コマンドで差分を確認できます）:
+              git log --oneline ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}
+
+            重点的に見てほしい点（AGENTS.mdより）:
+            - 管理者作成・パスワード処理・セッション管理のセキュリティ
+            - Amazon/Instagram連携のトークン取り扱い・失敗時挙動
+            - D1への書き込みがパラメータ化クエリーになっているか（SQLインジェクション対策）
+            - 公開APIが管理用項目を漏らしていないか
+            - 秘密情報・顧客の実データがコード/テスト/ドキュメントに含まれていないか
+
+            バグの可能性・改善点を具体的かつ簡潔に日本語で指摘してください。問題がなければその旨を述べてください。
+
+            PRタイトルと本文:
+            ----
+            ${{ github.event.pull_request.title }}
+            ${{ github.event.pull_request.body }}
+
+  post_feedback:
+    runs-on: ubuntu-latest
+    needs: codex
+    if: needs.codex.outputs.final_message != ''
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/github-script@v7
+        env:
+          CODEX_FINAL_MESSAGE: ${{ needs.codex.outputs.final_message }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: `## 🤖 Codex レビュー\n\n${process.env.CODEX_FINAL_MESSAGE}`,
+            });
