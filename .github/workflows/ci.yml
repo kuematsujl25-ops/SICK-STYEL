@@ -4,6 +4,8 @@ on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened]
+  push:
+    branches: ["claude/**"]
 
 permissions:
   contents: read
@@ -39,7 +41,7 @@ jobs:
 
   report-failure:
     needs: test
-    if: failure()
+    if: failure() && github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write

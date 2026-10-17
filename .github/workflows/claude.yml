@@ -17,6 +17,8 @@ permissions:
 
 jobs:
   claude-response:
+    # ANTHROPIC_API_KEY が未設定の間は実行しない（Secrets未設定時の自動実行を防ぐ安全ゲート）
+    if: vars.ENABLE_CLAUDE_AUTOMATION == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: anthropics/claude-code-action@v1
