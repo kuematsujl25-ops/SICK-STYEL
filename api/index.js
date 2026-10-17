@@ -5,6 +5,7 @@ import {hash,token,equal} from '../lib/security.js';
 import {hashPassword,verifyPassword} from '../lib/password.js';
 import * as instagram from '../integrations/instagram.js';
 import * as amazon from '../integrations/amazon.js';
+import {emptySite,validateSite,publicView,DEFAULT_SITE_ORIGINS} from '../lib/site.js';
 
 function json(res,status,value){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(value));}
 export async function rawBody(req){if(req._sickstyleRaw)return req._sickstyleRaw;let n=0;const chunks=[];for await(const c of req){const b=Buffer.from(c);n+=b.length;if(n>2_000_000)throw Error('データが大きすぎます');chunks.push(b);}return req._sickstyleRaw=Buffer.concat(chunks);}
@@ -23,6 +24,15 @@ export default async function handler(req,res){
  if(route==='/api/instagram/webhook'){
   if(req.method==='GET'){if(!runtime().META_WEBHOOK_VERIFY_TOKEN||!equal(url.searchParams.get('hub.verify_token')||'',runtime().META_WEBHOOK_VERIFY_TOKEN)||url.searchParams.get('hub.mode')!=='subscribe')return json(res,403,{error:'検証できません'});res.writeHead(200,{'Content-Type':'text/plain'});return res.end(url.searchParams.get('hub.challenge')||'');}
   if(req.method==='POST'){const raw=await rawBody(req);if(!instagram.verifySignature(raw,req.headers['x-hub-signature-256'],runtime().META_WEBHOOK_APP_SECRET))return json(res,403,{error:'署名が一致しません'});await instagram.receiveWebhook(store,JSON.parse(raw.toString()));return json(res,200,{ok:true});}
+ }
+ // 公開サイト向けの読み取り専用API（認証不要）。公開操作で確定した掲載情報だけを返し、下書き・業務データ・顧客情報は返しません。
+ if(route==='/api/public/site'){
+  const origins=(runtime().SITE_ORIGINS||DEFAULT_SITE_ORIGINS.join(',')).split(',').map(x=>x.trim()).filter(Boolean);
+  const o=req.headers.origin;if(o&&origins.includes(o)){res.setHeader('Access-Control-Allow-Origin',o);res.setHeader('Vary','Origin');}
+  if(req.method==='OPTIONS'){res.setHeader('Access-Control-Allow-Methods','GET');res.writeHead(204);return res.end();}
+  if(!['GET','HEAD'].includes(req.method))return json(res,405,{error:'読み取り専用です'});
+  const r=await store.doc('site-public');const body=r?r.body:JSON.stringify({version:1,publishedAt:null,products:[],news:[],philosophy:null,links:null});
+  res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'public, max-age=60, s-maxage=300','X-Content-Type-Options':'nosniff'});return res.end(req.method==='HEAD'?undefined:body);
  }
  if(!['GET','HEAD'].includes(req.method)){
   const allowed=runtime().APP_ORIGIN||`http://${req.headers.host}`;
@@ -72,7 +82,7 @@ export default async function handler(req,res){
   await store.query('INSERT INTO ss_documents(name,body,revision) VALUES ($1,$2,0) ON CONFLICT(name) DO NOTHING',['workspace',JSON.stringify(empty())]);
   const rows=await store.query('UPDATE ss_documents SET body=$1,revision=revision+1 WHERE name=$2 AND revision=$3 RETURNING revision',[JSON.stringify(d),'workspace',b.revision]);if(!rows.length)return json(res,409,{error:'他の端末で更新されました。再読み込みしてから編集してください'});return json(res,200,{ok:true,revision:rows[0].revision});
  }
- if(route==='/api/backup'&&req.method==='GET'){res.setHeader('Content-Disposition',`attachment; filename="sickstyle-backup-${new Date().toISOString().slice(0,10)}.json"`);return json(res,200,{version:1,exportedAt:new Date().toISOString(),data:await revisionOf(store)});}
+ if(route==='/api/backup'&&req.method==='GET'){res.setHeader('Content-Disposition',`attachment; filename="sickstyle-backup-${new Date().toISOString().slice(0,10)}.json"`);const sd=await store.doc('site-draft');return json(res,200,{version:1,exportedAt:new Date().toISOString(),data:await revisionOf(store),site:sd?JSON.parse(sd.body):null});}
  if(route==='/api/restore'&&req.method==='POST'){
   const b=await body(req);if(b.version!==1)throw Error('対応していないバックアップです');const data=validate(b.data);
   if(!Number.isSafeInteger(b.revision))return json(res,400,{error:'現在の更新バージョンが必要です'});
@@ -81,6 +91,26 @@ export default async function handler(req,res){
    ['INSERT INTO ss_documents(name,body) SELECT $1,body FROM ss_documents WHERE name=$2 AND revision=$3 ON CONFLICT(name) DO UPDATE SET body=excluded.body,revision=ss_documents.revision+1',['before-restore','workspace',b.revision]],
    ['UPDATE ss_documents SET body=$1,revision=revision+1 WHERE name=$2 AND revision=$3 RETURNING revision',[JSON.stringify(data),'workspace',b.revision]]]);
   if(!result[2].length)return json(res,409,{error:'他の端末で更新されました。再読み込み後に復元してください'});return json(res,200,{ok:true});
+ }
+ if(route==='/api/site'&&req.method==='GET'){const d=await store.doc('site-draft');const p=await store.doc('site-public');return json(res,200,{draft:d?JSON.parse(d.body):emptySite(),revision:d?.revision||0,published:p?JSON.parse(p.body):null});}
+ if(route==='/api/site'&&req.method==='PUT'){
+  const b=await body(req);const d=validateSite(b.draft);if(!Number.isSafeInteger(b.revision)||b.revision<0)return json(res,400,{error:'更新バージョンが必要です'});
+  await store.query('INSERT INTO ss_documents(name,body,revision) VALUES ($1,$2,0) ON CONFLICT(name) DO NOTHING',['site-draft',JSON.stringify(emptySite())]);
+  const rows=await store.query('UPDATE ss_documents SET body=$1,revision=revision+1 WHERE name=$2 AND revision=$3 RETURNING revision',[JSON.stringify(d),'site-draft',b.revision]);if(!rows.length)return json(res,409,{error:'他の端末で更新されました。再読み込みしてから編集してください'});return json(res,200,{ok:true,revision:rows[0].revision});
+ }
+ if(route==='/api/site/publish'&&req.method==='POST'){
+  const b=await body(req);const d=await store.doc('site-draft');if(!d)return json(res,400,{error:'下書きがありません'});
+  if(b.revision!==d.revision)return json(res,409,{error:'下書きが更新されています。再読み込みして内容を確認してから公開してください'});
+  const view=publicView(JSON.parse(d.body),new Date().toISOString());
+  const prev=await store.doc('site-public');
+  await store.transaction([...(prev?[['INSERT INTO ss_documents(name,body) VALUES ($1,$2) ON CONFLICT(name) DO UPDATE SET body=excluded.body,revision=ss_documents.revision+1',['site-public-previous',prev.body]]]:[]),['INSERT INTO ss_documents(name,body) VALUES ($1,$2) ON CONFLICT(name) DO UPDATE SET body=excluded.body,revision=ss_documents.revision+1',['site-public',JSON.stringify(view)]]]);
+  return json(res,200,{ok:true,published:view});
+ }
+ if(route==='/api/site/rollback'&&req.method==='POST'){
+  const prev=await store.doc('site-public-previous');if(!prev)return json(res,400,{error:'戻せる公開履歴がありません'});
+  const cur=await store.doc('site-public');
+  await store.transaction([['INSERT INTO ss_documents(name,body) VALUES ($1,$2) ON CONFLICT(name) DO UPDATE SET body=excluded.body,revision=ss_documents.revision+1',['site-public',prev.body]],...(cur?[['INSERT INTO ss_documents(name,body) VALUES ($1,$2) ON CONFLICT(name) DO UPDATE SET body=excluded.body,revision=ss_documents.revision+1',['site-public-previous',cur.body]]]:[])]);
+  return json(res,200,{ok:true,published:JSON.parse(prev.body)});
  }
  if(route==='/api/instagram/status'&&req.method==='GET')return json(res,200,await instagram.safeStatus(store));
  if(route==='/api/instagram/connect'&&req.method==='POST')return json(res,200,{url:await instagram.begin(store,sessionHash)});
@@ -94,5 +124,5 @@ export default async function handler(req,res){
  }
  if(route==='/api/instagram/resolve'&&req.method==='POST'){const b=await body(req);await instagram.resolveConversation(store,String(b.peer||''));return json(res,200,{ok:true});}
  return json(res,404,{error:'見つかりません'});
- }catch(e){const validation=/データ|形式|バックアップ|認可|Instagram|Meta|Amazon|同期|トークン|アカウント|キー|コード/.test(e.message);console.error(JSON.stringify({event:'api_error',type:e.name,code:e instanceof instagram.MetaError?e.code:undefined}));return json(res,validation?400:503,{error:validation?e.message:'サービスに接続できません。管理者はデータベース設定を確認してください。'});}
+ }catch(e){const validation=/掲載|下書き|データ|形式|バックアップ|認可|Instagram|Meta|Amazon|同期|トークン|アカウント|キー|コード/.test(e.message);console.error(JSON.stringify({event:'api_error',type:e.name,code:e instanceof instagram.MetaError?e.code:undefined}));return json(res,validation?400:503,{error:validation?e.message:'サービスに接続できません。管理者はデータベース設定を確認してください。'});}
 }

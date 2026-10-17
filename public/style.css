@@ -211,3 +211,5 @@ dialog::backdrop{background:#000b;backdrop-filter:blur(3px)}
 .stats .source{display:inline-block;width:auto}
 .sidebottom button{white-space:nowrap;flex-shrink:0}
 @media(max-width:720px){nav{scroll-padding-inline:12px}}
+.inlinecheck{width:22px!important;height:22px;min-height:auto!important;vertical-align:middle;accent-color:var(--silver);margin-right:6px}
+#siteform label:has(.inlinecheck){grid-column:1/-1;color:var(--text)}

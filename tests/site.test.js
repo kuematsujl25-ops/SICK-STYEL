@@ -1,0 +1,50 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {spawn} from 'node:child_process';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import path from 'node:path';
+import {validateSite,publicView,emptySite,safeUrl} from '../lib/site.js';
+const product=(o={})=>({id:'black',name:'Black Shin Guard',price:2200,description:'説明',badge:'一番人気',image:'/products/black.jpg',amazonUrl:'https://amzn.asia/d/0pmamWR',storeUrl:'https://shop.sickstyle.net/',amazonStatus:'available',storeStatus:'soldout',sortOrder:1,published:true,...o});
+test('掲載データの検証: 危険なURL・不正な価格を拒否',()=>{
+ assert.equal(safeUrl('javascript:alert(1)'),false);assert.equal(safeUrl('http://example.com'),false);assert.equal(safeUrl('//evil.example/x',{allowPath:true}),false);assert.equal(safeUrl('/products/a.jpg',{allowPath:true}),true);
+ const base={...emptySite(),products:[product()]};assert.equal(validateSite(base).products[0].price,2200);
+ assert.throws(()=>validateSite({...base,products:[product({amazonUrl:'javascript:alert(1)'})]}));
+ assert.throws(()=>validateSite({...base,products:[product({price:-1})]}));
+ assert.throws(()=>validateSite({...base,products:[product(),product()]}),/ID/);
+});
+test('公開ビュー: 非掲載を除外し管理用項目を出さない',()=>{
+ const v=publicView({...emptySite(),products:[product({sortOrder:2}),product({id:'gold',name:'Gold',sortOrder:1}),product({id:'x',name:'非掲載',published:false})],news:[{id:'n1',date:'2026-10-01',title:'古い',published:true},{id:'n2',date:'2026-10-10',title:'新しい',published:true},{id:'n3',date:'2026-10-11',title:'下書き',published:false}]},'2026-10-17T00:00:00Z');
+ assert.deepEqual(v.products.map(p=>p.id),['gold','black']);assert.equal('published' in v.products[0],false);assert.equal('sortOrder' in v.products[0],false);assert.deepEqual(v.news.map(n=>n.id),['n2','n1']);
+});
+test('API: 認証必須の編集・公開操作のみ公開APIへ反映・CORS・既存業務データ非干渉',async t=>{
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-site-'));let base,cookie='';
+ const proc=spawn(process.execPath,['server.js'],{env:{...process.env,PORT:'0',DATA_DIR:dir,SETUP_TOKEN:'site-test-key'},stdio:['ignore','pipe','pipe']});
+ t.after(async()=>{proc.kill();await rm(dir,{recursive:true,force:true});});
+ base=await new Promise((res,rej)=>{let o='';proc.stdout.on('data',b=>{o+=b;const m=o.match(/http:\/\/127.0.0.1:(\d+)/);if(m)res(m[0]);});proc.on('exit',c=>rej(Error('exit '+c)));});
+ const req=async(route,method='GET',data,headers={})=>{const r=await fetch(base+'/api/'+route,{method,headers:{Cookie:cookie,...(data?{'Content-Type':'application/json'}:{}),...headers},body:data?JSON.stringify(data):undefined});const txt=await r.text();let b;try{b=JSON.parse(txt);}catch{b=txt;}return {status:r.status,data:b,headers:r.headers,cookie:r.headers.get('set-cookie')};};
+ assert.equal((await req('site')).status,401);assert.equal((await req('site','PUT',{draft:emptySite(),revision:0})).status,401);assert.equal((await req('site/publish','POST',{revision:0})).status,401);
+ let pub=await req('public/site');assert.equal(pub.status,200);assert.deepEqual(pub.data.products,[]);
+ assert.equal((await req('public/site','POST',{})).status,405);
+ const s=await req('setup','POST',{email:'o@example.com',password:'Site-test-pass-2026',setupToken:'site-test-key'});cookie=s.cookie.split(';')[0];
+ const ws=(await req('data')).data;ws.tasks.push({id:'t1',title:'既存タスク',due:'2026-10-17',priority:'中',done:false});assert.equal((await req('data','PUT',ws)).status,200);
+ const draft={...emptySite(),products:[product(),product({id:'hidden',name:'未掲載',published:false})],news:[{id:'n1',date:'2026-10-17',title:'新作のお知らせ',body:'本文',published:true}],philosophy:{...emptySite().philosophy,mission:'PLAY FREER THAN EVER',values:[{title:'BE DIFFERENT',body:''}]}};
+ assert.equal((await req('site','PUT',{draft:{...draft,products:[product({image:'javascript:alert(1)'})]},revision:0})).status,400);
+ const saved=await req('site','PUT',{draft,revision:0});assert.equal(saved.status,200);
+ assert.equal((await req('site','PUT',{draft,revision:0})).status,409);
+ pub=await req('public/site');assert.deepEqual(pub.data.products,[],'公開操作前は公開APIに出ない');
+ assert.equal((await req('site/publish','POST',{revision:0})).status,409);
+ assert.equal((await req('site/publish','POST',{revision:saved.data.revision},{Origin:'https://evil.example'})).status,403);
+ assert.equal((await req('site/publish','POST',{revision:saved.data.revision})).status,200);
+ pub=await req('public/site','GET',undefined,{Origin:'https://sickstyle-site.vercel.app'});
+ assert.deepEqual(pub.data.products.map(p=>p.name),['Black Shin Guard']);assert.equal(pub.data.news[0].title,'新作のお知らせ');assert.equal(pub.data.philosophy.mission,'PLAY FREER THAN EVER');
+ assert.equal(pub.headers.get('access-control-allow-origin'),'https://sickstyle-site.vercel.app');assert.match(pub.headers.get('cache-control'),/public/);
+ const text=JSON.stringify(pub.data);for(const secret of ['既存タスク','o@example.com','未掲載','hash','salt','revision'])assert.equal(text.includes(secret),false,secret+' が公開APIに含まれている');
+ assert.equal((await req('public/site','GET',undefined,{Origin:'https://evil.example'})).headers.get('access-control-allow-origin'),null);
+ // 2回目の公開→1つ前に戻す
+ const d2=(await req('site')).data;d2.draft.products[0].price=2500;const s2=await req('site','PUT',{draft:d2.draft,revision:d2.revision});await req('site/publish','POST',{revision:s2.data.revision});
+ assert.equal((await req('public/site')).data.products[0].price,2500);assert.equal((await req('site/rollback','POST',{})).status,200);assert.equal((await req('public/site')).data.products[0].price,2200);
+ assert.equal((await req('data')).data.tasks[0].title,'既存タスク');
+ const backup=(await req('backup')).data;assert.equal(backup.site.products.length,2);
+ assert.equal((await req('logout','POST',{})).status,200);cookie='';assert.equal((await req('site')).status,401);assert.equal((await req('public/site')).status,200);
+});

@@ -3,6 +3,6 @@ import {spawnSync} from 'node:child_process';
 const config=JSON.parse(readFileSync('wrangler.jsonc','utf8'));
 if(config.assets?.directory!=='./public')throw Error('静的ファイルの出力先を確認してください');
 for(const file of ['public/index.html','public/app.js','public/style.css','public/manifest.webmanifest','public/icon-192.png','public/icon-512.png','public/sw.js','public/offline.html','api/index.js'])if(!existsSync(file))throw Error('不足ファイル: '+file);
-for(const file of ['api/index.js','lib/store.js','lib/domain.js','lib/security.js','integrations/instagram.js','public/app.js','public/sw.js']){const r=spawnSync(process.execPath,['--check',file],{stdio:'inherit'});if(r.status)process.exit(r.status);}
+for(const file of ['api/index.js','lib/store.js','lib/domain.js','lib/security.js','lib/site.js','integrations/instagram.js','integrations/amazon.js','public/app.js','public/sw.js']){const r=spawnSync(process.execPath,['--check',file],{stdio:'inherit'});if(r.status)process.exit(r.status);}
 const {validate,empty}=await import('../lib/domain.js');validate(empty());await import('../api/index.js');
 console.log('Build checks passed: static assets, manifest, API imports, syntax, domain validation. No database is touched at build time.');
