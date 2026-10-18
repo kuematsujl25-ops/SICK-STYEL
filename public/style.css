@@ -213,3 +213,20 @@ dialog::backdrop{background:#000b;backdrop-filter:blur(3px)}
 @media(max-width:720px){nav{scroll-padding-inline:12px}}
 .inlinecheck{width:22px!important;height:22px;min-height:auto!important;vertical-align:middle;accent-color:var(--silver);margin-right:6px}
 #siteform label:has(.inlinecheck){grid-column:1/-1;color:var(--text)}
+
+/* 利益ワークスペース：既存のモノクロブランドと操作体系を継承 */
+.financehero{display:flex;justify-content:space-between;align-items:center;gap:24px;padding:32px;border:1px solid var(--line-strong);border-radius:var(--radius);background:linear-gradient(125deg,#242427,#101012);margin-bottom:16px}
+.financehero h2{font-size:clamp(20px,2.4vw,30px);margin-top:12px;letter-spacing:.02em}
+.financehero .filelabel{flex-shrink:0;margin:0;cursor:pointer}
+.financeempty{min-height:240px;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;gap:12px}
+.financestats{grid-template-columns:repeat(3,minmax(0,1fr));margin-top:22px}
+.financetable{width:100%;overflow-x:auto;margin-top:16px}
+.financetable table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:13px}
+.financetable th,.financetable td{padding:16px 12px;border-bottom:1px solid var(--line);text-align:right}
+.financetable th:first-child{text-align:left;max-width:220px;overflow:hidden;text-overflow:ellipsis}
+.financetable thead{color:var(--muted);font-size:12px}
+.financetable tr[hidden]{display:none}
+@media(max-width:760px){.financehero{align-items:flex-start;flex-direction:column;padding:22px}.financestats{grid-template-columns:1fr}.financetable{max-width:100%}.financehero .filelabel{width:100%;text-align:center}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
+
+.financehero .filelabel:focus-within{outline:3px solid var(--focus);outline-offset:3px}

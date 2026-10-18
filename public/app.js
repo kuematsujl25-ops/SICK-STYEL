@@ -1,3 +1,5 @@
+import {validateFinanceReport,renderFinance} from './finance.js';
+let financeReport=null;
 // SICKSTYLE 管理アプリ（単一管理者）。業務データはサーバーDBに保存し、ブラウザーには保存しません。
 const app=document.querySelector('#app');
 let state=null,section='overview',configured=false,busy=false,setupAllowed=false,storageKind='',hosted=false,ig=null,amz=null,conversations=[];
@@ -26,6 +28,7 @@ function setupGuide(){
  return `<div class="guide"><b>公開版の最初の管理者は、PCのターミナルで作成します</b><ol><li>Cloudflareにログイン済みのMacで「ターミナル」を開きます。</li><li><code>cd ~/Sites/SICK-STYEL</code> を実行します。</li><li><code>npm run admin:create:remote</code> を実行し、メールアドレスとパスワード（このアプリ専用）を入力します。</li><li>完了後、この画面を再読み込みしてログインします。</li></ol><p class="note">Web上の新規登録は、第三者による乗っ取りを防ぐため公開していません。</p></div>`;
 }
 function auth(){
+ financeReport=null;
  const setupForm=!configured&&setupAllowed;const showForm=configured||setupForm;
  app.innerHTML=`<main class="auth"><img class="authlogo" src="/logo-mark.png" alt="SICKSTYLE" width="506" height="335"><div class="authname">SICKSTYLE</div><div class="authbox">
  <h1>${configured?'ログイン':'管理者の初期設定'}</h1>
@@ -39,11 +42,11 @@ function auth(){
  const f=document.querySelector('#auth');if(f)f.onsubmit=async e=>{e.preventDefault();const btn=f.querySelector('button');btn.disabled=true;document.querySelector('#autherror').textContent='';try{await api(configured?'login':'setup','POST',Object.fromEntries(new FormData(f)));await load();}catch(err){const t=document.querySelector('#autherror');if(t)t.textContent=err.message;}finally{btn.disabled=false;}};
 }
 // ---------- 画面 ----------
-const nav=[['overview','◈','ダッシュボード'],['goals','◎','目標'],['tasks','☑','タスク'],['shipments','▣','発送管理'],['metrics','↗','売上・SNS実績'],['amazon','◆','Amazon連携'],['instagram','◉','Instagram連携'],['site','◇','サイト掲載'],['brand','✳','ブランド'],['settings','⚙','設定・バックアップ']];
+const nav=[['overview','◈','ダッシュボード'],['goals','◎','目標'],['tasks','☑','タスク'],['shipments','▣','発送管理'],['metrics','↗','売上・SNS実績'],['finance','◫','利益・在庫'],['amazon','◆','Amazon連携'],['instagram','◉','Instagram連携'],['site','◇','サイト掲載'],['brand','✳','ブランド'],['settings','⚙','設定・バックアップ']];
 const names=Object.fromEntries(nav.map(([id,,name])=>[id,name]));
 const rate=g=>Math.min(100,Math.max(0,Math.round(Number(g.current||0)/Number(g.target||1)*100)));
 function render(){
- const views={overview,instagram:instagramView,amazon:amazonView,brand,settings,site:siteView};
+ const views={finance:()=>renderFinance(financeReport,esc),overview,instagram:instagramView,amazon:amazonView,brand,settings,site:siteView};
  app.innerHTML=`<aside><div class="brandtop"><a href="#" class="brandmark" data-nav="overview">${LOGO}<span><b>SICKSTYLE</b><small>管理アプリ</small></span></a><span class="mobileonly"><button id="mrefresh" aria-label="最新データに更新">↻</button><button id="mlogout" aria-label="ログアウト">ログアウト</button></span></div><nav aria-label="メニュー">${nav.map(([id,icon,name])=>`<button data-nav="${id}" class="${section===id?'active':''}" ${section===id?'aria-current="page"':''}><span aria-hidden="true">${icon}</span>${name}</button>`).join('')}</nav><div class="sidebottom"><div>管理者<small>${esc(storageKind==='d1'?'クラウド保存（Cloudflare D1）':'このPCに保存（SQLite）')}</small></div><button id="logout">ログアウト</button></div></aside>
  <main><header><div class="breadcrumb">SICKSTYLE<span>/ ${names[section]}</span></div><div class="headeractions"><span class="live">保存先: ${storageKind==='d1'?'クラウド':'このPC'}</span><button id="refresh" aria-label="最新データに更新" title="最新データに更新">↻ 更新</button></div></header>
  <div class="content"><div class="pageheading"><div><h1>${names[section]}</h1></div><span class="date">${today().replaceAll('-',' / ')}</span></div>${(views[section]||(()=>collection(section)))()}</div>
@@ -135,7 +138,7 @@ function csvDialog(){const d=document.querySelector('#editor');d.innerHTML=`<for
 async function persist(next){if(busy)return;busy=true;try{const saved=await api('data','PUT',next);state={...next,revision:saved.revision};render();toast('保存しました');}finally{busy=false;}}
 async function logout(){try{await api('logout','POST',{});}catch(e){toast(e.message);return;}state=null;ig=null;amz=null;configured=true;auth();}
 async function refresh(){if(confirm('保存していない入力内容は破棄されます。最新データを読み込みますか？'))try{await load();toast('最新データを読み込みました');}catch(e){toast(e.message);}}
-function bind(){bindInstagram();bindAmazon();bindSite();
+function bind(){bindFinance();bindInstagram();bindAmazon();bindSite();
  for(const id of ['#refresh','#mrefresh'])document.querySelector(id).onclick=refresh;for(const id of ['#logout','#mlogout'])document.querySelector(id).onclick=logout;
  document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=async e=>{e.preventDefault();section=b.dataset.nav;if(section==='site'&&!site)try{site=await api('site');}catch(x){toast(x.message);}render();window.scrollTo(0,0);});
  document.querySelectorAll('[data-new]').forEach(b=>b.onclick=()=>editor(b.dataset.new));
@@ -187,3 +190,9 @@ function bindSite(){if(section!=='site'||!site)return;
   document.querySelector('#frombrand').onclick=()=>{const b=state.brand;pf.origin.value=b.起源||pf.origin.value;pf.mission.value=b.Mission||pf.mission.value;pf.vision.value=b.Vision||pf.vision.value;if(b.Values)pf.values.value=b.Values;toast('「ブランド」画面の内容を入れました。確認して「下書き保存」を押してください');};}
  const pub=document.querySelector('#publishsite');if(pub)pub.onclick=async()=>{if(!confirm('表示中の差分を公開用APIに反映します。よろしいですか？'))return;pub.disabled=true;try{await api('site/publish','POST',{revision:site.revision});site=await api('site');render();toast('公開しました');}catch(x){toast(x.message);pub.disabled=false;}};
  const rb=document.querySelector('#rollbacksite');if(rb)rb.onclick=async()=>{if(!confirm('公開APIの内容を1つ前の公開に戻します（下書きは変わりません）。よろしいですか？'))return;try{await api('site/rollback','POST',{});site=await api('site');render();toast('1つ前の公開内容に戻しました');}catch(x){toast(x.message);}};}
+
+function bindFinance(){
+ const file=document.querySelector('#financefile');if(file)file.onchange=async()=>{const f=file.files[0];if(!f)return;try{if(f.size>5*1024*1024)throw Error('5MB以下のJSONを選択してください。');const report=validateFinanceReport(JSON.parse(await f.text()));if(!state||section!=='finance')return;financeReport=report;render();toast('利益レポートを読み込みました');}catch(e){toast(e.message);file.value='';}};
+ const clear=document.querySelector('#financeclear');if(clear)clear.onclick=()=>{financeReport=null;render();};
+ const filter=document.querySelector('#financefilter');if(filter)filter.onchange=()=>{let count=0;document.querySelectorAll('[data-profit-status]').forEach(row=>{row.hidden=filter.value==='candidate'?row.dataset.profitStatus!=='candidate':filter.value==='attention'?row.dataset.profitStatus==='candidate':false;if(!row.hidden)count++;});document.querySelector('#financecount').textContent=count+' 商品';};
+}
