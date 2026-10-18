@@ -13,4 +13,5 @@ export function requireWranglerLogin(result) {
     throw Error('Cloudflare本人ログインが必要です。Macで npx wrangler login を実行してください');
   if (result.status !== 0)
     throw Error('Wranglerの認証確認が失敗しました。CLIの状態を確認してください');
+  return account;
 }

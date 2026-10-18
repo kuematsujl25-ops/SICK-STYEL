@@ -4,7 +4,7 @@ import {Miniflare,convertV4MiniflareOptions} from 'miniflare';
 import {readFileSync,mkdtempSync,rmSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
-import {randomBytes,createHmac} from 'node:crypto';
+import {randomBytes,createHmac,randomUUID} from 'node:crypto';
 import {loadLocalEnv} from '../lib/local-env.js';
 
 test('SETUP_TOKENの安全なローカル読込・シェル優先・本番では読込しない',()=>{
@@ -44,6 +44,22 @@ test('Workers実行環境 + D1: 認証・保存・独立セッション共有・
  assert.equal((await req(a,'ai-team/export')).data.state.knowledge[0].effect_status,'unmeasured');
  assert.equal((await req(a,'ai-team/task?job_id='+task.job_id)).status,409);
  assert.equal((await req(b,'data')).data.tasks[0].done,false);
+ // Exercise the existing D1 table's bounded part writes and transparent API reads.
+ const large=structuredClone(team.state);
+ for(let i=0;i<50;i++){
+  const j=structuredClone(large.jobs[0]);j.id=randomUUID();j.title='架空の容量確認 '+i;
+  j.output={...j.output,summary:'確認'.repeat(1500)+i};j.decision={...j.decision,note:'検'.repeat(1000)};
+  large.jobs.push(j);large.knowledge.push({...structuredClone(large.knowledge[0]),id:randomUUID(),job_id:j.id,output:j.output,decision:j.decision});
+ }
+ await db.prepare('UPDATE ss_documents SET body=?,revision=revision+1 WHERE name=?').bind(JSON.stringify(large),'ai-team-sickstyle-v1').run();
+ team=(await req(a,'ai-team')).data;
+ await change({action:'toggle',enabled:false});
+ const stored=JSON.parse((await db.prepare('SELECT body FROM ss_documents WHERE name=?').bind('ai-team-sickstyle-v1').first()).body);
+ assert.equal(stored.storage_format,'sickstyle-team-parts-v1');
+ assert.ok(stored.parts.length>1);
+ const exported=(await req(a,'ai-team/export')).data;assert.equal(exported.state.knowledge.length,51);
+ assert.deepEqual(exported.state.knowledge.at(-1).output,large.knowledge.at(-1).output);
+ assert.equal((await req(b,'ai-team')).data.state.enabled,false);
  assert.equal((await req(a,'logout','POST',{})).status,200);for(const route of ['data','backup','instagram/status','amazon/status','ai-team','ai-team/export','ai-team/task?job_id=missing'])assert.equal((await req(a,route)).status,401);assert.equal((await req(b,'data')).status,200);
  const response=await mf.dispatchFetch('http://localhost/');assert.equal(response.status,200);assert.match(await response.text(),/SICKSTYLE/);assert.equal((await mf.dispatchFetch('http://localhost/manifest.webmanifest')).status,200);
  assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM ss_users').first()).n,1);

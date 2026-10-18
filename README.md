@@ -24,7 +24,7 @@ npm start              # http://127.0.0.1:3000
 
 ## AI社員と既存本番の更新
 
-9担当への依頼、BASE/TikTok/Metricoolの根拠CSV、Claude Code/Codex CLIによる手動分析、本人レビューを利用できます。[AI社員・開発レビュー・コード専用デプロイ手順](docs/ai-team-runtime.md)を参照してください。既存本番への更新は`npm run deploy:existing -- --apply`を使い、既存Secrets・VariablesとDBスキーマを保持します。
+9担当への依頼、BASE/TikTok/Metricoolの根拠CSV、Claude Code/Codex CLIによる手動分析、本人レビューを利用できます。[AI社員・開発レビュー・コード専用デプロイ手順](docs/ai-team-runtime.md)を参照してください。既存本番への更新は`npm run deploy:preflight`の成功後に`npm run deploy -- --apply`を使い、既存Secrets・VariablesとDBスキーマを保持します。
 
 ## 機能
 
@@ -45,7 +45,7 @@ npm start              # http://127.0.0.1:3000
 [公開手順と無料枠・停止条件](docs/deployment.md) に比較と選択理由を記載しています。Cloudflareへの本人ログイン後、D1作成・Secrets登録・標準URLへの公開を進めます。
 
 - `wrangler.jsonc`: Worker・D1バインディング・静的アセット・毎日09:00 JSTの同期
-- `npm run deploy`: Freeプランと対象アカウントの確認、実DB、標準URLのみであることを確認して公開。確認記録がなければ停止
+- `npm run deploy`: コード専用の計画確認。`-- --dry-run`はビルドのみ。`npm run deploy:preflight`で最新レビュー・本人認証・無料条件・Version・バックアップ/復旧を確認し、1時間以内に`npm run deploy -- --apply`で反映
 - `MAINTENANCE_MODE=true`: APIを503停止
 - `npm run migrate:export:d1`: 元SQLiteのバックアップと、上書きしない移行SQLを非公開ファイルへ出力
 
