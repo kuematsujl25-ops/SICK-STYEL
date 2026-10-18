@@ -4,14 +4,14 @@
 
 - 実行環境：**Cloudflare Workers + D1**（Vercelは廃止済み。`scripts/provision-secrets.js`参照）
 - 本番URL：`https://sickstyle-manager.sickstyle-74h4.workers.dev`
-- デプロイは `npm run deploy`（`npm test` → `scripts/cloudflare-deploy.js`）を人間が手動実行する。**GitHub Actionsから本番デプロイは行わない。**
+- 既存本番へのコード更新は `npm run deploy:existing -- --apply`（Secret/Variables・DBスキーマ・Cronを保持、`docs/ai-team-runtime.md`参照）。初回構築用のデプロイは `npm run deploy`（`npm test` → `scripts/cloudflare-deploy.js`）を人間が手動実行する。**GitHub Actionsから本番デプロイは行わない。**
 
 ## 役割分担
 
-- **Claude Code**：GitHub Issueを受けて実装・自己テスト・PR作成を行う。
-- **Codex**（`openai/codex-action`、PR作成時に自動起動）：実装内容をレビューし、改善点・バグ候補をPRコメントで指摘する。
+- **Claude Code（利用者が指定した場合はCodex）**：GitHub Issueを受けて実装・自己テスト・PR作成を行う。
+- **Codex**：既存契約のCLIを別プロセスで実行してレビューする（`npm run ai:review -- --base origin/claude/initial-github-sync`）。GitHub上の`openai/codex-action`はAPI課金の別経路で、`ENABLE_CODEX_REVIEW`と`CODEX_API_BILLING_APPROVED`の明示有効化が必要。未実行は合格と扱わない。
 - **GitHub Actions**（`.github/workflows/ci.yml`）：`npm test`（内部で`wrangler deploy --dry-run`によるビルド検証 + `node --test`）を実行し、失敗時はログの末尾をPRコメントで報告する。
-- 人間（リポジトリ管理者）：最終的なマージ承認と本番デプロイ（`npm run deploy`の実行）を行う。
+- 人間（リポジトリ管理者）：最終的なマージ承認と本番デプロイ（既存環境は`npm run deploy:existing -- --apply`の実行）を行う。
 
 ## 実装時に必ず守ること
 

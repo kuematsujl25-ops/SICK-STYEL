@@ -24,7 +24,11 @@
     "admin:reset:remote": "node scripts/create-admin-remote.js --reset",
     "integrations:instagram": "node scripts/set-secrets.js instagram",
     "integrations:amazon": "node scripts/set-secrets.js amazon",
-    "integrations:amazon-refresh": "node scripts/set-secrets.js amazon-refresh"
+    "integrations:amazon-refresh": "node scripts/set-secrets.js amazon-refresh",
+    "ai:task": "node scripts/ai-staff/run-task.js",
+    "ai:review": "node scripts/ai-staff/review-code.js",
+    "deploy:existing": "node scripts/deploy-existing.js",
+    "verify:existing": "node scripts/verify-existing.js"
   },
   "engines": {
     "node": "24.x"

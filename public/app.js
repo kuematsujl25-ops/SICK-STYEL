@@ -1,3 +1,5 @@
+import {renderTeam,bindTeam} from './ai-team.js';
+let team=null;
 import {connectionReadiness,selectAmazonSales,syncMessage} from './integration-status.js';
 import {validateFinanceReport,renderFinance} from './finance.js';
 let financeReport=null;
@@ -16,7 +18,7 @@ async function load(){
  const s=await api('session');configured=s.configured;setupAllowed=s.setupAllowed;storageKind=s.storage;hosted=s.hosted;
  if(!s.authenticated)return auth();
  [state,ig,amz]=await Promise.all([api('data'),api('instagram/status'),api('amazon/status')]);
- conversations=(await api('instagram/conversations')).data;site=null;if(section==='site')site=await api('site');render();
+ conversations=(await api('instagram/conversations')).data;if(section==='team')team=await api('ai-team');site=null;if(section==='site')site=await api('site');render();
  const q=new URLSearchParams(location.search);
  if(q.has('instagram')){section='instagram';render();toast(q.get('instagram')==='connected'?'Instagramの認可が完了しました。「今すぐ同期」で読み取りを検証してください。':'Instagramの認可を完了できませんでした。設定・権限を確認して再接続してください。');}
  if(q.has('amazon')){section='amazon';render();toast(q.get('amazon')==='connected'?'Amazonの認可が完了しました。「今すぐ同期」でデータを取得してください。':'Amazonの認可を完了できませんでした。アプリ設定・リダイレクトURIを確認してください。');}
@@ -29,6 +31,7 @@ function setupGuide(){
  return `<div class="guide"><b>公開版の最初の管理者は、PCのターミナルで作成します</b><ol><li>Cloudflareにログイン済みのMacで「ターミナル」を開きます。</li><li><code>cd ~/Sites/SICK-STYEL</code> を実行します。</li><li><code>npm run admin:create:remote</code> を実行し、メールアドレスとパスワード（このアプリ専用）を入力します。</li><li>完了後、この画面を再読み込みしてログインします。</li></ol><p class="note">Web上の新規登録は、第三者による乗っ取りを防ぐため公開していません。</p></div>`;
 }
 function auth(){
+ team=null;
  financeReport=null;
  const setupForm=!configured&&setupAllowed;const showForm=configured||setupForm;
  app.innerHTML=`<main class="auth"><img class="authlogo" src="/logo-mark.png" alt="SICKSTYLE" width="506" height="335"><div class="authname">SICKSTYLE</div><div class="authbox">
@@ -43,11 +46,11 @@ function auth(){
  const f=document.querySelector('#auth');if(f)f.onsubmit=async e=>{e.preventDefault();const btn=f.querySelector('button');btn.disabled=true;document.querySelector('#autherror').textContent='';try{await api(configured?'login':'setup','POST',Object.fromEntries(new FormData(f)));await load();}catch(err){const t=document.querySelector('#autherror');if(t)t.textContent=err.message;}finally{btn.disabled=false;}};
 }
 // ---------- 画面 ----------
-const nav=[['overview','◈','ダッシュボード'],['goals','◎','目標'],['tasks','☑','タスク'],['shipments','▣','発送管理'],['metrics','↗','売上・SNS実績'],['finance','◫','利益・在庫'],['amazon','◆','Amazon連携'],['instagram','◉','Instagram連携'],['site','◇','サイト掲載'],['brand','✳','ブランド'],['settings','⚙','設定・バックアップ']];
+const nav=[['overview','◈','ダッシュボード'],['goals','◎','目標'],['tasks','☑','タスク'],['shipments','▣','発送管理'],['metrics','↗','売上・SNS実績'],['finance','◫','利益・在庫'],['team','♙','AI社員'],['amazon','◆','Amazon連携'],['instagram','◉','Instagram連携'],['site','◇','サイト掲載'],['brand','✳','ブランド'],['settings','⚙','設定・バックアップ']];
 const names=Object.fromEntries(nav.map(([id,,name])=>[id,name]));
 const rate=g=>Math.min(100,Math.max(0,Math.round(Number(g.current||0)/Number(g.target||1)*100)));
 function render(){
- const views={finance:()=>renderFinance(financeReport,esc),overview,instagram:instagramView,amazon:amazonView,brand,settings,site:siteView};
+ const views={team:()=>renderTeam(team,esc),finance:()=>renderFinance(financeReport,esc),overview,instagram:instagramView,amazon:amazonView,brand,settings,site:siteView};
  app.innerHTML=`<aside><div class="brandtop"><a href="#" class="brandmark" data-nav="overview">${LOGO}<span><b>SICKSTYLE</b><small>管理アプリ</small></span></a><span class="mobileonly"><button id="mrefresh" aria-label="最新データに更新">↻</button><button id="mlogout" aria-label="ログアウト">ログアウト</button></span></div><nav aria-label="メニュー">${nav.map(([id,icon,name])=>`<button data-nav="${id}" class="${section===id?'active':''}" ${section===id?'aria-current="page"':''}><span aria-hidden="true">${icon}</span>${name}</button>`).join('')}</nav><div class="sidebottom"><div>管理者<small>${esc(storageKind==='d1'?'クラウド保存（Cloudflare D1）':'このPCに保存（SQLite）')}</small></div><button id="logout">ログアウト</button></div></aside>
  <main><header><div class="breadcrumb">SICKSTYLE<span>/ ${names[section]}</span></div><div class="headeractions"><span class="live">保存先: ${storageKind==='d1'?'クラウド':'このPC'}</span><button id="refresh" aria-label="最新データに更新" title="最新データに更新">↻ 更新</button></div></header>
  <div class="content"><div class="pageheading"><div><h1>${names[section]}</h1></div><span class="date">${today().replaceAll('-',' / ')}</span></div>${(views[section]||(()=>collection(section)))()}</div>
@@ -138,9 +141,9 @@ function csvDialog(){const d=document.querySelector('#editor');d.innerHTML=`<for
 async function persist(next){if(busy)return;busy=true;try{const saved=await api('data','PUT',next);state={...next,revision:saved.revision};render();toast('保存しました');}finally{busy=false;}}
 async function logout(){try{await api('logout','POST',{});}catch(e){toast(e.message);return;}state=null;ig=null;amz=null;configured=true;auth();}
 async function refresh(){if(confirm('保存していない入力内容は破棄されます。最新データを読み込みますか？'))try{await load();toast('最新データを読み込みました');}catch(e){toast(e.message);}}
-function bind(){bindFinance();bindInstagram();bindAmazon();bindSite();
+function bind(){if(section==='team')bindTeam({model:team,api,setModel:v=>team=v,render,toast});bindFinance();bindInstagram();bindAmazon();bindSite();
  for(const id of ['#refresh','#mrefresh'])document.querySelector(id).onclick=refresh;for(const id of ['#logout','#mlogout'])document.querySelector(id).onclick=logout;
- document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=async e=>{e.preventDefault();section=b.dataset.nav;if(section==='site'&&!site)try{site=await api('site');}catch(x){toast(x.message);}render();window.scrollTo(0,0);});
+ document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=async e=>{e.preventDefault();section=b.dataset.nav;if(section==='team')try{team=await api('ai-team');}catch(x){toast(x.message);}if(section==='site'&&!site)try{site=await api('site');}catch(x){toast(x.message);}render();window.scrollTo(0,0);});
  document.querySelectorAll('[data-new]').forEach(b=>b.onclick=()=>editor(b.dataset.new));
  document.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>{const [key,id]=b.dataset.edit.split(':');editor(key,state[key].find(r=>r.id===id));});
  document.querySelectorAll('[data-check]').forEach(b=>b.onchange=async()=>{const n=structuredClone(state);n.tasks.find(x=>x.id===b.dataset.check).done=b.checked;try{await persist(n);}catch(e){toast(e.message);render();}});

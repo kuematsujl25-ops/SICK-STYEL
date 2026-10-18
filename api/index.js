@@ -1,3 +1,4 @@
+import {readTeam,writeTeam,taskPacket,TeamError} from '../lib/ai-team.js';
 import {runtime} from '../lib/runtime.js';
 import {getStore} from '../lib/runtime.js';
 import {empty,validate} from '../lib/domain.js';
@@ -69,6 +70,14 @@ export default async function handler(req,res){
  const redirect=location=>{res.writeHead(303,{Location:location,'Cache-Control':'no-store'});res.end();};
  if(['/api/amazon/login','/api/amazon/callback','/api/instagram/callback'].includes(route)&&req.method==='GET'&&!authorized)return redirect('/?auth=required');
  if(!authorized)return json(res,401,{error:'ログインしてください'});
+ if(route==='/api/ai-team'&&req.method==='GET')return json(res,200,await readTeam(store));
+ if(route==='/api/ai-team'&&req.method==='POST'){try{return json(res,200,await writeTeam(store,await body(req)));}catch(e){if(e instanceof TeamError)return json(res,e.status,{error:e.message});throw e;}}
+ if(route==='/api/ai-team/task'&&req.method==='GET'){
+  const t=await readTeam(store);const job=t.state.jobs.find(j=>j.id===url.searchParams.get('job_id'));
+  if(!t.state.enabled||!job||!['queued','rejected'].includes(job.status)||job.attempts>=2)return json(res,409,{error:'AI社員の停止状態・依頼状態を確認してください'});
+  return json(res,200,taskPacket(job));
+ }
+ if(route==='/api/ai-team/export'&&req.method==='GET'){res.setHeader('Content-Disposition','attachment; filename="sickstyle-ai-team-backup.json"');return json(res,200,await readTeam(store));}
  if(route==='/api/amazon/status'&&req.method==='GET')return json(res,200,await amazon.safeStatus(store));
  if(route==='/api/amazon/connect'&&req.method==='POST')return json(res,200,{url:await amazon.begin(store,sessionHash)});
  if(route==='/api/amazon/login'&&req.method==='GET'){try{return redirect(await amazon.login(store,sessionHash,url));}catch(e){console.error(JSON.stringify({event:'amazon_login',error:'invalid_request'}));return redirect('/?amazon=error');}}

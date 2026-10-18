@@ -22,6 +22,10 @@ npm start              # http://127.0.0.1:3000
 
 公開（スマホ・別PCから利用）する場合は `npm run cloud:setup` の1コマンドです。詳細は [公開手順と無料枠](docs/deployment.md)、管理者作成・「初期設定キー」の意味は [管理者作成手順](docs/local-admin.md) を参照してください。
 
+## AI社員と既存本番の更新
+
+9担当への依頼、BASE/TikTok/Metricoolの根拠CSV、Claude Code/Codex CLIによる手動分析、本人レビューを利用できます。[AI社員・開発レビュー・コード専用デプロイ手順](docs/ai-team-runtime.md)を参照してください。既存本番への更新は`npm run deploy:existing -- --apply`を使い、既存Secrets・VariablesとDBスキーマを保持します。
+
 ## 機能
 
 - 最終／月間目標と達成率

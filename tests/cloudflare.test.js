@@ -24,7 +24,27 @@ test('Workers実行環境 + D1: 認証・保存・独立セッション共有・
  const ig=(await req(a,'instagram/status')).data;assert.equal(ig.connected,false);assert.equal(ig.cache,null);assert.equal(ig.dmPending,null);const amzStatus=(await req(a,'amazon/status')).data;assert.equal(amzStatus.connected,false);assert.equal(amzStatus.configured,false);assert.equal((await req(a,'session')).data.setupAllowed,false);
  assert.equal((await mf.dispatchFetch('http://localhost/api/instagram/webhook?hub.mode=subscribe&hub.verify_token=qa-verify-only&hub.challenge=challenge')).status,200);
  assert.equal((await req(a,'instagram/webhook','POST',{})).status,403);const raw=JSON.stringify({object:'instagram',entry:[]});const signature='sha256='+createHmac('sha256','qa-app-secret').update(raw).digest('hex');assert.equal((await mf.dispatchFetch('http://localhost/api/instagram/webhook',{method:'POST',headers:{'X-Hub-Signature-256':signature},body:raw})).status,200);
- assert.equal((await req(a,'logout','POST',{})).status,200);for(const route of ['data','backup','instagram/status','amazon/status'])assert.equal((await req(a,route)).status,401);assert.equal((await req(b,'data')).status,200);
+
+ // AI staff use the same authenticated D1 store without changing existing workspace data.
+ assert.equal((await req({cookie:''},'ai-team')).status,401);
+ let team=(await req(a,'ai-team')).data;assert.equal(team.state.enabled,false);
+ assert.equal((await req(a,'ai-team/task?job_id=missing')).status,409);
+ const change=async command=>{const r=await req(a,'ai-team','POST',{revision:team.revision,command});assert.equal(r.status,200);team=r.data;};
+ await change({action:'toggle',enabled:true});
+ const oldRevision=team.revision;
+ await change({action:'create',job:{role:'creative',title:'架空のデザイン確認',objective:'不足している素材を確認',facts:[]}});
+ assert.equal((await req(b,'ai-team','POST',{revision:oldRevision,command:{action:'toggle',enabled:false}})).status,409);
+ assert.equal((await req(a,'ai-team','POST',{revision:team.revision,command:{action:'toggle',enabled:false}},{Origin:'https://bad.example'})).status,403);
+ const task=(await req(a,'ai-team/task?job_id='+team.state.jobs[0].id)).data;
+ const output={summary:'未取得のブランド素材を確認する必要があります',fact_ids:[],missing_data:['ブランド素材'],hypotheses:[],recommendations:[],approvals_required:['本人確認'],limitations:['架空の検証。デザイン生成・投稿は未実行。']};
+ const packet={version:1,business_unit:'sickstyle',job_id:task.job_id,input_hash:task.input_hash,provider:'codex',execution_id:'worker-fixture',started_at:new Date().toISOString(),finished_at:new Date().toISOString(),output};
+ await change({action:'import',job_id:task.job_id,packet});assert.equal(team.state.jobs[0].status,'in_review');
+ await change({action:'approve',job_id:task.job_id,note:'架空のテスト成果物を確認'});
+ assert.equal((await req(b,'ai-team')).data.state.jobs[0].status,'completed');
+ assert.equal((await req(a,'ai-team/export')).data.state.knowledge[0].effect_status,'unmeasured');
+ assert.equal((await req(a,'ai-team/task?job_id='+task.job_id)).status,409);
+ assert.equal((await req(b,'data')).data.tasks[0].done,false);
+ assert.equal((await req(a,'logout','POST',{})).status,200);for(const route of ['data','backup','instagram/status','amazon/status','ai-team','ai-team/export','ai-team/task?job_id=missing'])assert.equal((await req(a,route)).status,401);assert.equal((await req(b,'data')).status,200);
  const response=await mf.dispatchFetch('http://localhost/');assert.equal(response.status,200);assert.match(await response.text(),/SICKSTYLE/);assert.equal((await mf.dispatchFetch('http://localhost/manifest.webmanifest')).status,200);
  assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM ss_users').first()).n,1);
  // Separate worker, same source, configured stop switch: never falls back to unprotected data.

@@ -230,3 +230,5 @@ dialog::backdrop{background:#000b;backdrop-filter:blur(3px)}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
 
 .financehero .filelabel:focus-within{outline:3px solid var(--focus);outline-offset:3px}
+
+.teamroles{margin:20px 0}.teamroles .record{display:flex;flex-direction:column;gap:8px}.teamroles .record button{margin-top:auto}.teamoutput{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;max-height:500px;overflow:auto}#teamcreate{display:grid;gap:14px;margin-top:18px}#teamcreate textarea{min-height:90px}
