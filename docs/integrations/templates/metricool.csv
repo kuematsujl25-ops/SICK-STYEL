@@ -1,0 +1,4 @@
+service,date_jst,channel,metric,value,unit,source,observed_at
+metricool,,,reach,,count,official_dashboard_manual,
+metricool,,,engagement,,count,official_dashboard_manual,
+metricool,,,clicks,,count,official_dashboard_manual,
