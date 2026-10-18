@@ -6,6 +6,7 @@ import {randomUUID} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {validateTaskPacket,buildPrompt,validateOutput} from '../../lib/ai-team.js';
 import {checkSubscription,codexArgs} from './cli.js';
+import {resultPath} from './result-path.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)),'../..');
 const args = process.argv.slice(2);
@@ -50,7 +51,7 @@ try {
         finished_at:new Date().toISOString(),output};
       const destination = resolve(root,'data','ai-results');
       mkdirSync(destination,{recursive:true,mode:0o700});
-      const path = resolve(destination,`${packet.job_id}-${id}.json`);
+      const path = resultPath(destination,packet.job_id,id);
       writeFileSync(path,JSON.stringify(artifact,null,2)+'\n',{mode:0o600,flag:'wx'});
       console.log(`成果物を保存しました。管理画面の「成果物JSONを取り込む」で選択してください。\n${path}`);
     } finally { rmSync(dir,{recursive:true,force:true}); }
