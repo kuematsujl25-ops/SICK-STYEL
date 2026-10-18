@@ -76,6 +76,18 @@ npm run deploy:existing -- --apply      # 認証・Free確認・テスト後に�
 
 反映後は公開ファイルと未認証APIの読み取りだけを検証する。本人ログイン後の機能は「AI社員」が初期停止であること、作成・取込・レビュー・停止を本人が確認する。検証スクリプトは本番の業務レコードを追加・削除しない。
 
+## MacでWranglerが起動しない場合
+
+`Cannot find module ... esbuild/lib/main.js`はCLIの依存ファイルが見つからない状態。作業ディレクトリで以下を順に実行する。`npm ci`は`node_modules`を作り直し、`data/code-reviews/`の結果は保持する。ターミナルにはコード枠のコマンドだけを貼り付ける。
+
+```bash
+npm ci --include=dev --include=optional --cache "$(mktemp -d)" &&
+node -e "require('esbuild').transformSync('const n = 1'); console.log('esbuild OK')" &&
+npx --no-install wrangler --version
+```
+
+成功後に本人ログインする。デプロイの認証判定は`whoami --json`の出力全体をJSONとして解析する。CLI起動失敗・不正な応答・未ログインを区別し、アカウント情報をエラーログへ含めない。
+
 ## Canvaと他サービス
 
 このチャットとクラウドCLIにはCanvaのデザイン検索・編集MCPツールが公開されていない。利用者側のプラグイン接続は否定しないが、この環境からBrand Kit・デザイン・無料素材の実検索は検証できていない。追加費用を伴う生成を実行しない。
@@ -86,6 +98,6 @@ BASE/TikTok/Metricoolの公式接続の条件・無料収集用CSVは`docs/integ
 
 ## 検証の限界
 
-クラウドでNode/SQLite/Workers+D1の機能テストとブラウザー操作を実施する。CLI接続部のテストには代替プロセスも使い、実モデル実行と区別する。この環境のCodex CLIは認証状態を確認できるが、ランタイム初期化時に読み取り専用ファイルシステムのエラーで停止する。Claude CLIはこのクラウドに未導入。実モデルによる分析・独立CodexレビューはMacでの実行が残る。
+クラウドでNode/SQLite/Workers+D1の機能テストとブラウザー操作を実施する。CLI接続部のテストには代替プロセスも使い、実モデル実行と区別する。この環境のCodex CLIは認証状態を確認できるが、ランタイム初期化時に読み取り専用ファイルシステムのエラーで停止する。Claude CLIはこのクラウドに未導入。実モデルによるAI社員分析は未検証。利用者Macでは旧HEAD `dd270bec`の独立Codexレビューが実行され、Wrangler認証JSONを行ごとに解析しているP1が報告された。出力全体のJSON解析に修正し、複数行・未ログイン・CLI依存欠落・プロセス失敗の回帰テストを追加した。修正後SHAはMacで再レビューする。
 
 Cloudflareは未ログインでデプロイが認証前に停止するため、本番反映済みとは報告しない。Macからの本人認証が必要。秘密値をチャットへ送る必要はない。

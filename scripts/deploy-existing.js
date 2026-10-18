@@ -5,6 +5,7 @@ import {resolve,dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {randomUUID} from 'node:crypto';
 import {ensureFree} from './lib/free-check.js';
+import {requireWranglerLogin} from './lib/wrangler-auth.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)),'..');
 process.chdir(root);
@@ -40,11 +41,7 @@ try {
     console.log('確認のみ。対象: '+config.name+'\n手順: 本人認証 → Free確認 → npm test → 既存設定を保持してVersionアップロード → 100%反映 → 読み取り検証\nSecrets・Variables・DBマイグレーション・Cron・ルート・プランの変更は行いません。実行: npm run deploy:existing -- --apply');
   } else {
     const who = wrangler(['whoami','--json']);
-    const authenticated = who.stdout?.split('\n').some(line => {
-      try { return JSON.parse(line).loggedIn === true; } catch { return false; }
-    });
-    if (who.status !== 0 || !authenticated)
-      throw Error('Cloudflare本人ログインが必要です。Macで npx wrangler login を実行してください');
+    requireWranglerLogin(who);
     await ensureFree(config.account_id);
     const git = args => {
       const r = run('git',args);
