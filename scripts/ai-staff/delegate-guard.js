@@ -92,7 +92,7 @@ export function claimOnce(dir){
 }
 
 export function decide(argv,stdinText,now=Date.now()){
-  if(!Array.isArray(argv)||![1,2].includes(argv.length)||argv.length===2&&!['startup','tool'].includes(argv[1]))deny('引数');
+  if(!Array.isArray(argv)||![1,2].includes(argv.length)||argv.length===2&&!['startup','tool','deny'].includes(argv[1]))deny('引数');
   const {dir,policy}=readPolicyFile(argv[0],now);
   if(typeof stdinText!=='string'||Buffer.byteLength(stdinText)>GUARD_LIMITS.max_stdin_bytes)deny('入力サイズ');
   let event;
@@ -103,6 +103,7 @@ export function decide(argv,stdinText,now=Date.now()){
     writeFileSync(join(dir,'started.json'),JSON.stringify({stage:'startup',session_id:policy.session_id}),{mode:0o600,flag:'wx'});
     return {};
   }
+  if(argv[1]==='deny')deny('親単独のツール禁止');
   checkEvent(event,policy);
   if(argv[1]==='tool'&&(!existsSync(join(dir,'started.json'))||typeof event.tool_use_id!=='string'||!event.tool_use_id))deny('startup証拠/ツールID');
   claimOnce(dir);

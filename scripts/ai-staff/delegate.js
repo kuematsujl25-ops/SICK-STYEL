@@ -13,7 +13,7 @@ export const DELEGATION_UNAVAILABLE='限定3段階は承認・配置済みです
 // Always throws. Called before any file, definition, authentication, CLI or model access.
 export function delegationUnavailable(){fail(DELEGATION_UNAVAILABLE);}
 const sha=v=>createHash('sha256').update(typeof v==='string'?v:JSON.stringify(v)).digest('hex');
-export const USAGE='使い方: node scripts/ai-staff/run-task.js TASK.json [--provider codex|claude] [--delegate 担当名] [--model モデルID] [--run] [--delegation-approval 本人確認JSON]';
+export const USAGE='使い方: node scripts/ai-staff/run-task.js TASK.json [--provider codex|claude] [--delegate 担当名] [--model モデルID] [--run] [--delegation-approval 本人確認JSON] [--comparison-baseline]';
 export const DELEGATES=Object.freeze(['ss-data-auditor','ss-profit-inventory','ss-qa-security']);
 export const KNOWN_MODELS=Object.freeze(['claude-opus-5-5','claude-sonnet-5-5','claude-haiku-5-5','claude-fable-5-1']);
 export const MIN_CLAUDE_VERSION='2.1.296';
@@ -25,13 +25,14 @@ export const STRUCTURED_OUTPUT_TOOL='StructuredOutput';
 export const isDelegationTool=name=>name==='Agent'||name==='Task';
 
 export function parseRunArgs(args){
-  if(!Array.isArray(args)||!args.length||args.length>10)fail(USAGE);
+  if(!Array.isArray(args)||!args.length||args.length>11)fail(USAGE);
   const [filename,...rest]=args;
   if(typeof filename!=='string'||!filename||filename.startsWith('-'))fail(USAGE);
   const opts={filename,provider:'codex',delegate:null,model:null,run:false},seen=new Set();
   for(let i=0;i<rest.length;i++){
     const flag=rest[i];
     if(seen.has(flag))fail('同じ引数を重複して指定できません。'+USAGE);
+    if(flag==='--comparison-baseline'){seen.add(flag);opts.comparison_baseline=true;continue;}
     if(flag==='--run'){seen.add(flag);opts.run=true;continue;}
     if(!['--provider','--delegate','--model','--delegation-approval'].includes(flag))fail('対応していない引数です。'+USAGE);
     const value=rest[i+1];
@@ -42,7 +43,8 @@ export function parseRunArgs(args){
   if((opts.delegate!==null||opts.model!==null)&&opts.provider!=='claude')fail('委任・モデル指定はClaude Code（--provider claude）だけで使えます');
   if(opts.delegate!==null&&!DELEGATES.includes(opts.delegate))fail('委任先は許可された担当名だけです: '+DELEGATES.join(', '));
   if(opts.model!==null&&!KNOWN_MODELS.includes(opts.model))fail('モデルは確認済みのID（'+KNOWN_MODELS.join(', ')+'）だけです');
-  if(opts['delegation-approval']&&(!opts.delegate||!opts.run||!opts.model))fail('委任承認には担当・固定モデル・--runが必要です');
+  if(opts.comparison_baseline&&(opts.delegate||opts.provider!=='claude'||!opts['delegation-approval']))fail('親単独比較にはClaudeと承認JSONが必要です。委譲指定とは併用できません');
+  if(opts['delegation-approval']&&(!(opts.delegate||opts.comparison_baseline)||!opts.run||!opts.model))fail('委任承認には担当・固定モデル・--runが必要です');
   return opts;
 }
 

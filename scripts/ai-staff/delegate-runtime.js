@@ -5,14 +5,17 @@ import {resolve,join,dirname,isAbsolute} from 'node:path';
 import {tmpdir,homedir} from 'node:os';
 import {randomUUID,createHash} from 'node:crypto';
 import {spawn,spawnSync} from 'node:child_process';
+import {prepareEvidenceRoot,createEvidenceDirectory,saveEvidence,readEvidence} from './run-evidence.js';
+import {Utf8Capture,bytesHash} from './utf8-capture.js';
+import {validateComparisonBaseline} from './transcript-baseline.js';
 import {TeamError} from '../../lib/ai-team.js';
 import {checkSubscription} from './cli.js';
-import {agentDefinition,delegateEnv,delegatePrompt,validateTranscript,DELEGATES,KNOWN_MODELS,LIMITS,isDelegationTool} from './delegate.js';
+import {agentDefinition,delegateEnv,delegatePrompt,analysisPrompt,validateTranscript,DELEGATES,KNOWN_MODELS,LIMITS,isDelegationTool} from './delegate.js';
 
 const fail=()=>{throw new TeamError('委任の承認・設定・ガード証拠を確認できません。モデル再試行・成果物取込は行いません');};
 export const hash=v=>createHash('sha256').update(typeof v==='string'?v:JSON.stringify(v)).digest('hex');
 export const ROLE_DELEGATE=Object.freeze({coo:'ss-data-auditor',profit_inventory:'ss-profit-inventory',social:'ss-qa-security'});
-export const PROFILE='claude-2.1.296-deny-only-v1';
+export const PROFILE='claude-2.1.296-deny-only-v2';
 const uuid=v=>typeof v==='string'&&/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(v);
 const privateFile=path=>{
   if(!isAbsolute(path)||resolve(path)!==path)fail();
@@ -59,9 +62,9 @@ export function settingsSnapshot(paths){
     return {path,sha256:hash(text)};
   });
 }
-export function verifyApproval(a,{packet,delegate,model,inventory,source_hash,now=Date.now()}){
+export function verifyApproval(a,{packet,delegate,model,inventory,source_hash,mode='delegated',now=Date.now()}){
   const when=Date.parse(a?.checked_at);
-  if(a?.version!==1||a.profile!==PROFILE||!uuid(a.token)||a.delegate!==delegate||ROLE_DELEGATE[packet.role]!==delegate||
+  if(!['baseline','delegated'].includes(mode)||a?.mode!==mode||a?.version!==1||a.profile!==PROFILE||!uuid(a.token)||a.delegate!==delegate||ROLE_DELEGATE[packet.role]!==delegate||
     !DELEGATES.includes(delegate)||!KNOWN_MODELS.includes(model)||a.model!==model||a.packet_sha256!==hash(packet)||
     a.settings_sha256!==hash(inventory)||a.source_sha256!==source_hash||!Number.isFinite(when)||when>now||now-when>600000||
     a.subscription_confirmed!==true||a.extra_usage_disabled!==true||a.no_additional_charge_confirmed!==true||
@@ -69,31 +72,31 @@ export function verifyApproval(a,{packet,delegate,model,inventory,source_hash,no
     a.no_remote_or_mdm_policy!==true||a.quality_review_required!==true)fail();
   return a;
 }
-export function runtimeArgs({session,delegate,model,definition,settings}){
-  if(!uuid(session)||!DELEGATES.includes(delegate)||!KNOWN_MODELS.includes(model)||!isAbsolute(settings))fail();
-  return ['-p','--model',model,'--session-id',session,'--tools','Agent','--permission-mode','dontAsk',
+export function runtimeArgs({session,delegate,model,definition,settings,mode='delegated'}){
+  if(!['baseline','delegated'].includes(mode)||!uuid(session)||!DELEGATES.includes(delegate)||!KNOWN_MODELS.includes(model)||!isAbsolute(settings))fail();
+  return ['-p','--model',model,'--session-id',session,'--tools',mode==='baseline'?'':'Agent','--permission-mode','dontAsk',
     '--settings',settings,'--agents',JSON.stringify({[delegate]:definition}),'--strict-mcp-config','--mcp-config','{"mcpServers":{}}',
-    '--disable-slash-commands','--no-session-persistence','--max-turns',String(LIMITS.parent_max_turns),
+    '--disable-slash-commands','--no-session-persistence','--effort','low','--max-turns',String(LIMITS.parent_max_turns),
     '--output-format','stream-json','--verbose','--include-hook-events','--forward-subagent-text',
-    '--allowedTools',`Agent(${delegate})`,'--disallowedTools','Bash','Read','Write','Edit','Grep','Glob','WebFetch','WebSearch','SendMessage'];
+    ...(mode==='delegated'?['--allowedTools',`Agent(${delegate})`]:[]),'--disallowedTools','Bash','Read','Write','Edit','Grep','Glob','WebFetch','WebSearch','SendMessage'];
 }
-export function runtimeSettings(guard,policy){
+export function runtimeSettings(guard,policy,mode='delegated'){
   const hook=mode=>({type:'command',command:process.execPath,args:[guard,policy,mode],timeout:8,onFailure:'block'});
-  return {hooks:{SessionStart:[{matcher:'startup',hooks:[hook('startup')]}],PreToolUse:[{matcher:'*',hooks:[hook('tool')]}]}};
+  return {hooks:{SessionStart:[{matcher:'startup',hooks:[hook('startup')]}],PreToolUse:[{matcher:'*',hooks:[hook(mode==='baseline'?'deny':'tool')]}]}};
 }
 // No user prompt is delivered until a successful startup hook AND its private marker are observed.
 // CLI variants that wait for stdin before SessionStart time out, without receiving the task prompt.
-export function executeGuarded({args,cwd,env,prompt,session,dir,spawnProcess=spawn,model=null,timeout=LIMITS.timeout_ms}){
+export function executeGuarded({args,cwd,env,prompt,session,dir,spawnProcess=spawn,model=null,mode='delegated',timeout=LIMITS.timeout_ms}){
   return new Promise((resolveResult,reject)=>{
-    let out='',err='',pending='',released=false,stopped=false,calls=0,startId=null;
+    let pending='',released=false,stopped=false,calls=0,startId=null;
+    const stdoutCapture=new Utf8Capture(LIMITS.max_transcript_bytes),stderrCapture=new Utf8Capture(100000);
     const child=spawnProcess('claude',args,{cwd,env,detached:true,stdio:['pipe','pipe','pipe']});
     const stop=()=>{stopped=true;try{if(child.pid)process.kill(-child.pid,'SIGKILL');else child.kill('SIGKILL')}catch{child.kill('SIGKILL')}};
     const timer=setTimeout(stop,timeout);
     const startTimer=setTimeout(()=>{if(!released)stop()},15000);
-    child.on('error',()=>{clearTimeout(timer);clearTimeout(startTimer);reject(new TeamError('委任CLIを起動できません。自動再試行しません'));});
+    child.on('error',()=>{stopped=true;});
     child.stdout.on('data',buf=>{
-      out+=buf;pending+=buf;
-      if(Buffer.byteLength(out)>LIMITS.max_transcript_bytes){stop();return}
+      try{pending+=stdoutCapture.write(buf);}catch{stop();return}
       let end;
       while(!stopped&&(end=pending.indexOf('\n'))>=0){
         const line=pending.slice(0,end);pending=pending.slice(end+1);if(!line.trim())continue;
@@ -108,28 +111,38 @@ export function executeGuarded({args,cwd,env,prompt,session,dir,spawnProcess=spa
           }catch{stop();break}
           released=true;clearTimeout(startTimer);child.stdin.end(prompt);
         }else if(!released){stop();break}
-        if(m.type==='system'&&m.subtype==='init'&&(!Array.isArray(m.tools)||m.tools.length!==1||!isDelegationTool(m.tools[0])||
+        if(m.type==='system'&&m.subtype==='init'&&(!Array.isArray(m.tools)||(mode==='baseline'?m.tools.length!==0:m.tools.length!==1||!isDelegationTool(m.tools[0]))||
           (model!==null&&m.model!==model)||m.permissionMode!=='dontAsk'||m.apiKeySource!=='none'||m.mcp_servers?.length))stop();
         if(m.type==='system'&&String(m.subtype).startsWith('hook_')&&!['SessionStart','PreToolUse'].includes(m.hook_event))stop();
         if(m.type==='system'&&m.subtype==='hook_response'&&(m.exit_code!==0||m.outcome!=='success'||!['','{}'].includes(m.stdout||'')))stop();
         if(m.type==='rate_limit_event'&&(m.rate_limit_info?.status!=='allowed'||m.rate_limit_info?.isUsingOverage!==false))stop();
         for(const c of Array.isArray(m.message?.content)?m.message.content:[])
-          if(!c||typeof c!=='object'||c.type==='tool_use'&&(m.parent_tool_use_id||!isDelegationTool(c.name)||++calls>1))stop();
+          if(!c||typeof c!=='object'||c.type==='tool_use'&&(mode==='baseline'||m.parent_tool_use_id||!isDelegationTool(c.name)||++calls>1))stop();
         if(m.type==='result'&&(m.is_error||m.permission_denials?.length))stop();
       }
     });
-    child.stderr.on('data',buf=>{err+=buf;if(err.trim()||Buffer.byteLength(err)>100000)stop()});
+    child.stderr.on('data',buf=>{try{stderrCapture.write(buf);}catch{stop();return}if(buf.some(b=>![9,10,13,32].includes(b)))stop()});
     child.stdin.on('error',stop);
     child.on('close',(code,signal)=>{clearTimeout(timer);clearTimeout(startTimer);
-      if(stopped||!released||code!==0||signal||pending.trim())reject(new TeamError('委任ガード・CLI記録が未確認または異常です。成果物は保存しません'));
-      else resolveResult(out);
+      const capture={stdout:stdoutCapture.end(),stderr:stderrCapture.end(),exit_code:code,signal,prompt_released:released,stopped};
+      if(stopped||!released||code!==0||signal||pending.trim()||!capture.stdout.utf8_valid||!capture.stderr.utf8_valid){
+        const error=new TeamError('委任ガード・CLI記録が未確認または異常です。成果物は保存しません');error.capture=capture;reject(error);
+      }else resolveResult(capture);
     });
   });
 }
-export function verifyGuardEvidence(stdout,dir,session){
+export function verifyGuardEvidence(stdout,dir,session,mode='delegated'){
   const rows=stdout.trim().split('\n').map(l=>JSON.parse(l));
   const calls=rows.flatMap(m=>(m.message?.content||[]).filter?.(c=>c.type==='tool_use')||[]);
-  if(calls.length!==1)fail();
+  const start=JSON.parse(privateFile(join(dir,'started.json')));
+  if(start.session_id!==session||start.stage!=='startup')fail();
+  if(mode==='baseline'){
+    const hooks=rows.filter(m=>m.type==='system'&&m.subtype==='hook_response');
+    if(calls.length||existsSync(join(dir,'used'))||existsSync(join(dir,'tool.json'))||hooks.length!==1||
+      hooks[0].hook_event!=='SessionStart'||hooks[0].exit_code!==0||hooks[0].outcome!=='success')fail();
+    return {startup:true,no_tools:true,quality_approved:false};
+  }
+  if(mode!=='delegated'||calls.length!==1)fail();
   const receipt=JSON.parse(privateFile(join(dir,'tool.json')));
   if(receipt.session_id!==session||receipt.stage!=='tool'||receipt.tool_use_id!==calls[0].id||
     receipt.tool_name!==calls[0].name||receipt.input_sha256!==hash(calls[0].input)||!existsSync(join(dir,'used')))fail();
@@ -138,16 +151,17 @@ export function verifyGuardEvidence(stdout,dir,session){
     hooks.filter(m=>m.hook_event==='PreToolUse').length!==1||hooks.some(m=>m.exit_code!==0||m.outcome!=='success'))fail();
   return {startup:true,pre_tool_use:true,one_shot:true,input_sha256:receipt.input_sha256,quality_approved:false};
 }
-export async function runDelegated({root,packet,delegate,model,approvalPath}){
+export async function runDelegated({root,packet,delegate,model,approvalPath,mode='delegated'}){
   // No model/auth subprocess before the explicit receipt and settings checks.
   if(!DELEGATES.includes(delegate)||!KNOWN_MODELS.includes(model)||ROLE_DELEGATE[packet.role]!==delegate||
     process.platform!=='darwin'||process.env.CLAUDE_CONFIG_DIR)fail();
   const paths=settingsPaths(root),inventory=settingsSnapshot(paths);
-  const sources=['delegate-runtime.js','delegate-guard.js','delegate.js','transcript-async.js','cli.js','quality-policy.js','../../lib/ai-team.js'];
+  const sources=['transcript-baseline.js','run-evidence.js','utf8-capture.js','delegate-runtime.js','delegate-guard.js','delegate.js','transcript-async.js','cli.js','quality-policy.js','../../lib/ai-team.js'];
   const definitionText=readFileSync(join(root,'scripts/ai-staff/agents',delegate+'.md'),'utf8');
   const definition=agentDefinition(delegate,definitionText);
   const source_hash=hash(sources.map(p=>hash(readFileSync(join(root,'scripts/ai-staff',p),'utf8'))).concat(hash(definitionText)));
-  const approval=verifyApproval(JSON.parse(privateFile(approvalPath)),{packet,delegate,model,inventory,source_hash});
+  const approval=verifyApproval(JSON.parse(privateFile(approvalPath)),{packet,delegate,model,inventory,source_hash,mode});
+  const evidenceDir=createEvidenceDirectory(prepareEvidenceRoot());
   // A copy of the same receipt cannot reset the token. Failed and uncertain runs consume it as well.
   const tokens=join(root,'data/delegation-tokens');mkdirSync(tokens,{recursive:true,mode:0o700});
   const tokenDir=lstatSync(tokens);if(!tokenDir.isDirectory()||tokenDir.isSymbolicLink()||(tokenDir.mode&0o077)||
@@ -160,17 +174,59 @@ export async function runDelegated({root,packet,delegate,model,approvalPath}){
   let a;try{a=JSON.parse(auth.stdout)}catch{fail()}
   if(auth.status!==0||a.loggedIn!==true||a.authMethod!=='claude.ai'||a.apiProvider!=='firstParty'||!['pro','max'].includes(a.subscriptionType))fail();
   if(hash(settingsSnapshot(paths))!==hash(inventory))fail();
-  const dir=mkdtempSync(join(tmpdir(),'ss-delegation-')),session=randomUUID(),prompt=delegatePrompt(packet,delegate);
+  const dir=mkdtempSync(join(tmpdir(),'ss-delegation-')),session=randomUUID(),prompt=mode==='baseline'?analysisPrompt(packet):delegatePrompt(packet,delegate);
+  let capture=null,archived=false,accepted=false;
+  const startedAt=new Date().toISOString();
+  const args=runtimeArgs({session,delegate,model,definition,settings:join(dir,'settings.json'),mode});
+  const persist=()=>{
+    const files={'packet.json':JSON.stringify(packet),'prompt.txt':prompt,'approval.json':JSON.stringify(approval),
+      'inventory.json':JSON.stringify(inventory),'definition.txt':definitionText,'invocation.json':JSON.stringify({args,session,model,delegate,mode}),
+      'approval-token.used':readFileSync(join(tokens,approval.token))};
+    for(const name of ['policy.json','settings.json','started.json','used','tool.json'])
+      if(existsSync(join(dir,name)))files[name]=readFileSync(join(dir,name));
+    let streams=null;
+    if(capture){streams={};for(const name of ['stdout','stderr']){
+      const {raw,text,...meta}=capture[name];files[name+'.bytes']=raw;files[name+'.utf8.txt']=text;streams[name]=meta;
+    }}
+    const evidence=saveEvidence(evidenceDir,files,{session,model,delegate,mode,started_at:startedAt,finished_at:new Date().toISOString(),
+      source_sha256:source_hash,cli_version:version.stdout.trim(),limits:{...LIMITS,effort:'low'},audit_status:accepted?'accepted':'rejected',quality_approved:false,
+      streams,execution:capture?{exit_code:capture.exit_code,signal:capture.signal,prompt_released:capture.prompt_released,stopped:capture.stopped}:null});
+    archived=true;return evidence;
+  };
   try{
     const guard=join(root,'scripts/ai-staff/delegate-guard.js'),policy=join(dir,'policy.json'),settings=join(dir,'settings.json');
     writeFileSync(policy,JSON.stringify({version:1,session_id:session,delegate,packet,expires_at:new Date(Date.now()+600000).toISOString()}),{mode:0o600});
-    writeFileSync(settings,JSON.stringify(runtimeSettings(guard,policy)),{mode:0o600});
-    const stdout=await executeGuarded({args:runtimeArgs({session,delegate,model,definition,settings}),cwd:root,env,prompt,session,dir,model});
+    writeFileSync(settings,JSON.stringify(runtimeSettings(guard,policy,mode)),{mode:0o600});
+    capture=await executeGuarded({args,cwd:root,env,prompt,session,dir,model,mode});
+    const stdout=capture.stdout.text;
     if(hash(settingsSnapshot(paths))!==hash(inventory))fail();
-    const guardEvidence=verifyGuardEvidence(stdout,dir,session);
-    const checked=validateTranscript(stdout,{delegate,model,packet,session_id:session});
-    if(checked.audit?.profile!=='claude-2.1.296-async-v1')fail();
-    return {stdout,output:checked.output,checked,prompt,definition:definitionText,cli_version:version.stdout.trim(),
+    const guardEvidence=verifyGuardEvidence(stdout,dir,session,mode);
+    const checked=mode==='baseline'?validateComparisonBaseline(stdout,{model,packet,session_id:session,limits:LIMITS}):validateTranscript(stdout,{delegate,model,packet,session_id:session});
+    if(checked.audit?.profile!==(mode==='baseline'?'claude-2.1.296-baseline-v1':'claude-2.1.296-async-v1'))fail();
+    accepted=true;const evidence=persist();
+    return {stdout,evidence,capture_hashes:{raw_bytes_sha256:capture.stdout.raw_bytes_sha256,decoded_utf8_sha256:capture.stdout.decoded_utf8_sha256},output:checked.output,checked,prompt,definition:definitionText,cli_version:version.stdout.trim(),
       guardEvidence,approval_sha256:hash(approval),quality_approved:false};
-  }finally{rmSync(dir,{recursive:true,force:true})}
+  }catch(error){
+    capture??=error.capture??null;
+    if(!archived){accepted=false;persist();}
+    throw new TeamError('委任実行は未確認または失敗です。私有証拠を保管し、取込用成果物は保存しません');
+  }finally{if(archived)rmSync(dir,{recursive:true,force:true})}
+}
+
+export function replayRunEvidence(dir,manifestHash){
+  const {manifest,files}=readEvidence(dir,manifestHash),m=manifest.metadata;
+  const decode=b=>new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(b);
+  if(m.audit_status!=='accepted'||!files['approval-token.used']||!m.streams?.stdout?.utf8_valid||m.streams.stdout.truncated||
+    !m.streams.stdout.ended||m.execution?.exit_code!==0||m.execution.signal!==null||m.execution.prompt_released!==true||m.execution.stopped!==false)fail();
+  const stdout=decode(files['stdout.bytes']);
+  if(bytesHash(files['stdout.bytes'])!==m.streams.stdout.raw_bytes_sha256||
+    bytesHash(Buffer.from(stdout))!==m.streams.stdout.decoded_utf8_sha256||decode(files['stdout.utf8.txt'])!==stdout)fail();
+  const packet=JSON.parse(decode(files['packet.json']));
+  const approval=JSON.parse(decode(files['approval.json']));
+  verifyApproval(approval,{packet,delegate:m.delegate,model:m.model,inventory:JSON.parse(decode(files['inventory.json'])),
+    source_hash:m.source_sha256,mode:m.mode,now:Date.parse(m.started_at)});
+  const guardEvidence=verifyGuardEvidence(stdout,dir,m.session,m.mode);
+  const checked=m.mode==='baseline'?validateComparisonBaseline(stdout,{packet,model:m.model,session_id:m.session,limits:LIMITS}):validateTranscript(stdout,{packet,delegate:m.delegate,model:m.model,session_id:m.session});
+  if(checked.audit?.profile!==(m.mode==='baseline'?'claude-2.1.296-baseline-v1':'claude-2.1.296-async-v1'))fail();
+  return {guardEvidence,checked,quality_approved:false};
 }

@@ -154,3 +154,8 @@ node scripts/ai-staff/evaluate.js score dq-01 data/ai-results/<job>-<exec>.json 
 ## 8. 明示オプトイン経路の接続（次の独立レビュー待ち）
 
 前節までの「通常委任は無条件停止」は、承認記録を指定しない従来経路について維持する。`--delegation-approval` を明示した限定経路を追加し、契約/設定の確認・単回token・起動前ガード・実行後の証拠照合を接続した。詳細と未実証事項は [guarded-runtime.md](guarded-runtime.md)。今回のオフライン全試験は129件成功。実モデル試験・30ケース評価・品質承認・本番反映は含まない。
+
+
+## 9. UTF-8・証拠保存・同条件比較の修正
+
+独立レビューで見つかったchunk境界のUTF-8破損を修正。全バイト位置分割、不正/途中切れ、私有証拠の再監査、同条件の親単独経路を追加した。元bytesとデコード結果のhashを区別し、guard markerをcleanup前に保存する。実モデルは未実行。詳細は [guarded-runtime.md](guarded-runtime.md) の末尾。今回のコードも独立再レビューが必要。

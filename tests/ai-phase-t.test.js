@@ -213,7 +213,10 @@ test('評価ユーティリティ: 依頼書の書出しと明示ファイルの
   try{
     const out=join(dir,'packets');const index=writePackets(out);
     const status=JSON.parse(readFileSync(join(out,'index.json'),'utf8')).note;
-    assert.match(status,/通常委譲と追加評価は停止中/);assert.match(status,/追加承認後の計画/);
+    // Production work is authorized, but evaluation still needs review and fresh runtime gates.
+    assert.match(status,/限定評価は独立レビュー・契約\/実効設定\/ガード確認待ち/);
+    assert.match(status,/表示コマンドは計画/);
+    assert.match(status,/本人確認JSONの作成やモデル実行は行いません/);
     const cliOut=join(dir,'cli-packets');
     const cli=spawnSync(process.execPath,[join(root,'scripts/ai-staff/evaluate.js'),'packets',cliOut],{encoding:'utf8'});
     assert.equal(cli.status,0,cli.stderr);assert.ok(cli.stdout.includes(status));
@@ -223,6 +226,11 @@ test('評価ユーティリティ: 依頼書の書出しと明示ファイルの
     const packet=JSON.parse(readFileSync(join(out,'pi-01.task.json'),'utf8'));
     assert.equal(packet.input_hash,fixtureInputHash(FIXTURES.find(f=>f.id==='pi-01')));
     assert.match(index[0].delegated,/--delegate ss-data-auditor/);
+    assert.match(index[0].baseline,/--comparison-baseline --delegation-approval PRIVATE_BASELINE_APPROVAL\.json/);
+    assert.match(index[0].delegated,/--delegation-approval PRIVATE_DELEGATED_APPROVAL\.json/);
+    assert.ok(!index[0].baseline.includes('--delegate '));
+    assert.ok(!existsSync(join(out,'PRIVATE_BASELINE_APPROVAL.json')));
+    assert.ok(!existsSync(join(out,'PRIVATE_DELEGATED_APPROVAL.json')));
     const f=FIXTURES.find(x=>x.id==='pi-01');
     const art=join(dir,'a.json');
     writeFileSync(art,JSON.stringify({version:1,business_unit:'sickstyle',job_id:packet.job_id,input_hash:packet.input_hash,

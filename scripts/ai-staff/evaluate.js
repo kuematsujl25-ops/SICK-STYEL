@@ -6,7 +6,7 @@ import {pathToFileURL} from 'node:url';
 import {createJob,taskPacket,TeamError} from '../../lib/ai-team.js';
 import {FIXTURES,findFixture,fixtureInput,fixtureInputHash,scoreOutput} from './eval-fixtures.js';
 
-export const EVALUATION_STATUS='限定3段階は承認・配置済み、初回比較不成立。通常委譲と追加評価は停止中。表示する実行コマンドは追加承認後の計画です。';
+export const EVALUATION_STATUS='限定評価は独立レビュー・契約/実効設定/ガード確認待ち。表示コマンドは計画で、本人確認JSONの作成やモデル実行は行いません。';
 const USAGE='使い方: node scripts/ai-staff/evaluate.js packets 新しい出力先 | score FIXTURE_ID ARTIFACT.json';
 export function writePackets(out,now=new Date().toISOString()){
   const dir=resolve(out);
@@ -16,8 +16,8 @@ export function writePackets(out,now=new Date().toISOString()){
     const file=resolve(dir,f.id+'.task.json');
     writeFileSync(file,JSON.stringify(packet,null,2)+'\n',{mode:0o600,flag:'wx'});
     return {fixture:f.id,category:f.category,role:f.role,delegate:f.delegate,job_id:packet.job_id,input_hash:packet.input_hash,
-      baseline:`npm run ai:task -- ${file} --provider claude --model MODEL --run`,
-      delegated:`npm run ai:task -- ${file} --provider claude --delegate ${f.delegate} --model MODEL --run`};
+      baseline:`npm run ai:task -- ${file} --provider claude --model MODEL --run --comparison-baseline --delegation-approval PRIVATE_BASELINE_APPROVAL.json`,
+      delegated:`npm run ai:task -- ${file} --provider claude --delegate ${f.delegate} --model MODEL --run --delegation-approval PRIVATE_DELEGATED_APPROVAL.json`};
   });
   writeFileSync(resolve(dir,'index.json'),JSON.stringify({synthetic:true,note:EVALUATION_STATUS,index},null,2)+'\n',{mode:0o600,flag:'wx'});
   return index;

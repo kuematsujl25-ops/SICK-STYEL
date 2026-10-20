@@ -13,7 +13,7 @@ import {FIXTURES,fixtureInput} from '../scripts/ai-staff/eval-fixtures.js';
 import {createJob,taskPacket} from '../lib/ai-team.js';
 const packet=taskPacket(createJob(fixtureInput(FIXTURES[0]))),session=randomUUID(),delegate='ss-data-auditor',model='claude-opus-5-5';
 const ctx={packet,delegate,model,inventory:[],source_hash:hash('source')};
-const approval=()=>({version:1,profile:PROFILE,token:randomUUID(),delegate,model,packet_sha256:hash(packet),settings_sha256:hash([]),
+const approval=()=>({version:1,profile:PROFILE,mode:'delegated',token:randomUUID(),delegate,model,packet_sha256:hash(packet),settings_sha256:hash([]),
   source_sha256:ctx.source_hash,checked_at:new Date().toISOString(),subscription_confirmed:true,extra_usage_disabled:true,
   no_additional_charge_confirmed:true,usage_available:true,effective_policy_reviewed:true,no_other_hooks_or_plugins:true,
   no_remote_or_mdm_policy:true,quality_review_required:true});
