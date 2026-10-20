@@ -109,3 +109,13 @@ BASE/TikTok/Metricoolの公式接続の条件・無料収集用CSVは`docs/integ
 Cloudflareは未ログインでデプロイが認証前に停止するため、本番反映済みとは報告しない。Macからの本人認証が必要。秘密値をチャットへ送る必要はない。
 
 保存容量P2の追加修正では、旧形式の履歴・成果物の往復互換、700KB直前、全件分の最大長レビュー理由、監査上限、Unicode分割・完全性、Workers+D1を回帰検証する。この修正後HEADの独立Codexレビューが終わるまで本番へ反映しない。
+
+### 保存済み私有証拠からのオフライン変換
+
+`node scripts/ai-staff/convert-evidence.js audit SOURCE_DIR SOURCE_MANIFEST_SHA AUDIT_COMMIT_SHA` は、指定コミットと監査コードの一致、元manifestと全ファイルhash、raw stream全体、guard、出力を再検証して私有監査記録を作る。元拒否記録には末尾の `--retrospective` が必須で、元拒否を変更しない。モデル・認証CLIは起動しない。
+
+`node scripts/ai-staff/convert-evidence.js convert SOURCE_DIR SOURCE_MANIFEST_SHA AUDIT_DIR AUDIT_MANIFEST_SHA AUDIT_COMMIT_SHA` は、同じ監査実装で再監査し、保存監査・packet・出力の完全一致を確認して既存v1成果物を作る。job ID・入力hash・出力・元実行日時を保持し、元session UUIDを固定execution IDとして使う。7日超の結果は拒否する。私有領域 `private-runs/conversions/SESSION_UUID` を排他的に作り、再変換と途中保存への上書きを拒否する。失敗時は削除して再試行せず、保存状態を確認する。
+
+私有sidecarは元証拠hash、元拒否状態、事後監査hash、監査・変換コミット、artifact hash、`quality_approved:false` を保持する。これはローカルでの証拠対応付けであり、サーバーによる生成元・内容の真正性証明ではない。サーバーは本人登録JSONとして扱い、取込後は `in_review` に留める。元jobが存在しなければ本番へ付け替えず、明示した隔離fixtureで検証する。
+
+標準30ケースは `fixtureInput` の目的を含めて変更しない。JSON本体のみ・Markdown禁止は共通runner指示と固定担当定義に置き、Agentへ渡すpacket完全一致制約を維持する。既存の目的追記済みpi-01/qs-03は補助実証であり、標準入力hash一致の実行済み件数へは算入しない。

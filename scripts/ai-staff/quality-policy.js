@@ -1,5 +1,6 @@
 // Review signals, not a natural-language truth/negation classifier.
-export const QUALITY_INSTRUCTIONS=[
+export const JSON_OUTPUT_INSTRUCTION='最終成果物は指定schemaのJSON本体のみ。Markdownコード枠は禁止。';
+export const QUALITY_INSTRUCTIONS=[JSON_OUTPUT_INSTRUCTION,
   '根拠がないことと、対象が存在しないことを区別してください。利益を確認できないときは「利益を評価できない」とし、「利益が見込める施策はない」と断定しないでください。',
   '鮮度の許容日数・更新周期・合格基準は、入力に明記された根拠がなければ未確認です。観測日時は報告できますが、月次なので許容範囲などの基準を作らないでください。',
   '否定・引用・仮説は確認済みの事実と明確に分けてください。推奨は確認済み根拠と不足条件を示し、未確認の効果を保証しないでください。'
