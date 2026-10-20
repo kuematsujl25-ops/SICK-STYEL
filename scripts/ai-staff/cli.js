@@ -3,11 +3,19 @@ import {spawnSync} from 'node:child_process';
 // Child processes use subscription authentication only. Never print auth output.
 export function subscriptionEnv(source = process.env) {
   return Object.fromEntries(Object.entries(source).filter(([key]) =>
-    !/^(OPENAI_|ANTHROPIC_|CLAUDE_CODE_USE_|CLAUDE_CODE_OAUTH_TOKEN|AWS_|AZURE_OPENAI_|GOOGLE_|GEMINI_)/.test(key)));
+    !/^(OPENAI_|ANTHROPIC|CODEX_API_KEY|CLAUDE_CODE_USE_|CLAUDE_CODE_OAUTH_TOKEN|CLAUDE_CODE_API_KEY|AWS_|AZURE_OPENAI_|GOOGLE_|GEMINI_)/i.test(key)));
+}
+
+// Claude additionally drops inherited Claude Code overrides (model/subagent/provider knobs) and Node injection.
+// HOME/USER/PATH/CLAUDE_CONFIG_DIR stay so the normal macOS keychain login keeps working.
+// Auto memory is explicitly disabled after filtering so inherited values cannot re-enable it.
+export function claudeEnv(source = process.env) {
+  return {...Object.fromEntries(Object.entries(subscriptionEnv(source)).filter(([key]) =>
+    !/^(CLAUDE_CODE_|CLAUDE_AGENT_SDK|NODE_OPTIONS$)/i.test(key))), CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1'};
 }
 
 export function checkSubscription(provider, run = spawnSync) {
-  const env = subscriptionEnv();
+  const env = provider === 'claude' ? claudeEnv() : subscriptionEnv();
   const help = run(provider, ['--help'], {encoding:'utf8', env, timeout:15000});
   if (help.status !== 0) throw Error(`${provider} CLIをインストールし、本人ログインしてください`);
   if (provider === 'codex') {
