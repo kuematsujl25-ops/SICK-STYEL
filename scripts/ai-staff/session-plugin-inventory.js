@@ -3,6 +3,7 @@ import {readFileSync,lstatSync,readdirSync,realpathSync,readlinkSync} from 'node
 import {join,resolve,relative,isAbsolute,dirname} from 'node:path';
 import {createHash} from 'node:crypto';
 import {TeamError} from '../../lib/ai-team.js';
+import {verifyApplicability,REMOTE_NOT_APPLICABLE,HEADLESS_NOT_REQUESTED} from './policy-applicability.js';
 import {SESSION_PLUGIN_IDS,buildSessionPluginPlan} from './session-plugin-plan.js';
 const sha=value=>createHash('sha256').update(value).digest('hex');
 const fail=()=>{throw new TeamError('プラグイン実体・ポリシー証拠が不明または変更されています');};
@@ -44,12 +45,13 @@ export function pluginTreeHash(root){
   walk(root);return sha(JSON.stringify(manifest));
 }
 export function verifyPolicyObservation(proof,now=Date.now()){
-  if(proof?.version!==1||proof.managed_policy!=='confirmed_absent'||
-    proof.remote_policy!=='confirmed_absent'||proof.remote_control!=='disconnected'||
+  if(proof?.version!==2||proof.managed_policy!=='confirmed_absent'||
+    proof.remote_policy!==REMOTE_NOT_APPLICABLE||proof.remote_control!==HEADLESS_NOT_REQUESTED||
     proof.reviewed_by!=='human'||typeof proof.evidence_ref!=='string'||!proof.evidence_ref.trim()||
     !/^[a-f0-9]{64}$/.test(proof.evidence_sha256||'')||
     !Number.isFinite(now)||!Number.isFinite(Date.parse(proof.checked_at))||
     Date.parse(proof.checked_at)>now||now-Date.parse(proof.checked_at)>600000)fail();
+  verifyApplicability(proof.remote_applicability);
   return proof;
 }
 export function readSessionPluginInventory({paths,home,policyObservation,now=Date.now()}){

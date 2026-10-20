@@ -1,3 +1,4 @@
+import {applicability} from './helpers/policy-applicability.js';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,statSync,symlinkSync} from 'node:fs';
@@ -129,10 +130,10 @@ test('委譲の私有証拠: 元作業dir削除後も実ガードmarkerと非同
 test('限定plugin証拠のreplay:旧承認再利用・設定差分・consent/policy欠損を拒否',async()=>{
  const {sessionPluginBinding,SESSION_PLUGIN_PROFILE}=await import('../scripts/ai-staff/session-plugin-binding.js');
  const {SESSION_PLUGIN_IDS}=await import('../scripts/ai-staff/session-plugin-plan.js');
- const {BUILTIN_PLUGINS}=await import('../scripts/ai-staff/delegate-runtime.js');
+ const {BUILTIN_PLUGINS,verifyHeadlessLaunch}=await import('../scripts/ai-staff/delegate-runtime.js');
  const root=mkdtempSync(join(tmpdir(),'ss-plugin-replay-')),time=new Date().toISOString(),source=hash('fixture source');
  const policyEvidence='synthetic human policy observation',consentEvidence='synthetic limited consent';
- const observation={version:1,managed_policy:'confirmed_absent',remote_policy:'confirmed_absent',remote_control:'disconnected',
+ const observation={version:2,managed_policy:'confirmed_absent',remote_policy:'not_applicable_to_current_credential',remote_control:'headless_not_requested',remote_applicability:applicability(),
   reviewed_by:'human',evidence_ref:'/synthetic/policy',evidence_sha256:hash(policyEvidence),checked_at:time};
  const policyText=JSON.stringify(observation),inventory=[{path:'/synthetic/settings.json',sha256:hash('fixture')}];
  const state={inventory,policyObservation:observation,planInput:{managedState:'confirmed_absent',
@@ -145,14 +146,20 @@ test('限定plugin証拠のreplay:旧承認再利用・設定差分・consent/po
  const approval={version:1,profile:SESSION_PLUGIN_PROFILE,mode:'baseline',token,delegate,model,
   packet_sha256:hash(packet),settings_sha256:hash(inventory),source_sha256:source,checked_at:time,
   subscription_confirmed:true,extra_usage_disabled:true,no_additional_charge_confirmed:true,usage_available:true,
-  effective_policy_reviewed:true,no_other_hooks_or_plugins:true,no_remote_or_mdm_policy:true,quality_review_required:true,
+  effective_policy_reviewed:true,no_other_hooks_or_plugins:true,no_mdm_policy:true,policy_applicability_reviewed:true,quality_review_required:true,
   binding_sha256:binding.binding_sha256,plugin_ids:[...SESSION_PLUGIN_IDS],session_only_three_plugins:true,
   codex_plugin_hooks_absent_acknowledged:true,persistent_settings_changes_allowed:false,managed_override_allowed:false,
-  other_plugins_disabled_allowed:false,independent_review_confirmed:true,remote_control_disconnected_confirmed:true,
+  other_plugins_disabled_allowed:false,independent_review_confirmed:true,remote_control:'headless_not_requested',remote_policy:'not_applicable_to_current_credential',
   approval_evidence_ref:'/synthetic/consent',approval_evidence_sha256:hash(consentEvidence)};
  const rows=baselineRows();rows[2].plugins=BUILTIN_PLUGINS.map(name=>({name,path:'builtin',source:`${name}@builtin`}));
  const capture=new Utf8Capture(4000000);capture.write(Buffer.from(jsonl(rows)));const {raw,text,...meta}=capture.end();
- const files={'stdout.bytes':raw,'stdout.utf8.txt':text,'started.json':JSON.stringify({stage:'startup',session_id:session}),
+ const definitionText=readFileSync(join(process.cwd(),'scripts/ai-staff/agents',delegate+'.md'),'utf8');
+ const {agentDefinition}=await import('../scripts/ai-staff/delegate.js');
+ const definition=agentDefinition(delegate,definitionText),options={session,delegate,model,definition,settings:'/synthetic/settings.json',mode:'baseline'};
+ const args=runtimeArgs(options),invocation={args,session,delegate,model,mode:'baseline'};
+ const launch=verifyHeadlessLaunch({...options,args});
+ const files={'definition.txt':definitionText,'invocation.json':JSON.stringify(invocation),
+  'live-applicability.json':JSON.stringify(applicability()),'launch-applicability.json':JSON.stringify(launch),'stdout.bytes':raw,'stdout.utf8.txt':text,'started.json':JSON.stringify({stage:'startup',session_id:session}),
   'approval-token.used':'','approval.json':JSON.stringify(approval),'packet.json':JSON.stringify(packet),
   'inventory.json':JSON.stringify(inventory),'final-inventory.json':JSON.stringify(inventory),'plugin-state.json':JSON.stringify(state),
   'plugin-binding.json':JSON.stringify(binding),'policy-observation.json':policyText,'policy-evidence.txt':policyEvidence,
@@ -163,11 +170,13 @@ test('限定plugin証拠のreplay:旧承認再利用・設定差分・consent/po
   const check=f=>{const dir=createEvidenceDirectory(root),proof=saveEvidence(dir,f,metadata);return ()=>replayRunEvidence(dir,proof.manifest_sha256)};
   assert.deepEqual(check(files)().checked.output,output);
   // Re-anchor altered bundles to test semantic checks independently of per-file integrity checks.
-  for(const patch of [{'final-inventory.json':'[]'},{'consent-evidence.txt':'changed'},{'policy-evidence.txt':'changed'},
+  for(const patch of [{'live-applicability.json':JSON.stringify({...applicability(),remote_cache:'present'})},
+   {'invocation.json':JSON.stringify({...invocation,args:[...args,'--resume']})},
+   {'launch-applicability.json':JSON.stringify({...launch,remote_control:'disconnected'})},{'final-inventory.json':'[]'},{'consent-evidence.txt':'changed'},{'policy-evidence.txt':'changed'},
    {'approval.json':JSON.stringify({...approval,profile:PROFILE})},{'approval.json':JSON.stringify({...approval,token:'invalid'})},
    {'approval.json':JSON.stringify({...approval,mode:'delegated'})},{'settings.json':JSON.stringify({enabledPlugins:{}})}])
     assert.throws(check({...files,...patch}));
-  for(const name of ['policy-observation.json','plugin-binding.json','consent-evidence.txt','final-inventory.json']){
+  for(const name of ['policy-observation.json','plugin-binding.json','consent-evidence.txt','final-inventory.json','live-applicability.json','launch-applicability.json']){
    const bad={...files};delete bad[name];assert.throws(check(bad));
   }
  }finally{rmSync(root,{recursive:true,force:true})}

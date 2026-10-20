@@ -5,7 +5,7 @@ import {KNOWN_MODELS} from './delegate.js';
 import {TeamError} from '../../lib/ai-team.js';
 import {validateTaskPacket} from '../../lib/ai-team.js';
 import {buildSessionPluginPlan,SESSION_PLUGIN_IDS} from './session-plugin-plan.js';
-export const SESSION_PLUGIN_PROFILE='claude-2.1.296-session-three-plugins-v1';
+export const SESSION_PLUGIN_PROFILE='claude-2.1.296-session-three-plugins-v2';
 const sha=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const digest=v=>typeof v==='string'&&/^[a-f0-9]{64}$/.test(v);
 const fail=()=>{throw new TeamError('セッション限定設定の承認・実装・入力の対応を確認できません');};
@@ -38,7 +38,8 @@ export function verifySessionPluginConsent(receipt,prepared,now=Date.now()){
     receipt.session_only_three_plugins!==true||receipt.codex_plugin_hooks_absent_acknowledged!==true||
     receipt.persistent_settings_changes_allowed!==false||receipt.managed_override_allowed!==false||
     receipt.other_plugins_disabled_allowed!==false||receipt.independent_review_confirmed!==true||
-    receipt.remote_control_disconnected_confirmed!==true||
+    receipt.remote_control!=='headless_not_requested'||receipt.remote_policy!=='not_applicable_to_current_credential'||
+    Object.hasOwn(receipt,'remote_control_disconnected_confirmed')||Object.hasOwn(receipt,'no_remote_or_mdm_policy')||
     !Array.isArray(receipt.plugin_ids)||JSON.stringify(receipt.plugin_ids)!==JSON.stringify(SESSION_PLUGIN_IDS)||
     typeof receipt.approval_evidence_ref!=='string'||!receipt.approval_evidence_ref.trim()||
     !digest(receipt.approval_evidence_sha256)||

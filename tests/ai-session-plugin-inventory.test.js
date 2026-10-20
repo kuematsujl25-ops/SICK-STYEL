@@ -1,3 +1,4 @@
+import {applicability} from './helpers/policy-applicability.js';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync,mkdirSync,writeFileSync,rmSync,realpathSync,symlinkSync} from 'node:fs';
@@ -5,7 +6,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {pluginTreeHash,readSessionPluginInventory,verifyPolicyObservation} from '../scripts/ai-staff/session-plugin-inventory.js';
 import {SESSION_PLUGIN_IDS} from '../scripts/ai-staff/session-plugin-plan.js';
-const proof=()=>({version:1,managed_policy:'confirmed_absent',remote_policy:'confirmed_absent',remote_control:'disconnected',
+const proof=()=>({version:2,managed_policy:'confirmed_absent',remote_policy:'not_applicable_to_current_credential',remote_control:'headless_not_requested',remote_applicability:applicability(),
   reviewed_by:'human',evidence_ref:'/synthetic/private-evidence',evidence_sha256:'a'.repeat(64),checked_at:new Date().toISOString()});
 test('実体hashは追加・削除・依存ファイル変更を検出、内部直接リンクも固定',()=>{
   const root=realpathSync(mkdtempSync(join(tmpdir(),'ss-tree-')));

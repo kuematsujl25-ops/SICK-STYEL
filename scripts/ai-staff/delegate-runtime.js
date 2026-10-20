@@ -6,6 +6,7 @@ import {tmpdir,homedir} from 'node:os';
 import {randomUUID,createHash} from 'node:crypto';
 import {spawn,spawnSync} from 'node:child_process';
 import {prepareEvidenceRoot,createEvidenceDirectory,saveEvidence,readEvidence} from './run-evidence.js';
+import {collectApplicability,readApplicabilityContext,applicabilityPaths,HEADLESS_NOT_REQUESTED} from './policy-applicability.js';
 import {Utf8Capture,bytesHash} from './utf8-capture.js';
 import {sessionPluginBinding,verifySessionPluginConsent,SESSION_PLUGIN_PROFILE} from './session-plugin-binding.js';
 import {readSessionPluginInventory,verifyPolicyObservation} from './session-plugin-inventory.js';
@@ -30,7 +31,7 @@ const privateFile=path=>{
 // Human verifies /status + doctor and all effective policy sources. Local inventory is an additional
 // change detector, not a claim that remote/MDM/plugin policy can be discovered by reading these files.
 export function settingsPaths(root,home=homedir()){
-  const paths=[join(home,'.claude/settings.json'),join(home,'.claude/settings.local.json'),
+  const paths=[...applicabilityPaths(home),join(home,'.claude/settings.json'),join(home,'.claude/settings.local.json'),
     join(home,'.claude/managed-settings.json'),join(home,'.claude/plugins/installed_plugins.json'),
     '/Library/Application Support/ClaudeCode/managed-settings.json',
     '/Library/Application Support/ClaudeCode/managed-settings.d','/Library/Application Support/ClaudeCode/managed-mcp.json',
@@ -74,7 +75,7 @@ export function verifyApproval(a,{packet,delegate,model,inventory,source_hash,mo
     a.settings_sha256!==hash(inventory)||a.source_sha256!==source_hash||!Number.isFinite(when)||when>now||now-when>600000||
     a.subscription_confirmed!==true||a.extra_usage_disabled!==true||a.no_additional_charge_confirmed!==true||
     a.usage_available!==true||a.effective_policy_reviewed!==true||a.no_other_hooks_or_plugins!==true||
-    a.no_remote_or_mdm_policy!==true||a.quality_review_required!==true)fail();
+    (pluginBinding?a.no_mdm_policy!==true||a.policy_applicability_reviewed!==true:a.no_remote_or_mdm_policy!==true)||a.quality_review_required!==true)fail();
   return a;
 }
 export function runtimeArgs({session,delegate,model,definition,settings,mode='delegated'}){
@@ -84,6 +85,14 @@ export function runtimeArgs({session,delegate,model,definition,settings,mode='de
     '--disable-slash-commands','--no-session-persistence','--effort','low','--max-turns',String(LIMITS.parent_max_turns),
     '--output-format','stream-json','--verbose','--include-hook-events','--forward-subagent-text',
     ...(mode==='delegated'?['--allowedTools',`Agent(${delegate})`]:[]),'--disallowedTools','Bash','Read','Write','Edit','Grep','Glob','WebFetch','WebSearch','SendMessage'];
+}
+// Only the canonical argument vector is accepted. Unknown flags, wrappers, RC and resume cannot be appended.
+// Session freshness is provided by randomUUID() in runDelegated, never supplied by the receipt.
+export function verifyHeadlessLaunch(options){
+  const expected=runtimeArgs(options);
+  if(JSON.stringify(options.args)!==JSON.stringify(expected))fail();
+  return {remote_control:HEADLESS_NOT_REQUESTED,launch_kind:'fresh_direct_noninteractive',
+    args_sha256:hash(expected),session_id:options.session,network_absence_established:false};
 }
 export function runtimeSettings(guard,policy,mode='delegated',pluginBinding=null){
   const hook=mode=>({type:'command',command:process.execPath,args:[guard,policy,mode],timeout:8,onFailure:'block'});
@@ -103,11 +112,11 @@ export function verifyEffectivePlugins(init){
 }
 // No user prompt is delivered until a successful startup hook AND its private marker are observed.
 // CLI variants that wait for stdin before SessionStart time out, without receiving the task prompt.
-export function executeGuarded({args,cwd,env,prompt,session,dir,spawnProcess=spawn,model=null,mode='delegated',timeout=LIMITS.timeout_ms,requirePluginInit=false}){
+export function executeGuarded({args,cwd,env,prompt,session,dir,spawnProcess=spawn,model=null,mode='delegated',timeout=LIMITS.timeout_ms,requirePluginInit=false,executable='claude'}){
   return new Promise((resolveResult,reject)=>{
     let pending='',released=false,stopped=false,calls=0,startId=null,startReady=false,initReady=false;
     const stdoutCapture=new Utf8Capture(LIMITS.max_transcript_bytes),stderrCapture=new Utf8Capture(100000);
-    const child=spawnProcess('claude',args,{cwd,env,detached:true,stdio:['pipe','pipe','pipe']});
+    const child=spawnProcess(executable,args,{cwd,env,detached:true,stdio:['pipe','pipe','pipe']});
     const stop=()=>{stopped=true;try{if(child.pid)process.kill(-child.pid,'SIGKILL');else child.kill('SIGKILL')}catch{child.kill('SIGKILL')}};
     const timer=setTimeout(stop,timeout);
     const startTimer=setTimeout(()=>{if(!released)stop()},15000);
@@ -192,7 +201,7 @@ export async function runDelegated({root,packet,delegate,model,approvalPath,mode
   }
   const snapshot=()=>withPlugins?readSessionPluginInventory({paths,home:homedir(),policyObservation:JSON.parse(policyText)}).inventory:settingsSnapshot(paths);
   const inventory=pluginState?.inventory??settingsSnapshot(paths);
-  const sources=['session-plugin-plan.js','session-plugin-binding.js','session-plugin-inventory.js','transcript-stats.js','transcript-baseline.js','run-evidence.js','utf8-capture.js','delegate-runtime.js','delegate-guard.js','delegate.js','transcript-async.js','cli.js','quality-policy.js','../../lib/ai-team.js'];
+  const sources=['policy-applicability.js','session-plugin-plan.js','session-plugin-binding.js','session-plugin-inventory.js','transcript-stats.js','transcript-baseline.js','run-evidence.js','utf8-capture.js','delegate-runtime.js','delegate-guard.js','delegate.js','transcript-async.js','cli.js','quality-policy.js','../../lib/ai-team.js'];
   const definitionText=readFileSync(join(root,'scripts/ai-staff/agents',delegate+'.md'),'utf8');
   const definition=agentDefinition(delegate,definitionText);
   const source_hash=hash(sources.map(p=>hash(readFileSync(join(root,'scripts/ai-staff',p),'utf8'))).concat(hash(definitionText)));
@@ -205,15 +214,16 @@ export async function runDelegated({root,packet,delegate,model,approvalPath,mode
   const tokenDir=lstatSync(tokens);if(!tokenDir.isDirectory()||tokenDir.isSymbolicLink()||(tokenDir.mode&0o077)||
     (process.getuid&&tokenDir.uid!==process.getuid()))fail();
   closeSync(openSync(join(tokens,approval.token),'wx',0o600));
-  const env=delegateEnv(checkSubscription('claude'));
-  const version=spawnSync('claude',['--version'],{env,encoding:'utf8',timeout:15000});
+  const env=withPlugins?delegateEnv():delegateEnv(checkSubscription('claude'));
+  const executable=withPlugins?readApplicabilityContext({home:homedir(),env}).executable:'claude';
+  const version=spawnSync(executable,['--version'],{env,encoding:'utf8',timeout:15000});
   if(version.status!==0||version.stdout.trim()!=='2.1.296 (Claude Code)')fail();
-  const auth=spawnSync('claude',['auth','status','--json'],{env,encoding:'utf8',timeout:15000});
+  const auth=spawnSync(executable,['auth','status','--json'],{env,encoding:'utf8',timeout:15000});
   let a;try{a=JSON.parse(auth.stdout)}catch{fail()}
   if(auth.status!==0||a.loggedIn!==true||a.authMethod!=='claude.ai'||a.apiProvider!=='firstParty'||!['pro','max'].includes(a.subscriptionType))fail();
   if(hash(snapshot())!==hash(inventory))fail();
   const dir=mkdtempSync(join(tmpdir(),'ss-delegation-')),session=randomUUID(),prompt=mode==='baseline'?analysisPrompt(packet):delegatePrompt(packet,delegate);
-  let capture=null,archived=false,accepted=false,finalInventory=null;
+  let capture=null,archived=false,accepted=false,finalInventory=null,liveApplicability=null,launchEvidence=null;
   const startedAt=new Date().toISOString();
   const args=runtimeArgs({session,delegate,model,definition,settings:join(dir,'settings.json'),mode});
   const persist=()=>{
@@ -226,6 +236,8 @@ export async function runDelegated({root,packet,delegate,model,approvalPath,mode
       files['policy-observation.json']=policyText;
       files['policy-evidence.txt']=policyEvidence;
       files['consent-evidence.txt']=approvalEvidence;
+      if(liveApplicability)files['live-applicability.json']=JSON.stringify(liveApplicability);
+      if(launchEvidence)files['launch-applicability.json']=JSON.stringify(launchEvidence);
       if(finalInventory)files['final-inventory.json']=JSON.stringify(finalInventory);
     }
     for(const name of ['policy.json','settings.json','started.json','used','tool.json'])
@@ -243,7 +255,16 @@ export async function runDelegated({root,packet,delegate,model,approvalPath,mode
     const guard=join(root,'scripts/ai-staff/delegate-guard.js'),policy=join(dir,'policy.json'),settings=join(dir,'settings.json');
     writeFileSync(policy,JSON.stringify({version:1,session_id:session,delegate,packet,expires_at:new Date(Date.now()+600000).toISOString()}),{mode:0o600});
     writeFileSync(settings,JSON.stringify(runtimeSettings(guard,policy,mode,pluginBinding)),{mode:0o600});
-    capture=await executeGuarded({args,cwd:root,env,prompt,session,dir,model,mode,requirePluginInit:withPlugins});
+    if(withPlugins){
+      liveApplicability=collectApplicability({home:homedir(),env,cwd:root});
+      if(hash(liveApplicability)!==hash(pluginState.policyObservation.remote_applicability))fail();
+      launchEvidence=verifyHeadlessLaunch({args,session,delegate,model,definition,settings,mode});
+      // Fresh diagnostics never extend the human receipt's expiry.
+      verifyApproval(approval,{packet,delegate,model,inventory,source_hash,mode,pluginBinding});
+      if(hash(snapshot())!==hash(inventory))fail();
+    }
+    capture=await executeGuarded({args,cwd:root,env,prompt,session,dir,model,mode,requirePluginInit:withPlugins,
+      executable:withPlugins?liveApplicability.executable:'claude'});
     const stdout=capture.stdout.text;
     finalInventory=snapshot();
     if(hash(finalInventory)!==hash(inventory))fail();
@@ -276,6 +297,13 @@ export function replayRunEvidence(dir,manifestHash){
     const now=Date.parse(m.started_at),state=JSON.parse(decode(files['plugin-state.json']));
     const policyText=decode(files['policy-observation.json']);
     const observation=verifyPolicyObservation(JSON.parse(policyText),now);
+    const live=JSON.parse(decode(files['live-applicability.json']));
+    if(hash(live)!==hash(observation.remote_applicability))fail();
+    const invocation=JSON.parse(decode(files['invocation.json']));
+    const definition=agentDefinition(m.delegate,decode(files['definition.txt']));
+    const launch=verifyHeadlessLaunch({...invocation,definition,settings:invocation.args[invocation.args.indexOf('--settings')+1]});
+    if(invocation.session!==m.session||invocation.delegate!==m.delegate||invocation.model!==m.model||invocation.mode!==m.mode||
+      hash(launch)!==hash(JSON.parse(decode(files['launch-applicability.json']))))fail();
     if(hash(state.policyObservation)!==hash(observation)||
       hash(decode(files['policy-evidence.txt']))!==observation.evidence_sha256||
       hash(decode(files['consent-evidence.txt']))!==approval.approval_evidence_sha256||
