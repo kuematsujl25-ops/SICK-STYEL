@@ -40,3 +40,9 @@ node scripts/ai-staff/replay-run.js PRIVATE_RUN_DIRECTORY MANIFEST_SHA256
 親単独・委譲の双方で、各assistantと各resultの `usage.server_tool_use` を共通関数で照合する。存在する場合はweb search/fetchの2キーが数値0であることを要求し、非ゼロ・不正型・未知キー・欠落キーを拒否する。報告がない場合は `server_tool_usage_complete:false`、`server_tool_calls:null` とし、観測されていない実行をゼロと断定しない。既存のtool件数は `tool_counts_scope:observed_transcript` で範囲を明示する。
 
 `subagent_stats` も共通化し、全フィールドとネストされたrequested/by_type/killed/refusedを厳密に検証する。親単独では提示された統計がすべて0（by_typeは空）であること、委譲では既存の1子完了プロファイルとの一致を要求する。親単独の統計欠損は `subagent_stats_present:false`、委譲の統計欠損は拒否する。新しい実CLI形式の受理は実証・レビュー前に広げない。
+
+### セッション限定プラグイン案（実行経路未接続）
+
+`session-plugin-plan.js`はオフラインで限定案を生成するだけで、CLI起動・設定読書き・承認記録の作成を行わない。frontend-design/codex/discordの3件だけを対象に、既知設定の型とmarketplace定義を厳格に確認する。未知設定、追加plugin、既存の安全hooks、managed状態不明は拒否する。原設定・インストール実体の提示hash・overrideを別々に記録するが、提示情報が実機の実効状態だと証明する機能ではない。
+
+Codexプラグインの停止は同プラグインのSessionStart/Stop/SessionEndも止める。すべての安全hooksを維持するとは表現しない。通知設定は保持し、Remote Control状態の確認を必要とする。利用には明示された切替承認、実機inventory照合、実行経路への別実装と独立レビュー、開始/子実行の実証が必要で、この案だけでは既存のプラグイン拒否条件を通過しない。
