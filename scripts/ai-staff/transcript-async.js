@@ -62,6 +62,17 @@ export function validateAsyncTranscript(rows,{delegate,model,packet,session_id,l
         }else check(!call,'初期化順序');
         epoch++;init??=m;continue;
       }
+      if(m.subtype==='thinking_tokens'){
+        // Observed 2.1.296 continuation-only profile. Approximate progress, never billed usage.
+        // Optional user_message_uuid from other producers is deliberately unsupported here.
+        check(keys(m,['type','subtype','estimated_tokens','estimated_tokens_delta','uuid','session_id'])&&
+          init&&epoch===1&&notified&&cleared&&parentText[1]===''&&
+          [...hooks.values()].every(h=>h.done),'thinking metadataの形・段階');
+        check(Number.isSafeInteger(m.estimated_tokens)&&m.estimated_tokens>=0&&
+          Number.isSafeInteger(m.estimated_tokens_delta)&&m.estimated_tokens_delta>=0&&
+          m.estimated_tokens_delta<=m.estimated_tokens,'thinking metadataの値');
+        continue;
+      }
       check(init&&epoch===0,'taskイベントの段階');
       if(m.subtype==='background_tasks_changed'){
         check(call&&Array.isArray(m.tasks),'背景一覧');

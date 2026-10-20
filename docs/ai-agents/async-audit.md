@@ -35,3 +35,17 @@ PreToolUse hook記録が出る場合は開始/応答を対応付け、exit0・su
 合成プロトコルで、各必須行の欠落、全行session/UUID破損、ID不一致、順序逆転、偽完了、権限拒否、追加使用、hook故障、wire改変、二重委譲、子ツール、結果差替え、複数成果候補を拒否します。保存済み生ログ・実モデル回答・個人パスはfixtureに含めません。
 
 この修正のレビュー後に必要なのは、最新利用枠と追加使用OFF確認、段階的な3担当/30合成ケース/親単独比較、実CLIによるローカル管理アプリの取込・採用/差し戻し・履歴までの統合検証です。本番には最終SHAのテスト・CI・全依存差分の独立レビューとfresh preflight、実D1バックアップ/復元確認、直前Versionのv2/chunks互換・復旧確認が別途必要です。
+
+### thinking_tokens の限定対応（2.1.296実測）
+
+公式[TypeScript SDKリポジトリ](https://github.com/anthropics/claude-agent-sdk-typescript)が案内するnpm配布物の [0.3.304 metadata](https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk/0.3.304) と [固定tarball](https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk/-/claude-agent-sdk-0.3.304.tgz) を取得し、公開sha512 integrityを照合して `sdk.d.ts` の `SDKThinkingTokensMessage` を読み取った。インストール・SDK実行・モデル呼出しは行っていない。
+
+型は `type:system / subtype:thinking_tokens`、2つのnumber、uuidとsession_id、optional user_message_uuidを定義する。説明上、estimated_tokensは現在のthinking blockの概算累積値、estimated_tokens_deltaは当該frameの増分であり、課金output_tokensとは異なる。最新SDK型だけを旧CLIの仕様とみなさず、実際に固定したCLI 2.1.296（SHA256 `c9b5341637becbd423ddffc5b254afb645682a3868cb708bbc6cc0e7bb419937`）の内蔵schemaも読み取り、2値のinteger型、同じfieldと説明、およびstream_eventからこのsystemイベントを生成する実装を確認した。バイナリの読取りのみで起動していない。
+
+実ログは継続init後・最終本文前に `(estimated_tokens, estimated_tokens_delta) = (50,50), (200,150)` の2件。6項目のみでoptional user_message_uuidも子帰属もない。公式型はイベントの完全な時系列を保証していないため、受理位置はこの実測に基づく**本プロジェクトの狭いprofile制約**とする。全systemイベントの一般許容ではない。
+
+受理条件は正確な6項目、同一session、既存のUUID一意性、非負の安全整数、delta<=total、成功hookと子完了通知・背景終了・一致する継続initの成立後、最終本文より前。親以外の帰属・optional追加field・未観測位置・未知systemは拒否する。数値の非負性等は公式のinteger型より厳しい本profileの制限であり、公式の全生成値を受理するとは主張しない。blockを特定するIDがないためblockを跨ぐ累積値や厳密課金量へ変換しない。tool/action/permission/result検証を変更せず、推定値をusageへ加算しない。
+
+この対応で元のpi-01拒否ログを削除・編集せず別途事後監査できた。元manifestは拒否のまま保持する。プロトコル監査の成立と、evaluatorの手動確認（2,250円の言及等）、成果採用判断は別。evaluatorや語句判定は変更しておらず、quality_approvedはfalse。本番適用・残りモデル試験への許可を生成しない。
+
+独立の内容レビューでは、2,250円が貢献利益ではない中間値と明記され、利益不存在を断定しない否定も適切と確認された。機械結果score 100/pass false/手動2件は維持し、この文脈レビューは別の補足記録に保存する。人間による採用承認ではない。
