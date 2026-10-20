@@ -140,8 +140,9 @@ test('限定plugin証拠のreplay:旧承認再利用・設定差分・consent/po
    extraKnownMarketplaces:{'openai-codex':{source:{source:'github',repo:'openai/codex-plugin-cc'}}},
    theme:'dark',inputNeededNotifEnabled:true,agentPushNotifEnabled:true},
   installed:Object.fromEntries(SESSION_PLUGIN_IDS.map(id=>[id,{version:'fixture',tree_sha256:hash(id)}]))}};
- const binding=sessionPluginBinding({...state,cliVersion:'2.1.296 (Claude Code)',mode:'baseline',packet,model,sourceHash:source,policyObservationHash:hash(policyText)});
- const approval={version:1,profile:SESSION_PLUGIN_PROFILE,mode:'baseline',token:randomUUID(),delegate,model,
+ const token=randomUUID();
+ const binding=sessionPluginBinding({...state,cliVersion:'2.1.296 (Claude Code)',mode:'baseline',packet,model,sourceHash:source,policyObservationHash:hash(policyText),token,checkedAt:time});
+ const approval={version:1,profile:SESSION_PLUGIN_PROFILE,mode:'baseline',token,delegate,model,
   packet_sha256:hash(packet),settings_sha256:hash(inventory),source_sha256:source,checked_at:time,
   subscription_confirmed:true,extra_usage_disabled:true,no_additional_charge_confirmed:true,usage_available:true,
   effective_policy_reviewed:true,no_other_hooks_or_plugins:true,no_remote_or_mdm_policy:true,quality_review_required:true,

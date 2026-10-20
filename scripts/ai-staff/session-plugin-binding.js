@@ -9,10 +9,12 @@ export const SESSION_PLUGIN_PROFILE='claude-2.1.296-session-three-plugins-v1';
 const sha=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const digest=v=>typeof v==='string'&&/^[a-f0-9]{64}$/.test(v);
 const fail=()=>{throw new TeamError('セッション限定設定の承認・実装・入力の対応を確認できません');};
-export function sessionPluginBinding({planInput,cliVersion,mode,packet,model,sourceHash,inventory,policyObservationHash}){
+export function sessionPluginBinding({planInput,cliVersion,mode,packet,model,sourceHash,inventory,policyObservationHash,token,checkedAt}){
   validateTaskPacket(packet);
   if(cliVersion!=='2.1.296 (Claude Code)'||!['baseline','delegated'].includes(mode)||
     !KNOWN_MODELS.includes(model)||!digest(sourceHash)||!digest(policyObservationHash)||
+    typeof token!=='string'||!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(token)||
+    !Number.isFinite(Date.parse(checkedAt))||
     !Array.isArray(inventory)||inventory.length===0)fail();
   const paths=new Set();
   for(const entry of inventory){
@@ -21,7 +23,7 @@ export function sessionPluginBinding({planInput,cliVersion,mode,packet,model,sou
     paths.add(entry.path);
   }
   const plan=buildSessionPluginPlan(planInput);
-  const binding={profile:SESSION_PLUGIN_PROFILE,cli_version:cliVersion,mode,model,
+  const binding={profile:SESSION_PLUGIN_PROFILE,cli_version:cliVersion,mode,model,token,checked_at:checkedAt,
     packet_sha256:sha(packet),source_sha256:sourceHash,inventory_sha256:sha(inventory),policy_observation_sha256:policyObservationHash,
     user_settings_sha256:plan.user_settings_sha256,installed_snapshot_sha256:plan.installed_snapshot_sha256,
     override_sha256:plan.override_sha256};
@@ -29,6 +31,7 @@ export function sessionPluginBinding({planInput,cliVersion,mode,packet,model,sou
 }
 export function verifySessionPluginConsent(receipt,prepared,now=Date.now()){
   if(receipt?.profile!==SESSION_PLUGIN_PROFILE||receipt.binding_sha256!==prepared.binding_sha256||
+    receipt.token!==prepared.binding.token||receipt.checked_at!==prepared.binding.checked_at||
     prepared.binding_sha256!==sha(prepared.binding)||prepared.execution_authorized!==false||
     prepared.binding.override_sha256!==sha(prepared.plan?.override)||
     JSON.stringify(prepared.plan?.override)!==JSON.stringify({enabledPlugins:Object.fromEntries(SESSION_PLUGIN_IDS.map(id=>[id,false]))})||

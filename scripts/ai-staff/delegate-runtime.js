@@ -195,7 +195,8 @@ export async function runDelegated({root,packet,delegate,model,approvalPath,mode
   const definitionText=readFileSync(join(root,'scripts/ai-staff/agents',delegate+'.md'),'utf8');
   const definition=agentDefinition(delegate,definitionText);
   const source_hash=hash(sources.map(p=>hash(readFileSync(join(root,'scripts/ai-staff',p),'utf8'))).concat(hash(definitionText)));
-  if(withPlugins)pluginBinding=sessionPluginBinding({...pluginState,cliVersion:'2.1.296 (Claude Code)',mode,packet,model,sourceHash:source_hash,policyObservationHash:hash(policyText)});
+  if(withPlugins)pluginBinding=sessionPluginBinding({...pluginState,cliVersion:'2.1.296 (Claude Code)',mode,packet,model,sourceHash:source_hash,
+    policyObservationHash:hash(policyText),token:rawApproval.token,checkedAt:rawApproval.checked_at});
   const approval=verifyApproval(rawApproval,{packet,delegate,model,inventory,source_hash,mode,pluginBinding});
   const evidenceDir=createEvidenceDirectory(prepareEvidenceRoot());
   // A copy of the same receipt cannot reset the token. Failed and uncertain runs consume it as well.
@@ -280,7 +281,7 @@ export function replayRunEvidence(dir,manifestHash){
       hash(state.inventory)!==hash(JSON.parse(decode(files['inventory.json'])))||
       hash(state.inventory)!==hash(JSON.parse(decode(files['final-inventory.json']))))fail();
     pluginBinding=sessionPluginBinding({...state,cliVersion:m.cli_version,mode:m.mode,packet,model:m.model,
-      sourceHash:m.source_sha256,policyObservationHash:hash(policyText)});
+      sourceHash:m.source_sha256,policyObservationHash:hash(policyText),token:approval.token,checkedAt:approval.checked_at});
     if(hash(pluginBinding)!==hash(JSON.parse(decode(files['plugin-binding.json'])))||
       hash(JSON.parse(decode(files['settings.json'])).enabledPlugins)!==hash(pluginBinding.plan.override.enabledPlugins))fail();
     const rows=stdout.trim().split('\n').map(line=>JSON.parse(line));
