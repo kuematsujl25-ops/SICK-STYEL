@@ -34,3 +34,9 @@ node scripts/ai-staff/replay-run.js PRIVATE_RUN_DIRECTORY MANIFEST_SHA256
 比較用の親単独は `--provider claude --model MODEL --run --comparison-baseline --delegation-approval PRIVATE_APPROVAL`。委譲経路とは別のmodeに紐付いた承認tokenが必要。双方とも固定model、同じpacketと品質指示、effort low、親12ターン、5分、stdout4MB、stream-json＋プロンプト指定JSON（json-schemaツールなし）、同じcwd/設定確認/開始guard/証拠保存を使用する。差は委譲許可と専用指示、子実行の有無。親単独はtools空、PreToolUseも全拒否。通常の旧baselineコマンドをこの比較結果に混ぜない。子の追加消費は親単独との差として測定し、同一消費量とは主張しない。
 
 実機開始順序と新baselineログ形式は未実証で、未知形式は停止する。今後は3代表ケースの親比較6セッション＋残り27ケースの委譲能力評価27セッションを予定する。業務評価計33親セッション・30子実行で、guard試験は別枠。30ケース全件の親比較とは表現しない。
+
+### 統計の追加監査（独立レビュー指摘への対応）
+
+親単独・委譲の双方で、各assistantと各resultの `usage.server_tool_use` を共通関数で照合する。存在する場合はweb search/fetchの2キーが数値0であることを要求し、非ゼロ・不正型・未知キー・欠落キーを拒否する。報告がない場合は `server_tool_usage_complete:false`、`server_tool_calls:null` とし、観測されていない実行をゼロと断定しない。既存のtool件数は `tool_counts_scope:observed_transcript` で範囲を明示する。
+
+`subagent_stats` も共通化し、全フィールドとネストされたrequested/by_type/killed/refusedを厳密に検証する。親単独では提示された統計がすべて0（by_typeは空）であること、委譲では既存の1子完了プロファイルとの一致を要求する。親単独の統計欠損は `subagent_stats_present:false`、委譲の統計欠損は拒否する。新しい実CLI形式の受理は実証・レビュー前に広げない。

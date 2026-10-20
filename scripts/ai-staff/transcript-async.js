@@ -2,6 +2,7 @@
 // Accept one causally linked task and two correlated parent turns, never "take the last result".
 import {TeamError,validateOutput} from '../../lib/ai-team.js';
 import {qualitySignals} from './quality-policy.js';
+import {checkServerToolUsage,checkSubagentStats} from './transcript-stats.js';
 
 const fail=reason=>{throw new TeamError(`委任実行の記録を確認できませんでした（非同期: ${reason}）。結果は保存しません`);};
 const obj=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);
@@ -12,7 +13,6 @@ const id=v=>typeof v==='string'&&/^[A-Za-z0-9_-]{1,160}$/.test(v);
 const uuid=v=>typeof v==='string'&&/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(v);
 const agent=n=>n==='Agent'||n==='Task';
 const check=(ok,why)=>{if(!ok)fail(why);};
-const zeroObject=v=>obj(v)&&Object.values(v).every(n=>n===0);
 const withoutUuid=({uuid:ignored,...rest})=>rest;
 
 export function validateAsyncTranscript(rows,{delegate,model,packet,session_id,limits}){
@@ -21,23 +21,14 @@ export function validateAsyncTranscript(rows,{delegate,model,packet,session_id,l
   let init=null,epoch=-1,call=null,task=null,active=null,cleared=false,launch=false,updated=false,notified=false;
   let childMessages=0,childAssistant=0,childText='',hookEvents=0,rateEvents=0;
   const uuids=new Set(),hooks=new Map(),parentText=['',''],results=[],childIds=new Set(),parentIds=new Map();
+  const serverReports=[];
   const packetText=JSON.stringify(canon(packet));
   const exactPrompt=p=>{
     let v;try{v=JSON.parse(p)}catch{fail('promptのJSON');}
     check(typeof p==='string'&&JSON.stringify(v)===p&&JSON.stringify(canon(v))===packetText,'原本prompt');
   };
   const taskIdentity=m=>check(task&&m.task_id===task.task_id&&m.run_id===task.run_id,'task/run ID');
-  const stats=s=>{
-    check(obj(s)&&s.spawned===1&&s.completed===1&&s.failed===0&&s.max_depth===1&&
-      s.spawned_by_subagents===0&&s.started_in_background===1&&
-      same(s.requested,{background:0,foreground:0,unset:1})&&
-      same(s.by_type,{[delegate]:1})&&keys(s.killed,['parent','user','system'])&&zeroObject(s.killed)&&
-      keys(s.refused,['depth_limit','concurrency_limit','budget'])&&zeroObject(s.refused),'委任統計');
-  };
-  const checkUsage=u=>{
-    if(u?.server_tool_use!==undefined)
-      check(keys(u.server_tool_use,['web_search_requests','web_fetch_requests'])&&zeroObject(u.server_tool_use),'サーバーツール');
-  };
+  const checkUsage=u=>serverReports.push(checkServerToolUsage(u));
   for(const m of rows){
     check(obj(m)&&m.session_id===session_id&&uuid(m.uuid)&&!uuids.has(m.uuid),'session/重複イベント');
     uuids.add(m.uuid);
@@ -104,6 +95,7 @@ export function validateAsyncTranscript(rows,{delegate,model,packet,session_id,l
         taskIdentity(m);
         check(updated&&!notified&&m.tool_use_id===call.id&&m.status==='completed'&&
           m.summary===childText&&m.usage?.tool_uses===0,'task完了通知');
+        checkServerToolUsage(m.usage);
         notified=true;continue;
       }
       fail('未対応system');
@@ -120,7 +112,7 @@ export function validateAsyncTranscript(rows,{delegate,model,packet,session_id,l
         m.api_error_status===null&&m.queued_turn_count===0&&
         Array.isArray(m.permission_denials)&&m.permission_denials.length===0&&
         Number.isInteger(m.num_turns)&&m.num_turns>=1&&m.num_turns<=limits.parent_max_turns,'結果状態・番号');
-      stats(m.subagent_stats);checkUsage(m.usage);
+      checkSubagentStats(m.subagent_stats,{delegate});checkUsage(m.usage);
       check(m.result===parentText[results.length]&&m.result.trim().length>0,'親出力と結果の一致');
       if(results.length===0){
         check(!Object.hasOwn(m,'origin')&&m.structured_output===undefined,'初回結果の出自');
@@ -141,7 +133,8 @@ export function validateAsyncTranscript(rows,{delegate,model,packet,session_id,l
       content.filter(c=>c.type==='tool_use').length===1,'送信入力の位置');
     if(m.tool_use_result!==undefined||m.tool_result_meta!==undefined)
       check(m.type==='user'&&parent===null&&content.length===1&&content[0].type==='tool_result','起動メタデータの位置');
-    checkUsage(m.message?.usage);
+    if(m.type==='assistant')checkUsage(m.message?.usage);
+    else checkServerToolUsage(m.message?.usage);
     if(parent!==null){
       check(m.agent_id===task.task_id&&m.subagent_type===delegate&&m.type==='assistant'&&
         m.message.model===model&&id(m.message.id)&&!parentIds.has(m.message.id),'子のID・モデル');
@@ -196,6 +189,8 @@ export function validateAsyncTranscript(rows,{delegate,model,packet,session_id,l
     result:{num_turns:turns,duration_ms:results.reduce((s,r)=>s+(Number.isFinite(r.duration_ms)?r.duration_ms:0),0),
       duration_api_ms:null,subagent_stats_present:true},
     audit:{profile:'claude-2.1.296-async-v1',session_id,tool_use_id:call.id,task_id:task.task_id,run_id:task.run_id,
+      tool_counts_scope:'observed_transcript',server_tool_usage_complete:serverReports.every(Boolean),
+      server_tool_calls:serverReports.every(Boolean)?0:null,
       initial_result_index:0,final_result_index:1,child_completed:true,exact_packet:true,
       child_quality_signals:qualitySignals(childText),
       guard_execution_proven:false,quality_approved:false}};

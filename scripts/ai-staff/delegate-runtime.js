@@ -156,7 +156,7 @@ export async function runDelegated({root,packet,delegate,model,approvalPath,mode
   if(!DELEGATES.includes(delegate)||!KNOWN_MODELS.includes(model)||ROLE_DELEGATE[packet.role]!==delegate||
     process.platform!=='darwin'||process.env.CLAUDE_CONFIG_DIR)fail();
   const paths=settingsPaths(root),inventory=settingsSnapshot(paths);
-  const sources=['transcript-baseline.js','run-evidence.js','utf8-capture.js','delegate-runtime.js','delegate-guard.js','delegate.js','transcript-async.js','cli.js','quality-policy.js','../../lib/ai-team.js'];
+  const sources=['transcript-stats.js','transcript-baseline.js','run-evidence.js','utf8-capture.js','delegate-runtime.js','delegate-guard.js','delegate.js','transcript-async.js','cli.js','quality-policy.js','../../lib/ai-team.js'];
   const definitionText=readFileSync(join(root,'scripts/ai-staff/agents',delegate+'.md'),'utf8');
   const definition=agentDefinition(delegate,definitionText);
   const source_hash=hash(sources.map(p=>hash(readFileSync(join(root,'scripts/ai-staff',p),'utf8'))).concat(hash(definitionText)));

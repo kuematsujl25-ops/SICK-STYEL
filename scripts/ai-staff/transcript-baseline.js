@@ -1,10 +1,12 @@
 import {TeamError,validateOutput} from '../../lib/ai-team.js';
+import {checkServerToolUsage,checkSubagentStats} from './transcript-stats.js';
 // Narrow print/stream-json profile for the no-tools half of a paired evaluation. Unknown shapes stop.
 export function validateComparisonBaseline(stdout,{packet,model,session_id,limits}){
   const fail=()=>{throw new TeamError('親単独比較の記録が未確認です。成果物は保存しません');};
   let rows;try{rows=stdout.trim().split('\n').map(x=>JSON.parse(x))}catch{fail()}
   if(rows.length>limits.max_transcript_lines)fail();
   const uuids=new Set();let init=null,hook=null,hookDone=false,result=null,text='',rates=0,turns=0;
+  const serverReports=[];let statsPresent=false;
   for(const m of rows){
     if(!m||m.session_id!==session_id||typeof m.uuid!=='string'||!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(m.uuid)||
       uuids.has(m.uuid)||m.parent_tool_use_id!=null||m.agent_id!==undefined||m.agent_type!==undefined||result)fail();
@@ -27,6 +29,7 @@ export function validateComparisonBaseline(stdout,{packet,model,session_id,limit
     }
     if(m.type==='assistant'){
       if(m.message?.model!==model||!Array.isArray(m.message.content)||++turns>limits.parent_max_turns)fail();
+      serverReports.push(checkServerToolUsage(m.message.usage));
       for(const c of m.message.content){if(!c||!['text','thinking','redacted_thinking'].includes(c.type))fail();
         if(c.type==='text'){if(typeof c.text!=='string')fail();text+=c.text;}}
       continue;
@@ -35,11 +38,16 @@ export function validateComparisonBaseline(stdout,{packet,model,session_id,limit
       m.terminal_reason!=='completed'||m.stop_reason!=='end_turn'||m.safety_stops!==0||m.api_error_status!==null||
       m.queued_turn_count!==0||!Array.isArray(m.permission_denials)||m.permission_denials.length||
       !Number.isInteger(m.num_turns)||m.num_turns<1||m.num_turns>limits.parent_max_turns||
-      m.origin!==undefined||(m.subagent_stats!==undefined&&m.subagent_stats.spawned!==0))fail();
+      m.origin!==undefined)fail();
+    statsPresent=checkSubagentStats(m.subagent_stats,{baseline:true});
+    serverReports.push(checkServerToolUsage(m.usage));
     result=m;
   }
   if(!result||!rates||!hookDone)fail();
   let output;try{output=validateOutput(JSON.parse(text),packet.facts)}catch{fail()}
   return {output,init_model:model,init_tools:[],counts:{transcript_lines:rows.length,parent_agent_calls:0,child_tool_calls:0,hook_events:2},
-    result:{num_turns:result.num_turns},audit:{profile:'claude-2.1.296-baseline-v1',quality_approved:false}};
+    result:{num_turns:result.num_turns,subagent_stats_present:statsPresent},
+    audit:{profile:'claude-2.1.296-baseline-v1',tool_counts_scope:'observed_transcript',
+      server_tool_usage_complete:serverReports.every(Boolean),server_tool_calls:serverReports.every(Boolean)?0:null,
+      quality_approved:false}};
 }
