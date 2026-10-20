@@ -33,6 +33,7 @@ export function settingsPaths(root,home=homedir()){
   const paths=[join(home,'.claude/settings.json'),join(home,'.claude/settings.local.json'),
     join(home,'.claude/managed-settings.json'),join(home,'.claude/plugins/installed_plugins.json'),
     '/Library/Application Support/ClaudeCode/managed-settings.json',
+    '/Library/Application Support/ClaudeCode/managed-settings.d','/Library/Application Support/ClaudeCode/managed-mcp.json',
     '/Library/Managed Preferences/com.anthropic.claudecode.plist',
     join(home,'Library/Preferences/com.anthropic.claudecode.plist')];
   for(let dir=resolve(root);;dir=dirname(dir)){

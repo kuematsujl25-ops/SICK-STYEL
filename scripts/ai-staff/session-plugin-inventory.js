@@ -1,6 +1,6 @@
 // Read-only inventory. Local absence never establishes remote policy or Remote Control state.
-import {readFileSync,lstatSync,readdirSync,realpathSync} from 'node:fs';
-import {join,resolve,relative,isAbsolute} from 'node:path';
+import {readFileSync,lstatSync,readdirSync,realpathSync,readlinkSync} from 'node:fs';
+import {join,resolve,relative,isAbsolute,dirname} from 'node:path';
 import {createHash} from 'node:crypto';
 import {TeamError} from '../../lib/ai-team.js';
 import {SESSION_PLUGIN_IDS,buildSessionPluginPlan} from './session-plugin-plan.js';
@@ -20,11 +20,20 @@ export function pluginTreeHash(root){
   function walk(dir){
     const s=stat(dir);if(!s?.isDirectory()||s.isSymbolicLink())fail();
     for(const name of readdirSync(dir).sort()){
-      // CLI liveness marker is mutable and contains no executable plugin configuration.
-      if(name==='.in_use')continue;
       if(++count>50000)fail();
       const path=join(dir,name),entry=stat(path);
-      if(entry?.isSymbolicLink())fail();
+      // Real installations use .in_use directories. Hash them and their contents normally.
+      // No mutable marker exception is established for this profile.
+      if(name==='.in_use'&&entry?.isSymbolicLink())fail();
+      if(entry?.isSymbolicLink()){
+        const link=readlinkSync(path),target=resolve(dirname(path),link);
+        // Direct regular-file links only: no directory links, chained links, or external hops.
+        if(!target.startsWith(root+'/'))fail();
+        const content=file(target);bytes+=content.length;if(bytes>256_000_000)fail();
+        if(readlinkSync(path)!==link||realpathSync(path)!==target)fail();
+        manifest.push([relative(root,path),'symlink',link,relative(root,target),sha(content)]);
+        continue;
+      }
       if(entry?.isDirectory()){manifest.push([relative(root,path)+'/']);walk(path)}
       else{
         const content=file(path);bytes+=content.length;if(bytes>256_000_000)fail();

@@ -47,7 +47,7 @@ node scripts/ai-staff/replay-run.js PRIVATE_RUN_DIRECTORY MANIFEST_SHA256
 
 Codexプラグインの停止は同プラグインのSessionStart/Stop/SessionEndも止める。すべての安全hooksを維持するとは表現しない。通知設定は保持し、Remote Control状態の確認を必要とする。利用には明示された切替承認、実機inventory照合、統合差分の独立レビュー、開始/子実行の実証が必要。
 
-新しい承認profileは`claude-2.1.296-session-three-plugins-v1`。旧profileからの自動移行はない。`session-plugin-inventory.js`が原設定・registry・インストール先の全通常ファイル（node_modulesも含む、可変`.in_use`を除く）を読み取りhash化する。symlink、追加設定、未知設定、別scope、管理設定が存在する場合は停止する。探索は50,000項目/256MBに制限し、上限超過も停止する。plan生成器・inventory・bindingを含む実装hashと、packet/model/mode/CLI版/原設定/実体/overlay/policy証拠を結び付ける。
+新しい承認profileは`claude-2.1.296-session-three-plugins-v1`。旧profileからの自動移行はない。`session-plugin-inventory.js`が原設定・registry・インストール先の全通常ファイル（node_modulesと`.in_use`も含む）を読み取りhash化する。追加設定、未知設定、別scope、管理設定が存在する場合は停止する。依存symlinkは同じ実体root内の通常ファイルへ直接解決される場合のみ、リンク文字列・相対解決先・内容hashを記録する。外部参照・循環・dangling・連鎖・ディレクトリリンクは拒否する。実機の`.in_use`はdirectoryなので除外せず、root/別位置とも通常fileとdirectory配下をすべてhash対象にする。同名symlinkは拒否する。このprofileには可変marker除外はない。探索は50,000項目/256MBに制限し、上限超過も停止する。plan生成器・inventory・bindingを含む実装hashと、packet/model/mode/CLI版/原設定/実体/overlay/policy証拠を結び付ける。
 
 承認には従来の料金・利用枠・本人認証・10分期限・UUID単回tokenに加え、`binding_sha256`、正確な`plugin_ids`、`session_only_three_plugins:true`、`codex_plugin_hooks_absent_acknowledged:true`、`persistent_settings_changes_allowed:false`、`managed_override_allowed:false`、`other_plugins_disabled_allowed:false`、`independent_review_confirmed:true`、`remote_control_disconnected_confirmed:true`が必要。`approval_evidence_ref`は実際の限定承認を記録した絶対パス、`approval_evidence_sha256`はそのファイル本文のSHA256。`no_other_hooks_or_plugins:true`は、この明示された3件と固定CLI組込3件以外に実行対象がないという確認を意味する。これらの真偽値を自動作成する機能はない。
 
@@ -55,4 +55,4 @@ Codexプラグインの停止は同プラグインのSessionStart/Stop/SessionEn
 
 CLIに渡す追加設定は対象3件の`enabledPlugins:false`と既存guardのみ。通常設定は変更しない。入力送信にはstartup markerと成功hookだけでなく、initのCLI版・ツール・model・dontAsk・API keyなし・空MCP・固定組込plugin集合の一致も必要。CLIがstdin前にinitを出さない場合は時間切れで停止する。組込は`cc-plugin-agents-md`、`cc-plugin-telemetry`、`cc-plugin-plugin-authoring`の3件で、すべてpath=`builtin`・source=`名前@builtin`を要求する。
 
-initのMCP空はDiscordプロセス不在の証明ではない。プロセス不在、実際の開始順序、子の制約継承は実機検証まで未確認であり、品質承認は常にfalseのまま。この統合差分の独立レビュー前には実CLI/modelを起動しない。保存証拠のreplayでも限定承認・policy証拠・binding・initを再検証する。
+initのMCP空とplugin集合の一致は、init前の通信やDiscordプロセス不在の証明ではない。実体hashは変更検出のためで、無効化するpluginの依存を実行して安全性を検査するものではない。プロセス不在、実際の開始順序、子の制約継承は実機検証まで未確認であり、品質承認は常にfalseのまま。この統合差分の独立レビュー前には実CLI/modelを起動しない。保存証拠のreplayでも限定承認・policy証拠・binding・initを再検証する。
