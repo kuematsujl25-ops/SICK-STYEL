@@ -4,18 +4,18 @@ import {resolve,dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {randomUUID} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
-import {validateTaskPacket,buildPrompt,validateOutput} from '../../lib/ai-team.js';
+import {validateTaskPacket,validateOutput,TASK_PACKET_MAX_BYTES} from '../../lib/ai-team.js';
 import {checkSubscription,codexArgs} from './cli.js';
 import {resultPath} from './result-path.js';
-import {parseRunArgs,delegationUnavailable,claudeBaselineArgs,buildManifest} from './delegate.js';
+import {parseRunArgs,delegationUnavailable,claudeBaselineArgs,buildManifest,analysisPrompt} from './delegate.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)),'../..');
 try {
   // Unknown, duplicate or invalid flags are rejected here, before any CLI/authentication call.
   const {filename,provider,delegate,model,run} = parseRunArgs(process.argv.slice(2));
-  // Delegation is unapproved: always rejected before reading files/definitions, auth, CLI or model. No bypass.
+  // General delegation is stopped: always rejected before reading files/definitions, auth, CLI or model. No bypass.
   if (delegate !== null) delegationUnavailable();
-  if (statSync(filename).size > 100000) throw Error('依頼は100KB以内にしてください');
+  if (statSync(filename).size > TASK_PACKET_MAX_BYTES) throw Error('依頼はUTF-8で100KB以内にしてください');
   const packet = validateTaskPacket(JSON.parse(readFileSync(filename,'utf8')));
   if (!run) {
     console.log(`準備確認のみ: ${provider} / SICK STYLE / 依頼 ${packet.job_id}\n実行には --run を付けます。追加API課金の認証は使いません。`);
@@ -26,7 +26,7 @@ try {
       const outputFile = resolve(dir,'output.json');
       const schemaFile = resolve(root,'ai-staff/result.schema.json');
       const schema = readFileSync(schemaFile,'utf8');
-      const prompt = buildPrompt(packet);
+      const prompt = analysisPrompt(packet);
       const cliArgs = provider === 'codex' ? codexArgs({output:outputFile,schema:schemaFile}) : claudeBaselineArgs({schema,model});
       const started_at = new Date().toISOString();
       const t0 = performance.now();

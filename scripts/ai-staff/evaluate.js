@@ -1,5 +1,5 @@
 // Offline Phase T evaluator. It never calls a model: it writes task packets for the synthetic fixtures and
-// scores result artifacts that a human explicitly supplies. Real evaluation is unapproved and stopped; CLI pairs are a plan for after approval.
+// scores supplied artifacts. Production improvement is approved; runtime evaluation remains staged behind review.
 import {readFileSync,writeFileSync,mkdirSync,statSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
