@@ -111,6 +111,7 @@ test('私有証拠: cleanup後もraw/marker/承認を再監査でき、改変・
 });
 
 test('委譲の私有証拠: 元作業dir削除後も実ガードmarkerと非同期全文を再照合、used/tool欠落を拒否',async()=>{
+ const {reauditRejectedEvidence}=await import('../scripts/ai-staff/delegate-runtime.js');
  const f=await import('./helpers/async-run.js'),{decide,parentAuditRecord}=await import('../scripts/ai-staff/delegate-guard.js');
  const root=mkdtempSync(join(tmpdir(),'ss-delegated-evidence-')),work=join(root,'work');mkdirSync(work,{mode:0o700});
  const policy=join(work,'policy.json');writeFileSync(policy,JSON.stringify({version:1,session_id:f.session,delegate:f.delegate,packet:f.packet,expires_at:new Date(Date.now()+60000).toISOString()}),{mode:0o600});
@@ -133,6 +134,19 @@ test('委譲の私有証拠: 元作業dir削除後も実ガードmarkerと非同
   rmSync(work,{recursive:true,force:true});
   assert.deepEqual(replayRunEvidence(dir,proof.manifest_sha256).checked.output,f.output);
   assert.equal(replayRunEvidence(dir,proof.manifest_sha256).guardEvidence.one_shot,true);
+  const rejectedDir=createEvidenceDirectory(root),legacy=JSON.parse(files['tool.json']);delete legacy.input_canonical_sha256;
+  legacy.input_sha256=hash({description:f.input.description,prompt:f.input.prompt,subagent_type:f.input.subagent_type});
+  const rejected=saveEvidence(rejectedDir,{...files,'tool.json':JSON.stringify(legacy)},
+    {...readEvidence(dir,proof.manifest_sha256).manifest.metadata,audit_status:'rejected'});
+  const original=readFileSync(join(rejectedDir,'evidence.json'));
+  assert.throws(()=>replayRunEvidence(rejectedDir,rejected.manifest_sha256));
+  const after=reauditRejectedEvidence(rejectedDir,rejected.manifest_sha256);
+  assert.equal(after.original_audit_status,'rejected');assert.equal(after.retrospective,true);assert.equal(after.quality_approved,false);
+  assert.deepEqual(after.guardEvidence.legacy_key_order_evidence,['description','prompt','subagent_type']);
+  assert.deepEqual(readFileSync(join(rejectedDir,'evidence.json')),original);
+  assert.throws(()=>reauditRejectedEvidence(dir,proof.manifest_sha256));
+  rmSync(join(rejectedDir,'parent-audit.json'));assert.throws(()=>reauditRejectedEvidence(rejectedDir,rejected.manifest_sha256));
+
   for(const n of ['used','tool.json','parent-audit.json']){const old=readFileSync(join(dir,n));rmSync(join(dir,n));assert.throws(()=>replayRunEvidence(dir,proof.manifest_sha256));writeFileSync(join(dir,n),old,{mode:0o600});}
  }finally{rmSync(root,{recursive:true,force:true})}
 });

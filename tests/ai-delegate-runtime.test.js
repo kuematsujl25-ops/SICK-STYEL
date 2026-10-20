@@ -193,3 +193,16 @@ test('親監査receiptは両イベントの検証後だけ発行し、発行前�
     }finally{rmSync(dir,{recursive:true,force:true})}
   }
 });
+
+
+test('重複キーのhook入力はsemantic hash/単回token以前に拒否する',()=>{
+ const {dir,policy}=setup();
+ try{
+  decide([policy,'startup'],JSON.stringify(startup));
+  writeFileSync(join(dir,'parent-audit.json'),JSON.stringify(parentAuditRecord(policy)),{mode:0o600});
+  for(const text of [JSON.stringify(tool).replace('"tool_name":"Agent"','"tool_name":"Bash","tool_name":"Agent"'),
+    JSON.stringify(tool).replace('"description":"架空監査"','"description":"変更","description":"架空監査"')]){
+    assert.throws(()=>decide([policy,'tool'],text));assert.ok(!existsSync(join(dir,'used')));
+  }
+ }finally{rmSync(dir,{recursive:true,force:true})}
+});

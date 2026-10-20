@@ -117,3 +117,13 @@ policy/usageの `observation` は `{kind:"verified_tool_observation",observer:"a
 Agent側の同期境界ではstartup markerだけで委譲を通していたため、親がstartup成功応答とinitの双方を検証した後に限り `parent-audit.json` を排他的に作成する。記録はsessionとpolicy全体hash（packet・担当・期限を含む）に結合する。PreToolUse `tool` modeはこの私有記録の形式・所有者・権限・単一リンク・session/policy一致を、担当用token消費前に検証する。欠落・別session/policy・改変・symlink/hardlinkは同期拒否。baselineはこの記録を発行せず、deny modeを維持する。
 
 記録は私有証拠に保存し、委譲replayでも必須とする。stdout観測が遅れて記録がまだなければ、ツール要求は失敗として拒否する。待機や再試行で許可へ変換しない。この差分の独立レビューと別途の実機検証まで、Agentの成立・故障時拒否・本番適用は未確認。
+
+### 入力hashのキー順補正と独立した事後監査
+
+`770f95b` の限定Agent試験1回は、正確な担当・packet、子1件完了、depth 1、子ツール0、最終JSON/schemaまで成立した。しかしhookが受け取ったinputのキー順とstdoutのキー順が異なり、`JSON.stringify`順序依存の `input_sha256` 比較で拒否された。元の拒否記録は変更しない。
+
+新しいtool receiptは既存の `input_sha256`（hook inputを元のキー順でJSON化したhash）を残し、意味比較用の `input_canonical_sha256` を別に追加する。canonicalはobjectキー順だけを再帰的に正規化する。配列順・型・null・数値・文字列を変えない。特にpromptは文字列のままで、内側packetを整形・変換しない。exact field集合、担当、minified packet完全一致、親監査・単回token等の制約は維持する。JSON解析では重複キー（Unicode escapeによる同名も含む）、不正JSON、非有限数、過剰な深さを拒否する。stdout bytes、署名対象のファイルhash、元証拠は変更しない。
+
+Agent inputは既存契約で正確に3つの文字列fieldだけなので、旧raw input hashの補足検証はその6通りのキー順に限定する。どの並びでも一致しなければ拒否し、値や文字列内容を変えて探索しない。新形式はcanonical hash一致も必須。旧形式は通常 `replayRunEvidence` では受理せず、明示的な `reauditRejectedEvidence` だけが元manifest=拒否、正常終了、全証拠hash・元の承認/設定/identity・親監査・入力・完了/schemaを再確認して別の事後結果を返す。この関数は元証拠を書き換えず、成果を取り込まず、`quality_approved:false` を維持する。元の拒否を当初から成功と扱わない。
+
+対象実証拠の事後監査はモデル再実行なしで通過した。元hook hashは `description,prompt,subagent_type` の並びと一致。サーバー側ツール使用量の完全性は依然 `false`、未取得の値はnullのまま。新しい実行を許可する承認や、本番・品質採用の承認をこの結果から生成しない。

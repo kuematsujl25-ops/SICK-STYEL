@@ -12,7 +12,7 @@ import {collectApplicability,readApplicabilityContext,applicabilityPaths,HEADLES
 import {Utf8Capture,bytesHash} from './utf8-capture.js';
 import {sessionPluginBinding,verifySessionPluginConsent,SESSION_PLUGIN_PROFILE} from './session-plugin-binding.js';
 import {readSessionPluginInventory,verifyPolicyObservation} from './session-plugin-inventory.js';
-import {parentAuditRecord,verifyParentAudit} from './delegate-guard.js';
+import {parentAuditRecord,verifyParentAudit,strictJson,verifyInputHashes} from './delegate-guard.js';
 import {validateComparisonBaseline} from './transcript-baseline.js';
 import {TeamError} from '../../lib/ai-team.js';
 import {checkSubscription} from './cli.js';
@@ -174,8 +174,8 @@ export function executeGuarded({args,cwd,env,prompt,session,dir,spawnProcess=spa
     if(!stopped){released=true;try{child.stdin.end(prompt)}catch{stop()}}
   });
 }
-export function verifyGuardEvidence(stdout,dir,session,mode='delegated'){
-  const rows=stdout.trim().split('\n').map(l=>JSON.parse(l));
+export function verifyGuardEvidence(stdout,dir,session,mode='delegated',{allowLegacyInputHash=false}={}){
+  const rows=stdout.trim().split('\n').map(l=>strictJson(l));
   const calls=rows.flatMap(m=>(m.message?.content||[]).filter?.(c=>c.type==='tool_use')||[]);
   const start=JSON.parse(privateFile(join(dir,'started.json')));
   if(start.session_id!==session||start.stage!=='startup')fail();
@@ -187,13 +187,14 @@ export function verifyGuardEvidence(stdout,dir,session,mode='delegated'){
   }
   if(mode!=='delegated'||calls.length!==1)fail();
   verifyParentAudit(join(dir,'policy.json'),session);
-  const receipt=JSON.parse(privateFile(join(dir,'tool.json')));
+  const receipt=strictJson(privateFile(join(dir,'tool.json')));
   if(receipt.session_id!==session||receipt.stage!=='tool'||receipt.tool_use_id!==calls[0].id||
-    receipt.tool_name!==calls[0].name||receipt.input_sha256!==hash(calls[0].input)||!existsSync(join(dir,'used')))fail();
+    receipt.tool_name!==calls[0].name||!existsSync(join(dir,'used')))fail();
+  const inputHashes=verifyInputHashes(calls[0].input,receipt,{allowLegacy:allowLegacyInputHash});
   const hooks=rows.filter(m=>m.type==='system'&&m.subtype==='hook_response');
   if(hooks.length!==2||hooks.filter(m=>m.hook_event==='SessionStart').length!==1||
     hooks.filter(m=>m.hook_event==='PreToolUse').length!==1||hooks.some(m=>m.exit_code!==0||m.outcome!=='success'))fail();
-  return {startup:true,pre_tool_use:true,one_shot:true,input_sha256:receipt.input_sha256,quality_approved:false};
+  return {startup:true,pre_tool_use:true,one_shot:true,...inputHashes,quality_approved:false};
 }
 export async function runDelegated({root,packet,delegate,model,approvalPath,mode='delegated'}){
   // No model/auth subprocess before the explicit receipt and settings checks.
@@ -302,10 +303,16 @@ export async function runDelegated({root,packet,delegate,model,approvalPath,mode
   }finally{if(archived)rmSync(dir,{recursive:true,force:true})}
 }
 
-export function replayRunEvidence(dir,manifestHash){
+export function replayRunEvidence(dir,manifestHash){return auditSavedEvidence(dir,manifestHash,false)}
+// Separate retrospective result; never rewrites the original rejected manifest or imports output.
+export function reauditRejectedEvidence(dir,manifestHash){
+  return {original_audit_status:'rejected',original_manifest_sha256:manifestHash,
+    retrospective:true,...auditSavedEvidence(dir,manifestHash,true)};
+}
+function auditSavedEvidence(dir,manifestHash,retrospective){
   const {manifest,files}=readEvidence(dir,manifestHash),m=manifest.metadata;
   const decode=b=>new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(b);
-  if(m.audit_status!=='accepted'||!files['approval-token.used']||!m.streams?.stdout?.utf8_valid||m.streams.stdout.truncated||
+  if(m.audit_status!==(retrospective?'rejected':'accepted')||(retrospective&&m.mode!=='delegated')||!files['approval-token.used']||!m.streams?.stdout?.utf8_valid||m.streams.stdout.truncated||
     !m.streams.stdout.ended||m.execution?.exit_code!==0||m.execution.signal!==null||m.execution.prompt_released!==true||m.execution.stopped!==false)fail();
   const stdout=decode(files['stdout.bytes']);
   if(bytesHash(files['stdout.bytes'])!==m.streams.stdout.raw_bytes_sha256||
@@ -348,7 +355,7 @@ export function replayRunEvidence(dir,manifestHash){
   }
   verifyApproval(approval,{packet,delegate:m.delegate,model:m.model,inventory:JSON.parse(decode(files['inventory.json'])),
     source_hash:m.source_sha256,mode:m.mode,now:Date.parse(m.started_at),pluginBinding});
-  const guardEvidence=verifyGuardEvidence(stdout,dir,m.session,m.mode);
+  const guardEvidence=verifyGuardEvidence(stdout,dir,m.session,m.mode,{allowLegacyInputHash:retrospective});
   const checked=m.mode==='baseline'?validateComparisonBaseline(stdout,{packet,model:m.model,session_id:m.session,limits:LIMITS}):validateTranscript(stdout,{packet,delegate:m.delegate,model:m.model,session_id:m.session});
   if(checked.audit?.profile!==(m.mode==='baseline'?'claude-2.1.296-baseline-v1':'claude-2.1.296-async-v1'))fail();
   return {guardEvidence,checked,quality_approved:false};

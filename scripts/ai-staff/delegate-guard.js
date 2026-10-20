@@ -25,6 +25,45 @@ const sameKeys=(o,keys)=>plain(o)&&Object.keys(o).sort().join()===keys.join();
 const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
 export const canonicalJson=v=>JSON.stringify(canonical(v));
 
+// Parse valid JSON without silently accepting duplicate (including escaped) object keys.
+export function strictJson(text){
+  const value=JSON.parse(text);let i=0;
+  const space=()=>{while(/\s/.test(text[i]||'')&&i<text.length)i++};
+  const string=()=>{const start=i++;while(i<text.length){if(text[i]==='\\'){i+=2;continue}if(text[i++]==='"')break}return JSON.parse(text.slice(start,i))};
+  const scan=(depth=0)=>{
+    if(depth>128)throw new Error('JSON depth');space();
+    if(text[i]==='"'){string();return}
+    if(text[i]==='{'){
+      i++;space();const keys=new Set();if(text[i]==='}'){i++;return}
+      while(true){space();const key=string();if(keys.has(key))throw new Error('JSON duplicate key');keys.add(key);space();i++;scan(depth+1);space();if(text[i++]==='}')return}
+    }
+    if(text[i]==='['){i++;space();if(text[i]===']'){i++;return}while(true){scan(depth+1);space();if(text[i++]===']')return}}
+    const start=i;while(i<text.length&&!/[\s,}\]]/.test(text[i]))i++;
+    const scalar=JSON.parse(text.slice(start,i));if(typeof scalar==='number'&&!Number.isFinite(scalar))throw new Error('JSON number');
+  };
+  scan();return value;
+}
+// Semantic digest: only object key order is normalized. Prompt strings are never parsed/re-written.
+export function canonicalInputHash(value){
+  const encode=v=>{
+    if(v===null||typeof v==='string'||typeof v==='boolean')return JSON.stringify(v);
+    if(typeof v==='number'&&Number.isFinite(v))return Object.is(v,-0)?'-0':JSON.stringify(v);
+    if(Array.isArray(v))return '['+v.map(encode).join(',')+']';
+    if(plain(v))return '{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+encode(v[k])).join(',')+'}';
+    throw new Error('JSON value');
+  };
+  return createHash('sha256').update(encode(value)).digest('hex');
+}
+// Agent input is exactly three strings, so six raw serializations cover key-order differences only.
+export function verifyInputHashes(input,receipt,{allowLegacy=false}={}){
+  if(!sameKeys(input,AGENT_INPUT_KEYS)||Object.values(input).some(v=>typeof v!=='string'))deny('Agent入力の項目');
+  const permutation=a=>a.length?a.flatMap((k,i)=>permutation(a.filter((_,j)=>j!==i)).map(t=>[k,...t])):[[]];
+  const rawMatches=permutation(AGENT_INPUT_KEYS).filter(keys=>createHash('sha256').update(JSON.stringify(Object.fromEntries(keys.map(k=>[k,input[k]])))).digest('hex')===receipt.input_sha256);
+  const semantic=canonicalInputHash(input),legacy=!Object.hasOwn(receipt,'input_canonical_sha256');
+  if(!rawMatches.length||(legacy?!allowLegacy:receipt.input_canonical_sha256!==semantic))deny('Agent入力hash');
+  return {input_sha256:receipt.input_sha256,input_canonical_sha256:semantic,legacy_key_order_evidence:legacy?rawMatches[0]:null};
+}
+
 // Pure: validate parsed policy content against the current time.
 export function checkPolicy(policy,now=Date.now()){
   if(!sameKeys(policy,POLICY_KEYS)||policy.version!==1)deny('policy形式');
@@ -51,7 +90,7 @@ export function checkEvent(event,policy){
   if(typeof input.description!=='string'||!input.description.trim()||input.description.length>GUARD_LIMITS.max_description)deny('説明');
   if(typeof input.prompt!=='string')deny('依頼データ不一致');
   let sent;
-  try{sent=JSON.parse(input.prompt);}catch{deny('依頼データ不一致');}
+  try{sent=strictJson(input.prompt);}catch{deny('依頼データ不一致');}
   // Raw text must be plain minified JSON (no padding, duplicate keys or alternative number forms), and its
   // canonical form must equal the fixed packet exactly (all keys, value types and array order).
   if(input.prompt!==JSON.stringify(sent)||canonicalJson(sent)!==policy.expected_prompt)deny('依頼データ不一致');
@@ -79,7 +118,7 @@ function readPrivateJson(policyPath){
   }catch{deny('policy読込');}
   finally{if(fd!==undefined)closeSync(fd);}
   let parsed;
-  try{parsed=JSON.parse(text);}catch{deny('policy形式');}
+  try{parsed=strictJson(text);}catch{deny('policy形式');}
   return {dir,value:parsed};
 }
 
@@ -113,7 +152,7 @@ export function decide(argv,stdinText,now=Date.now()){
   const {dir,policy}=readPolicyFile(argv[0],now);
   if(typeof stdinText!=='string'||Buffer.byteLength(stdinText)>GUARD_LIMITS.max_stdin_bytes)deny('入力サイズ');
   let event;
-  try{event=JSON.parse(stdinText);}catch{deny('入力形式');}
+  try{event=strictJson(stdinText);}catch{deny('入力形式');}
   if(argv[1]==='startup'){
     if(event.hook_event_name!=='SessionStart'||event.session_id!==policy.session_id||event.source!=='startup'||
       Object.hasOwn(event,'agent_id')||Object.hasOwn(event,'agent_type'))deny('startup不一致');
@@ -127,7 +166,8 @@ export function decide(argv,stdinText,now=Date.now()){
   claimOnce(dir);
   if(argv[1]==='tool')writeFileSync(join(dir,'tool.json'),JSON.stringify({stage:'tool',session_id:policy.session_id,
     tool_use_id:event.tool_use_id,tool_name:event.tool_name,
-    input_sha256:createHash('sha256').update(JSON.stringify(event.tool_input)).digest('hex')}),{mode:0o600,flag:'wx'});
+    input_sha256:createHash('sha256').update(JSON.stringify(event.tool_input)).digest('hex'),
+    input_canonical_sha256:canonicalInputHash(event.tool_input)}),{mode:0o600,flag:'wx'});
   return {};
 }
 
