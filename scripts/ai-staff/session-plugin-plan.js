@@ -1,4 +1,4 @@
-// Offline proposal only. Not connected to the CLI launcher; never reads or writes settings.
+// Pure proposal generator. The guarded launcher separately verifies live inventory and consent.
 import {createHash} from 'node:crypto';
 import {TeamError} from '../../lib/ai-team.js';
 export const SESSION_PLUGIN_IDS=Object.freeze([

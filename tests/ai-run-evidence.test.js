@@ -125,3 +125,49 @@ test('委譲の私有証拠: 元作業dir削除後も実ガードmarkerと非同
   for(const n of ['used','tool.json']){const old=readFileSync(join(dir,n));rmSync(join(dir,n));assert.throws(()=>replayRunEvidence(dir,proof.manifest_sha256));writeFileSync(join(dir,n),old,{mode:0o600});}
  }finally{rmSync(root,{recursive:true,force:true})}
 });
+
+test('限定plugin証拠のreplay:旧承認再利用・設定差分・consent/policy欠損を拒否',async()=>{
+ const {sessionPluginBinding,SESSION_PLUGIN_PROFILE}=await import('../scripts/ai-staff/session-plugin-binding.js');
+ const {SESSION_PLUGIN_IDS}=await import('../scripts/ai-staff/session-plugin-plan.js');
+ const {BUILTIN_PLUGINS}=await import('../scripts/ai-staff/delegate-runtime.js');
+ const root=mkdtempSync(join(tmpdir(),'ss-plugin-replay-')),time=new Date().toISOString(),source=hash('fixture source');
+ const policyEvidence='synthetic human policy observation',consentEvidence='synthetic limited consent';
+ const observation={version:1,managed_policy:'confirmed_absent',remote_policy:'confirmed_absent',remote_control:'disconnected',
+  reviewed_by:'human',evidence_ref:'/synthetic/policy',evidence_sha256:hash(policyEvidence),checked_at:time};
+ const policyText=JSON.stringify(observation),inventory=[{path:'/synthetic/settings.json',sha256:hash('fixture')}];
+ const state={inventory,policyObservation:observation,planInput:{managedState:'confirmed_absent',
+  userSettings:{enabledPlugins:Object.fromEntries(SESSION_PLUGIN_IDS.map(id=>[id,true])),
+   extraKnownMarketplaces:{'openai-codex':{source:{source:'github',repo:'openai/codex-plugin-cc'}}},
+   theme:'dark',inputNeededNotifEnabled:true,agentPushNotifEnabled:true},
+  installed:Object.fromEntries(SESSION_PLUGIN_IDS.map(id=>[id,{version:'fixture',tree_sha256:hash(id)}]))}};
+ const binding=sessionPluginBinding({...state,cliVersion:'2.1.296 (Claude Code)',mode:'baseline',packet,model,sourceHash:source,policyObservationHash:hash(policyText)});
+ const approval={version:1,profile:SESSION_PLUGIN_PROFILE,mode:'baseline',token:randomUUID(),delegate,model,
+  packet_sha256:hash(packet),settings_sha256:hash(inventory),source_sha256:source,checked_at:time,
+  subscription_confirmed:true,extra_usage_disabled:true,no_additional_charge_confirmed:true,usage_available:true,
+  effective_policy_reviewed:true,no_other_hooks_or_plugins:true,no_remote_or_mdm_policy:true,quality_review_required:true,
+  binding_sha256:binding.binding_sha256,plugin_ids:[...SESSION_PLUGIN_IDS],session_only_three_plugins:true,
+  codex_plugin_hooks_absent_acknowledged:true,persistent_settings_changes_allowed:false,managed_override_allowed:false,
+  other_plugins_disabled_allowed:false,independent_review_confirmed:true,remote_control_disconnected_confirmed:true,
+  approval_evidence_ref:'/synthetic/consent',approval_evidence_sha256:hash(consentEvidence)};
+ const rows=baselineRows();rows[2].plugins=BUILTIN_PLUGINS.map(name=>({name,path:'builtin',source:`${name}@builtin`}));
+ const capture=new Utf8Capture(4000000);capture.write(Buffer.from(jsonl(rows)));const {raw,text,...meta}=capture.end();
+ const files={'stdout.bytes':raw,'stdout.utf8.txt':text,'started.json':JSON.stringify({stage:'startup',session_id:session}),
+  'approval-token.used':'','approval.json':JSON.stringify(approval),'packet.json':JSON.stringify(packet),
+  'inventory.json':JSON.stringify(inventory),'final-inventory.json':JSON.stringify(inventory),'plugin-state.json':JSON.stringify(state),
+  'plugin-binding.json':JSON.stringify(binding),'policy-observation.json':policyText,'policy-evidence.txt':policyEvidence,
+  'consent-evidence.txt':consentEvidence,'settings.json':JSON.stringify(runtimeSettings('/guard','/policy','baseline',binding))};
+ const metadata={audit_status:'accepted',mode:'baseline',session,delegate,model,source_sha256:source,cli_version:'2.1.296 (Claude Code)',
+  started_at:time,streams:{stdout:meta},execution:{exit_code:0,signal:null,prompt_released:true,stopped:false}};
+ try{
+  const check=f=>{const dir=createEvidenceDirectory(root),proof=saveEvidence(dir,f,metadata);return ()=>replayRunEvidence(dir,proof.manifest_sha256)};
+  assert.deepEqual(check(files)().checked.output,output);
+  // Re-anchor altered bundles to test semantic checks independently of per-file integrity checks.
+  for(const patch of [{'final-inventory.json':'[]'},{'consent-evidence.txt':'changed'},{'policy-evidence.txt':'changed'},
+   {'approval.json':JSON.stringify({...approval,profile:PROFILE})},{'approval.json':JSON.stringify({...approval,token:'invalid'})},
+   {'approval.json':JSON.stringify({...approval,mode:'delegated'})},{'settings.json':JSON.stringify({enabledPlugins:{}})}])
+    assert.throws(check({...files,...patch}));
+  for(const name of ['policy-observation.json','plugin-binding.json','consent-evidence.txt','final-inventory.json']){
+   const bad={...files};delete bad[name];assert.throws(check(bad));
+  }
+ }finally{rmSync(root,{recursive:true,force:true})}
+});

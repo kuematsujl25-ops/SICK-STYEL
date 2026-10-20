@@ -41,8 +41,18 @@ node scripts/ai-staff/replay-run.js PRIVATE_RUN_DIRECTORY MANIFEST_SHA256
 
 `subagent_stats` も共通化し、全フィールドとネストされたrequested/by_type/killed/refusedを厳密に検証する。親単独では提示された統計がすべて0（by_typeは空）であること、委譲では既存の1子完了プロファイルとの一致を要求する。親単独の統計欠損は `subagent_stats_present:false`、委譲の統計欠損は拒否する。新しい実CLI形式の受理は実証・レビュー前に広げない。
 
-### セッション限定プラグイン案（実行経路未接続）
+### セッション限定プラグイン経路（実機未検証・独立レビュー待ち）
 
 `session-plugin-plan.js`はオフラインで限定案を生成するだけで、CLI起動・設定読書き・承認記録の作成を行わない。frontend-design/codex/discordの3件だけを対象に、既知設定の型とmarketplace定義を厳格に確認する。未知設定、追加plugin、既存の安全hooks、managed状態不明は拒否する。原設定・インストール実体の提示hash・overrideを別々に記録するが、提示情報が実機の実効状態だと証明する機能ではない。
 
-Codexプラグインの停止は同プラグインのSessionStart/Stop/SessionEndも止める。すべての安全hooksを維持するとは表現しない。通知設定は保持し、Remote Control状態の確認を必要とする。利用には明示された切替承認、実機inventory照合、実行経路への別実装と独立レビュー、開始/子実行の実証が必要で、この案だけでは既存のプラグイン拒否条件を通過しない。
+Codexプラグインの停止は同プラグインのSessionStart/Stop/SessionEndも止める。すべての安全hooksを維持するとは表現しない。通知設定は保持し、Remote Control状態の確認を必要とする。利用には明示された切替承認、実機inventory照合、統合差分の独立レビュー、開始/子実行の実証が必要。
+
+新しい承認profileは`claude-2.1.296-session-three-plugins-v1`。旧profileからの自動移行はない。`session-plugin-inventory.js`が原設定・registry・インストール先の全通常ファイル（node_modulesも含む、可変`.in_use`を除く）を読み取りhash化する。symlink、追加設定、未知設定、別scope、管理設定が存在する場合は停止する。探索は50,000項目/256MBに制限し、上限超過も停止する。plan生成器・inventory・bindingを含む実装hashと、packet/model/mode/CLI版/原設定/実体/overlay/policy証拠を結び付ける。
+
+承認には従来の料金・利用枠・本人認証・10分期限・UUID単回tokenに加え、`binding_sha256`、正確な`plugin_ids`、`session_only_three_plugins:true`、`codex_plugin_hooks_absent_acknowledged:true`、`persistent_settings_changes_allowed:false`、`managed_override_allowed:false`、`other_plugins_disabled_allowed:false`、`independent_review_confirmed:true`、`remote_control_disconnected_confirmed:true`が必要。`approval_evidence_ref`は実際の限定承認を記録した絶対パス、`approval_evidence_sha256`はそのファイル本文のSHA256。`no_other_hooks_or_plugins:true`は、この明示された3件と固定CLI組込3件以外に実行対象がないという確認を意味する。これらの真偽値を自動作成する機能はない。
+
+`policy_observation_path`は私有ファイル（親0700・本人所有・ファイル0600）の絶対パス。内容は`version:1`、`managed_policy:"confirmed_absent"`、`remote_policy:"confirmed_absent"`、`remote_control:"disconnected"`、`reviewed_by:"human"`、10分以内の`checked_at`、実確認を記録した私有`evidence_ref`と本文`evidence_sha256`。ローカルファイル不在からこれらを推定しない。未知なら起動不可。承認証拠とpolicy証拠は本文hashを照合し、私有run証拠にも保存する。同一OS利用者の自己申告を暗号学的に認証する仕組みではない。
+
+CLIに渡す追加設定は対象3件の`enabledPlugins:false`と既存guardのみ。通常設定は変更しない。入力送信にはstartup markerと成功hookだけでなく、initのCLI版・ツール・model・dontAsk・API keyなし・空MCP・固定組込plugin集合の一致も必要。CLIがstdin前にinitを出さない場合は時間切れで停止する。組込は`cc-plugin-agents-md`、`cc-plugin-telemetry`、`cc-plugin-plugin-authoring`の3件で、すべてpath=`builtin`・source=`名前@builtin`を要求する。
+
+initのMCP空はDiscordプロセス不在の証明ではない。プロセス不在、実際の開始順序、子の制約継承は実機検証まで未確認であり、品質承認は常にfalseのまま。この統合差分の独立レビュー前には実CLI/modelを起動しない。保存証拠のreplayでも限定承認・policy証拠・binding・initを再検証する。

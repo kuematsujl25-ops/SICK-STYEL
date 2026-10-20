@@ -7,6 +7,8 @@ import {randomUUID,createHash} from 'node:crypto';
 import {spawn,spawnSync} from 'node:child_process';
 import {prepareEvidenceRoot,createEvidenceDirectory,saveEvidence,readEvidence} from './run-evidence.js';
 import {Utf8Capture,bytesHash} from './utf8-capture.js';
+import {sessionPluginBinding,verifySessionPluginConsent,SESSION_PLUGIN_PROFILE} from './session-plugin-binding.js';
+import {readSessionPluginInventory,verifyPolicyObservation} from './session-plugin-inventory.js';
 import {validateComparisonBaseline} from './transcript-baseline.js';
 import {TeamError} from '../../lib/ai-team.js';
 import {checkSubscription} from './cli.js';
@@ -62,9 +64,11 @@ export function settingsSnapshot(paths){
     return {path,sha256:hash(text)};
   });
 }
-export function verifyApproval(a,{packet,delegate,model,inventory,source_hash,mode='delegated',now=Date.now()}){
+export function verifyApproval(a,{packet,delegate,model,inventory,source_hash,mode='delegated',now=Date.now(),pluginBinding=null}){
   const when=Date.parse(a?.checked_at);
-  if(!['baseline','delegated'].includes(mode)||a?.mode!==mode||a?.version!==1||a.profile!==PROFILE||!uuid(a.token)||a.delegate!==delegate||ROLE_DELEGATE[packet.role]!==delegate||
+  if(pluginBinding)verifySessionPluginConsent(a,pluginBinding,now);
+  else if(a&&['binding_sha256','plugin_ids','policy_observation_path','session_only_three_plugins'].some(key=>Object.hasOwn(a,key)))fail();
+  if(!['baseline','delegated'].includes(mode)||a?.mode!==mode||a?.version!==1||a.profile!==(pluginBinding?SESSION_PLUGIN_PROFILE:PROFILE)||!uuid(a.token)||a.delegate!==delegate||ROLE_DELEGATE[packet.role]!==delegate||
     !DELEGATES.includes(delegate)||!KNOWN_MODELS.includes(model)||a.model!==model||a.packet_sha256!==hash(packet)||
     a.settings_sha256!==hash(inventory)||a.source_sha256!==source_hash||!Number.isFinite(when)||when>now||now-when>600000||
     a.subscription_confirmed!==true||a.extra_usage_disabled!==true||a.no_additional_charge_confirmed!==true||
@@ -80,15 +84,27 @@ export function runtimeArgs({session,delegate,model,definition,settings,mode='de
     '--output-format','stream-json','--verbose','--include-hook-events','--forward-subagent-text',
     ...(mode==='delegated'?['--allowedTools',`Agent(${delegate})`]:[]),'--disallowedTools','Bash','Read','Write','Edit','Grep','Glob','WebFetch','WebSearch','SendMessage'];
 }
-export function runtimeSettings(guard,policy,mode='delegated'){
+export function runtimeSettings(guard,policy,mode='delegated',pluginBinding=null){
   const hook=mode=>({type:'command',command:process.execPath,args:[guard,policy,mode],timeout:8,onFailure:'block'});
-  return {hooks:{SessionStart:[{matcher:'startup',hooks:[hook('startup')]}],PreToolUse:[{matcher:'*',hooks:[hook(mode==='baseline'?'deny':'tool')]}]}};
+  return {...(pluginBinding?pluginBinding.plan.override:{}),hooks:{SessionStart:[{matcher:'startup',hooks:[hook('startup')]}],PreToolUse:[{matcher:'*',hooks:[hook(mode==='baseline'?'deny':'tool')]}]}};
+}
+export const BUILTIN_PLUGINS=Object.freeze(['cc-plugin-agents-md','cc-plugin-telemetry','cc-plugin-plugin-authoring']);
+export function verifyEffectivePlugins(init){
+  if(init.claude_code_version!=='2.1.296'||!Array.isArray(init.mcp_servers)||init.mcp_servers.length||
+    !Array.isArray(init.plugins)||init.plugins.length!==BUILTIN_PLUGINS.length)fail();
+  const names=new Set();
+  for(const plugin of init.plugins){
+    if(!BUILTIN_PLUGINS.includes(plugin.name)||plugin.source!==`${plugin.name}@builtin`||
+      plugin.path!=='builtin'||names.has(plugin.name))fail();
+    names.add(plugin.name);
+  }
+  return {effective_plugins:[...names].sort(),mcp_servers:[],discord_process_absence:'not_established'};
 }
 // No user prompt is delivered until a successful startup hook AND its private marker are observed.
 // CLI variants that wait for stdin before SessionStart time out, without receiving the task prompt.
-export function executeGuarded({args,cwd,env,prompt,session,dir,spawnProcess=spawn,model=null,mode='delegated',timeout=LIMITS.timeout_ms}){
+export function executeGuarded({args,cwd,env,prompt,session,dir,spawnProcess=spawn,model=null,mode='delegated',timeout=LIMITS.timeout_ms,requirePluginInit=false}){
   return new Promise((resolveResult,reject)=>{
-    let pending='',released=false,stopped=false,calls=0,startId=null;
+    let pending='',released=false,stopped=false,calls=0,startId=null,startReady=false,initReady=false;
     const stdoutCapture=new Utf8Capture(LIMITS.max_transcript_bytes),stderrCapture=new Utf8Capture(100000);
     const child=spawnProcess('claude',args,{cwd,env,detached:true,stdio:['pipe','pipe','pipe']});
     const stop=()=>{stopped=true;try{if(child.pid)process.kill(-child.pid,'SIGKILL');else child.kill('SIGKILL')}catch{child.kill('SIGKILL')}};
@@ -105,20 +121,26 @@ export function executeGuarded({args,cwd,env,prompt,session,dir,spawnProcess=spa
         if(m.type==='system'&&m.subtype==='hook_started'&&m.hook_event==='SessionStart'){
           if(startId!==null){stop();break}startId=m.hook_id;
         }else if(m.type==='system'&&m.subtype==='hook_response'&&m.hook_event==='SessionStart'){
-          if(released||!startId||m.hook_id!==startId||m.exit_code!==0||m.outcome!=='success'||!['','{}'].includes(m.stdout||'')){stop();break}
+          if(startReady||released||!startId||m.hook_id!==startId||m.exit_code!==0||m.outcome!=='success'||!['','{}'].includes(m.stdout||'')){stop();break}
           try{const receipt=JSON.parse(privateFile(join(dir,'started.json')));
             if(receipt.session_id!==session||receipt.stage!=='startup')fail();
           }catch{stop();break}
-          released=true;clearTimeout(startTimer);child.stdin.end(prompt);
-        }else if(!released){stop();break}
+          startReady=true;
+        }else if(!released&&!(requirePluginInit&&m.type==='system'&&m.subtype==='init')){stop();break}
         if(m.type==='system'&&m.subtype==='init'&&(!Array.isArray(m.tools)||(mode==='baseline'?m.tools.length!==0:m.tools.length!==1||!isDelegationTool(m.tools[0]))||
           (model!==null&&m.model!==model)||m.permissionMode!=='dontAsk'||m.apiKeySource!=='none'||m.mcp_servers?.length))stop();
+        if(requirePluginInit&&m.type==='system'&&m.subtype==='init'){
+          try{verifyEffectivePlugins(m);initReady=true}catch{stop()}
+        }
         if(m.type==='system'&&String(m.subtype).startsWith('hook_')&&!['SessionStart','PreToolUse'].includes(m.hook_event))stop();
         if(m.type==='system'&&m.subtype==='hook_response'&&(m.exit_code!==0||m.outcome!=='success'||!['','{}'].includes(m.stdout||'')))stop();
         if(m.type==='rate_limit_event'&&(m.rate_limit_info?.status!=='allowed'||m.rate_limit_info?.isUsingOverage!==false))stop();
         for(const c of Array.isArray(m.message?.content)?m.message.content:[])
           if(!c||typeof c!=='object'||c.type==='tool_use'&&(mode==='baseline'||m.parent_tool_use_id||!isDelegationTool(c.name)||++calls>1))stop();
         if(m.type==='result'&&(m.is_error||m.permission_denials?.length))stop();
+        if(!stopped&&!released&&startReady&&(!requirePluginInit||initReady)){
+          released=true;clearTimeout(startTimer);child.stdin.end(prompt);
+        }
       }
     });
     child.stderr.on('data',buf=>{try{stderrCapture.write(buf);}catch{stop();return}if(buf.some(b=>![9,10,13,32].includes(b)))stop()});
@@ -155,12 +177,26 @@ export async function runDelegated({root,packet,delegate,model,approvalPath,mode
   // No model/auth subprocess before the explicit receipt and settings checks.
   if(!DELEGATES.includes(delegate)||!KNOWN_MODELS.includes(model)||ROLE_DELEGATE[packet.role]!==delegate||
     process.platform!=='darwin'||process.env.CLAUDE_CONFIG_DIR)fail();
-  const paths=settingsPaths(root),inventory=settingsSnapshot(paths);
-  const sources=['transcript-stats.js','transcript-baseline.js','run-evidence.js','utf8-capture.js','delegate-runtime.js','delegate-guard.js','delegate.js','transcript-async.js','cli.js','quality-policy.js','../../lib/ai-team.js'];
+  const rawApproval=JSON.parse(privateFile(approvalPath));
+  const withPlugins=rawApproval.profile===SESSION_PLUGIN_PROFILE;
+  const paths=settingsPaths(root);
+  let policyText=null,approvalEvidence=null,policyEvidence=null,pluginState=null,pluginBinding=null;
+  if(withPlugins){
+    policyText=privateFile(rawApproval.policy_observation_path);
+    const observation=verifyPolicyObservation(JSON.parse(policyText));
+    policyEvidence=privateFile(observation.evidence_ref);
+    approvalEvidence=privateFile(rawApproval.approval_evidence_ref);
+    if(hash(policyEvidence)!==observation.evidence_sha256||hash(approvalEvidence)!==rawApproval.approval_evidence_sha256)fail();
+    pluginState=readSessionPluginInventory({paths,home:homedir(),policyObservation:observation});
+  }
+  const snapshot=()=>withPlugins?readSessionPluginInventory({paths,home:homedir(),policyObservation:JSON.parse(policyText)}).inventory:settingsSnapshot(paths);
+  const inventory=pluginState?.inventory??settingsSnapshot(paths);
+  const sources=['session-plugin-plan.js','session-plugin-binding.js','session-plugin-inventory.js','transcript-stats.js','transcript-baseline.js','run-evidence.js','utf8-capture.js','delegate-runtime.js','delegate-guard.js','delegate.js','transcript-async.js','cli.js','quality-policy.js','../../lib/ai-team.js'];
   const definitionText=readFileSync(join(root,'scripts/ai-staff/agents',delegate+'.md'),'utf8');
   const definition=agentDefinition(delegate,definitionText);
   const source_hash=hash(sources.map(p=>hash(readFileSync(join(root,'scripts/ai-staff',p),'utf8'))).concat(hash(definitionText)));
-  const approval=verifyApproval(JSON.parse(privateFile(approvalPath)),{packet,delegate,model,inventory,source_hash,mode});
+  if(withPlugins)pluginBinding=sessionPluginBinding({...pluginState,cliVersion:'2.1.296 (Claude Code)',mode,packet,model,sourceHash:source_hash,policyObservationHash:hash(policyText)});
+  const approval=verifyApproval(rawApproval,{packet,delegate,model,inventory,source_hash,mode,pluginBinding});
   const evidenceDir=createEvidenceDirectory(prepareEvidenceRoot());
   // A copy of the same receipt cannot reset the token. Failed and uncertain runs consume it as well.
   const tokens=join(root,'data/delegation-tokens');mkdirSync(tokens,{recursive:true,mode:0o700});
@@ -173,15 +209,23 @@ export async function runDelegated({root,packet,delegate,model,approvalPath,mode
   const auth=spawnSync('claude',['auth','status','--json'],{env,encoding:'utf8',timeout:15000});
   let a;try{a=JSON.parse(auth.stdout)}catch{fail()}
   if(auth.status!==0||a.loggedIn!==true||a.authMethod!=='claude.ai'||a.apiProvider!=='firstParty'||!['pro','max'].includes(a.subscriptionType))fail();
-  if(hash(settingsSnapshot(paths))!==hash(inventory))fail();
+  if(hash(snapshot())!==hash(inventory))fail();
   const dir=mkdtempSync(join(tmpdir(),'ss-delegation-')),session=randomUUID(),prompt=mode==='baseline'?analysisPrompt(packet):delegatePrompt(packet,delegate);
-  let capture=null,archived=false,accepted=false;
+  let capture=null,archived=false,accepted=false,finalInventory=null;
   const startedAt=new Date().toISOString();
   const args=runtimeArgs({session,delegate,model,definition,settings:join(dir,'settings.json'),mode});
   const persist=()=>{
     const files={'packet.json':JSON.stringify(packet),'prompt.txt':prompt,'approval.json':JSON.stringify(approval),
       'inventory.json':JSON.stringify(inventory),'definition.txt':definitionText,'invocation.json':JSON.stringify({args,session,model,delegate,mode}),
       'approval-token.used':readFileSync(join(tokens,approval.token))};
+    if(withPlugins){
+      files['plugin-state.json']=JSON.stringify(pluginState);
+      files['plugin-binding.json']=JSON.stringify(pluginBinding);
+      files['policy-observation.json']=policyText;
+      files['policy-evidence.txt']=policyEvidence;
+      files['consent-evidence.txt']=approvalEvidence;
+      if(finalInventory)files['final-inventory.json']=JSON.stringify(finalInventory);
+    }
     for(const name of ['policy.json','settings.json','started.json','used','tool.json'])
       if(existsSync(join(dir,name)))files[name]=readFileSync(join(dir,name));
     let streams=null;
@@ -196,10 +240,11 @@ export async function runDelegated({root,packet,delegate,model,approvalPath,mode
   try{
     const guard=join(root,'scripts/ai-staff/delegate-guard.js'),policy=join(dir,'policy.json'),settings=join(dir,'settings.json');
     writeFileSync(policy,JSON.stringify({version:1,session_id:session,delegate,packet,expires_at:new Date(Date.now()+600000).toISOString()}),{mode:0o600});
-    writeFileSync(settings,JSON.stringify(runtimeSettings(guard,policy,mode)),{mode:0o600});
-    capture=await executeGuarded({args,cwd:root,env,prompt,session,dir,model,mode});
+    writeFileSync(settings,JSON.stringify(runtimeSettings(guard,policy,mode,pluginBinding)),{mode:0o600});
+    capture=await executeGuarded({args,cwd:root,env,prompt,session,dir,model,mode,requirePluginInit:withPlugins});
     const stdout=capture.stdout.text;
-    if(hash(settingsSnapshot(paths))!==hash(inventory))fail();
+    finalInventory=snapshot();
+    if(hash(finalInventory)!==hash(inventory))fail();
     const guardEvidence=verifyGuardEvidence(stdout,dir,session,mode);
     const checked=mode==='baseline'?validateComparisonBaseline(stdout,{model,packet,session_id:session,limits:LIMITS}):validateTranscript(stdout,{delegate,model,packet,session_id:session});
     if(checked.audit?.profile!==(mode==='baseline'?'claude-2.1.296-baseline-v1':'claude-2.1.296-async-v1'))fail();
@@ -223,8 +268,30 @@ export function replayRunEvidence(dir,manifestHash){
     bytesHash(Buffer.from(stdout))!==m.streams.stdout.decoded_utf8_sha256||decode(files['stdout.utf8.txt'])!==stdout)fail();
   const packet=JSON.parse(decode(files['packet.json']));
   const approval=JSON.parse(decode(files['approval.json']));
+  let pluginBinding=null;
+  if(approval.profile!==SESSION_PLUGIN_PROFILE&&files['plugin-binding.json'])fail();
+  if(approval.profile===SESSION_PLUGIN_PROFILE){
+    const now=Date.parse(m.started_at),state=JSON.parse(decode(files['plugin-state.json']));
+    const policyText=decode(files['policy-observation.json']);
+    const observation=verifyPolicyObservation(JSON.parse(policyText),now);
+    if(hash(state.policyObservation)!==hash(observation)||
+      hash(decode(files['policy-evidence.txt']))!==observation.evidence_sha256||
+      hash(decode(files['consent-evidence.txt']))!==approval.approval_evidence_sha256||
+      hash(state.inventory)!==hash(JSON.parse(decode(files['inventory.json'])))||
+      hash(state.inventory)!==hash(JSON.parse(decode(files['final-inventory.json']))))fail();
+    pluginBinding=sessionPluginBinding({...state,cliVersion:m.cli_version,mode:m.mode,packet,model:m.model,
+      sourceHash:m.source_sha256,policyObservationHash:hash(policyText)});
+    if(hash(pluginBinding)!==hash(JSON.parse(decode(files['plugin-binding.json'])))||
+      hash(JSON.parse(decode(files['settings.json'])).enabledPlugins)!==hash(pluginBinding.plan.override.enabledPlugins))fail();
+    const rows=stdout.trim().split('\n').map(line=>JSON.parse(line));
+    const initIndex=rows.findIndex(row=>row.type==='system'&&row.subtype==='init');
+    const startupIndex=rows.findIndex(row=>row.type==='system'&&row.subtype==='hook_response'&&row.hook_event==='SessionStart');
+    if(initIndex<0||startupIndex<0||rows.slice(0,Math.max(initIndex,startupIndex)+1).some(row=>
+      row.type!=='system'||!['init','hook_started','hook_response'].includes(row.subtype)))fail();
+    for(const row of rows.filter(row=>row.type==='system'&&row.subtype==='init'))verifyEffectivePlugins(row);
+  }
   verifyApproval(approval,{packet,delegate:m.delegate,model:m.model,inventory:JSON.parse(decode(files['inventory.json'])),
-    source_hash:m.source_sha256,mode:m.mode,now:Date.parse(m.started_at)});
+    source_hash:m.source_sha256,mode:m.mode,now:Date.parse(m.started_at),pluginBinding});
   const guardEvidence=verifyGuardEvidence(stdout,dir,m.session,m.mode);
   const checked=m.mode==='baseline'?validateComparisonBaseline(stdout,{packet,model:m.model,session_id:m.session,limits:LIMITS}):validateTranscript(stdout,{packet,delegate:m.delegate,model:m.model,session_id:m.session});
   if(checked.audit?.profile!==(m.mode==='baseline'?'claude-2.1.296-baseline-v1':'claude-2.1.296-async-v1'))fail();

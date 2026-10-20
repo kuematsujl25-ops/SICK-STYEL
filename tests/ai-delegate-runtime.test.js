@@ -6,7 +6,7 @@ import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {EventEmitter} from 'node:events';
 import {PassThrough} from 'node:stream';
-import {hash,PROFILE,verifyApproval,runtimeArgs,runtimeSettings,settingsSnapshot,executeGuarded,verifyGuardEvidence} from '../scripts/ai-staff/delegate-runtime.js';
+import {hash,PROFILE,verifyApproval,runtimeArgs,runtimeSettings,settingsSnapshot,executeGuarded,verifyGuardEvidence,BUILTIN_PLUGINS,verifyEffectivePlugins} from '../scripts/ai-staff/delegate-runtime.js';
 import {decide} from '../scripts/ai-staff/delegate-guard.js';
 import {parseRunArgs} from '../scripts/ai-staff/delegate.js';
 import {FIXTURES,fixtureInput} from '../scripts/ai-staff/eval-fixtures.js';
@@ -97,4 +97,39 @@ test('代替プロセス:未ロード/異常hook/別sessionではpromptを送ら
       else{await assert.rejects(promise);assert.equal(sent,'')}
     }finally{rmSync(dir,{recursive:true,force:true})}
   }
+});
+
+test('限定plugin起動: startupだけではstdin未送信、initの実効plugin/MCP/CLI確認も必要',async()=>{
+  for(const kind of ['normal','init-first','missing-init','discord','missing-plugins','mcp','unknown-builtin']){
+    const {dir,policy}=setup();let sent='',beforeInit=null;
+    const init={type:'system',subtype:'init',session_id:session,claude_code_version:'2.1.296',
+      tools:[],model,permissionMode:'dontAsk',apiKeySource:'none',mcp_servers:[],
+      plugins:BUILTIN_PLUGINS.map(name=>({name,path:'builtin',source:`${name}@builtin`}))};
+    if(kind==='discord')init.plugins.push({name:'discord',path:'/fixture',source:'discord@claude-plugins-official'});
+    if(kind==='missing-plugins')delete init.plugins;
+    if(kind==='mcp')init.mcp_servers.push({name:'discord',status:'connected'});
+    if(kind==='unknown-builtin')init.plugins[0]={name:'new',path:'builtin',source:'new@builtin'};
+    const spawnProcess=()=>{
+      const p=new EventEmitter();p.stdout=new PassThrough();p.stderr=new PassThrough();p.stdin=new PassThrough();
+      p.stdin.on('data',d=>sent+=d);p.stdin.on('finish',()=>queueMicrotask(()=>p.emit('close',0,null)));
+      p.kill=()=>queueMicrotask(()=>p.emit('close',null,'SIGKILL'));
+      queueMicrotask(()=>{
+        const emit=m=>p.stdout.write(JSON.stringify(m)+'\n');
+        decide([policy,'startup'],JSON.stringify(startup));
+        if(kind==='init-first')emit(init);
+        emit({type:'system',subtype:'hook_started',session_id:session,hook_id:'h1',hook_event:'SessionStart'});
+        emit({type:'system',subtype:'hook_response',session_id:session,hook_id:'h1',hook_event:'SessionStart',exit_code:0,outcome:'success'});
+        if(kind!=='init-first')beforeInit=sent;
+        if(!['missing-init','init-first'].includes(kind))emit(init);
+      });return p;
+    };
+    try{
+      const result=executeGuarded({args:[],cwd:dir,env:{},prompt:'fixture',session,dir,spawnProcess,timeout:30,mode:'baseline',model,requirePluginInit:true});
+      if(['normal','init-first'].includes(kind)){await result;assert.equal(sent,'fixture')}
+      else{await assert.rejects(result);assert.equal(sent,'')}
+      if(kind!=='init-first')assert.equal(beforeInit,'');
+    }finally{rmSync(dir,{recursive:true,force:true})}
+  }
+  const init={claude_code_version:'2.1.296',mcp_servers:[],plugins:BUILTIN_PLUGINS.map(name=>({name,path:'builtin',source:`${name}@builtin`}))};
+  assert.equal(verifyEffectivePlugins(init).discord_process_absence,'not_established');
 });
