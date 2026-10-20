@@ -3,6 +3,7 @@ import {lstatSync,realpathSync,readFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
+import {identityFromAuth,verifyIdentity} from './account-identity.js';
 import {TeamError} from '../../lib/ai-team.js';
 export const REMOTE_NOT_APPLICABLE='not_applicable_to_current_credential';
 export const HEADLESS_NOT_REQUESTED='headless_not_requested';
@@ -12,13 +13,14 @@ const hash=v=>createHash('sha256').update(v).digest('hex');
 export const applicabilityPaths=home=>[join(home,'.claude/remote-settings.json'),join(home,'.config/anthropic')];
 export function verifyApplicability(value){
   const c=value?.credential;
-  if(value?.version!==1||value.remote_policy!==REMOTE_NOT_APPLICABLE||
+  if(value?.version!==2||value.remote_policy!==REMOTE_NOT_APPLICABLE||
     value.doctor_exit_code!==0||value.doctor_remote_line!==DOCTOR_REMOTE_LINE||
     c?.loggedIn!==true||c.authMethod!=='claude.ai'||c.apiProvider!=='firstParty'||c.subscriptionType!=='pro'||
     Object.keys(c).sort().join(',')!=='apiProvider,authMethod,loggedIn,subscriptionType'||
     value.cli_version!=='2.1.296 (Claude Code)'||value.remote_cache!=='absent'||value.anthropic_profiles!=='absent'||
     value.credential_overrides!=='absent'||!/^\/.*\/\.local\/share\/claude\/versions\/2\.1\.296$/.test(value.executable||'')||
     !/^[a-f0-9]{64}$/.test(value.executable_sha256||''))fail();
+  verifyIdentity(value.identity);
   return value;
 }
 export function readApplicabilityContext({home,env}){
@@ -41,7 +43,8 @@ export function parseApplicabilityDiagnostics({context,version,auth,doctor}){
   const lines=clean(doctor.stdout).split(/\r?\n/).map(x=>x.trim());
   if(lines.filter(x=>x.startsWith('Managed settings (remote):')).length!==1||
     !lines.includes(DOCTOR_REMOTE_LINE)||lines.some(x=>/\bcach(?:e|ed)\b.*\b(appl|load|us)/i.test(x)))fail();
-  return verifyApplicability({version:1,...context,cli_version:clean(version.stdout).trim(),
+  return verifyApplicability({version:2,...context,cli_version:clean(version.stdout).trim(),
+    identity:identityFromAuth(a),
     credential:{loggedIn:a.loggedIn,authMethod:a.authMethod,apiProvider:a.apiProvider,subscriptionType:a.subscriptionType},
     doctor_exit_code:doctor.status,doctor_remote_line:DOCTOR_REMOTE_LINE,
     remote_policy:REMOTE_NOT_APPLICABLE,remote_cache:'absent',anthropic_profiles:'absent',credential_overrides:'absent'});

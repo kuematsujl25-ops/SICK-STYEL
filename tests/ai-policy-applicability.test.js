@@ -2,13 +2,13 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync,mkdirSync,writeFileSync,rmSync,realpathSync,symlinkSync} from 'node:fs';
 import {tmpdir} from 'node:os';import {join} from 'node:path';
-import {applicability} from './helpers/policy-applicability.js';
+import {applicability,authIdentity} from './helpers/policy-applicability.js';
 import {parseApplicabilityDiagnostics,verifyApplicability,readApplicabilityContext,collectApplicability,DOCTOR_REMOTE_LINE} from '../scripts/ai-staff/policy-applicability.js';
 import {runtimeArgs,verifyHeadlessLaunch} from '../scripts/ai-staff/delegate-runtime.js';
 import {session,delegate,model} from './helpers/async-run.js';
 const ok=stdout=>({status:0,signal:null,stdout,stderr:''});
 const diagnostics=()=>({context:{executable:applicability().executable,executable_sha256:'a'.repeat(64)},
- version:ok('2.1.296 (Claude Code)\n'),auth:ok(JSON.stringify(applicability().credential)),doctor:ok(DOCTOR_REMOTE_LINE+'\n')});
+ version:ok('2.1.296 (Claude Code)\n'),auth:ok(JSON.stringify({...applicability().credential,...authIdentity()})),doctor:ok(DOCTOR_REMOTE_LINE+'\n')});
 test('remote適用外はPro保存OAuth・診断成功・cache/profile/override不在の組合せのみ',()=>{
  assert.deepEqual(parseApplicabilityDiagnostics(diagnostics()),applicability());
  for(const patch of [{remote_policy:'confirmed_absent'},{remote_cache:'present'},{anthropic_profiles:'present'},

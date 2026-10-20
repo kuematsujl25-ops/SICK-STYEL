@@ -1,4 +1,5 @@
-import {applicability} from './helpers/policy-applicability.js';
+import {identityFromAuth} from '../scripts/ai-staff/account-identity.js';
+import {applicability,authIdentity} from './helpers/policy-applicability.js';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,statSync,symlinkSync} from 'node:fs';
@@ -135,6 +136,11 @@ test('限定plugin証拠のreplay:旧承認再利用・設定差分・consent/po
  const policyEvidence='synthetic human policy observation',consentEvidence='synthetic limited consent';
  const observation={version:2,managed_policy:'confirmed_absent',remote_policy:'not_applicable_to_current_credential',remote_control:'headless_not_requested',remote_applicability:applicability(),
   reviewed_by:'human',evidence_ref:'/synthetic/policy',evidence_sha256:hash(policyEvidence),checked_at:time};
+ const usageEvidence='synthetic UI account and usage evidence';
+ const usage={version:1,source:'claude.ai_account_and_usage_ui',reviewed_by:'human',checked_at:time,
+  browser_account_sha256:applicability().identity.account_sha256,cli_identity_sha256:applicability().identity.identity_sha256,
+  subscription_type:'pro',extra_usage_enabled:false,usage_available:true,evidence_ref:'/synthetic/usage',evidence_sha256:hash(usageEvidence)};
+ const usageText=JSON.stringify(usage);
  const policyText=JSON.stringify(observation),inventory=[{path:'/synthetic/settings.json',sha256:hash('fixture')}];
  const state={inventory,policyObservation:observation,planInput:{managedState:'confirmed_absent',
   userSettings:{enabledPlugins:Object.fromEntries(SESSION_PLUGIN_IDS.map(id=>[id,true])),
@@ -142,12 +148,12 @@ test('限定plugin証拠のreplay:旧承認再利用・設定差分・consent/po
    theme:'dark',inputNeededNotifEnabled:true,agentPushNotifEnabled:true},
   installed:Object.fromEntries(SESSION_PLUGIN_IDS.map(id=>[id,{version:'fixture',tree_sha256:hash(id)}]))}};
  const token=randomUUID();
- const binding=sessionPluginBinding({...state,cliVersion:'2.1.296 (Claude Code)',mode:'baseline',packet,model,sourceHash:source,policyObservationHash:hash(policyText),token,checkedAt:time});
+ const binding=sessionPluginBinding({...state,cliVersion:'2.1.296 (Claude Code)',mode:'baseline',packet,model,sourceHash:source,policyObservationHash:hash(policyText),usageObservationHash:hash(usageText),identitySha256:applicability().identity.identity_sha256,token,checkedAt:time});
  const approval={version:1,profile:SESSION_PLUGIN_PROFILE,mode:'baseline',token,delegate,model,
   packet_sha256:hash(packet),settings_sha256:hash(inventory),source_sha256:source,checked_at:time,
   subscription_confirmed:true,extra_usage_disabled:true,no_additional_charge_confirmed:true,usage_available:true,
   effective_policy_reviewed:true,no_other_hooks_or_plugins:true,no_mdm_policy:true,policy_applicability_reviewed:true,quality_review_required:true,
-  binding_sha256:binding.binding_sha256,plugin_ids:[...SESSION_PLUGIN_IDS],session_only_three_plugins:true,
+  identity_sha256:applicability().identity.identity_sha256,usage_observation_sha256:hash(usageText),binding_sha256:binding.binding_sha256,plugin_ids:[...SESSION_PLUGIN_IDS],session_only_three_plugins:true,
   codex_plugin_hooks_absent_acknowledged:true,persistent_settings_changes_allowed:false,managed_override_allowed:false,
   other_plugins_disabled_allowed:false,independent_review_confirmed:true,remote_control:'headless_not_requested',remote_policy:'not_applicable_to_current_credential',
   approval_evidence_ref:'/synthetic/consent',approval_evidence_sha256:hash(consentEvidence)};
@@ -159,7 +165,7 @@ test('限定plugin証拠のreplay:旧承認再利用・設定差分・consent/po
  const args=runtimeArgs(options),invocation={args,session,delegate,model,mode:'baseline'};
  const launch=verifyHeadlessLaunch({...options,args});
  const files={'definition.txt':definitionText,'invocation.json':JSON.stringify(invocation),
-  'live-applicability.json':JSON.stringify(applicability()),'launch-applicability.json':JSON.stringify(launch),'stdout.bytes':raw,'stdout.utf8.txt':text,'started.json':JSON.stringify({stage:'startup',session_id:session}),
+  'usage-observation.json':usageText,'usage-evidence.txt':usageEvidence,'live-applicability.json':JSON.stringify(applicability()),'launch-applicability.json':JSON.stringify(launch),'stdout.bytes':raw,'stdout.utf8.txt':text,'started.json':JSON.stringify({stage:'startup',session_id:session}),
   'approval-token.used':'','approval.json':JSON.stringify(approval),'packet.json':JSON.stringify(packet),
   'inventory.json':JSON.stringify(inventory),'final-inventory.json':JSON.stringify(inventory),'plugin-state.json':JSON.stringify(state),
   'plugin-binding.json':JSON.stringify(binding),'policy-observation.json':policyText,'policy-evidence.txt':policyEvidence,
@@ -170,13 +176,16 @@ test('限定plugin証拠のreplay:旧承認再利用・設定差分・consent/po
   const check=f=>{const dir=createEvidenceDirectory(root),proof=saveEvidence(dir,f,metadata);return ()=>replayRunEvidence(dir,proof.manifest_sha256)};
   assert.deepEqual(check(files)().checked.output,output);
   // Re-anchor altered bundles to test semantic checks independently of per-file integrity checks.
-  for(const patch of [{'live-applicability.json':JSON.stringify({...applicability(),remote_cache:'present'})},
+  for(const patch of [
+   ...[{email:'other@example.com'},{orgId:'22222222-2222-4222-8222-222222222222'}].map(p=>({'live-applicability.json':JSON.stringify({...applicability(),identity:identityFromAuth({...authIdentity(),...p})})})),
+   {'usage-observation.json':JSON.stringify({...usage,browser_account_sha256:'c'.repeat(64)})},
+   {'usage-evidence.txt':'changed'},{'approval.json':JSON.stringify({...approval,identity_sha256:'c'.repeat(64)})},{'live-applicability.json':JSON.stringify({...applicability(),remote_cache:'present'})},
    {'invocation.json':JSON.stringify({...invocation,args:[...args,'--resume']})},
    {'launch-applicability.json':JSON.stringify({...launch,remote_control:'disconnected'})},{'final-inventory.json':'[]'},{'consent-evidence.txt':'changed'},{'policy-evidence.txt':'changed'},
    {'approval.json':JSON.stringify({...approval,profile:PROFILE})},{'approval.json':JSON.stringify({...approval,token:'invalid'})},
    {'approval.json':JSON.stringify({...approval,mode:'delegated'})},{'settings.json':JSON.stringify({enabledPlugins:{}})}])
     assert.throws(check({...files,...patch}));
-  for(const name of ['policy-observation.json','plugin-binding.json','consent-evidence.txt','final-inventory.json','live-applicability.json','launch-applicability.json']){
+  for(const name of ['policy-observation.json','plugin-binding.json','consent-evidence.txt','final-inventory.json','live-applicability.json','launch-applicability.json','usage-observation.json','usage-evidence.txt']){
    const bad={...files};delete bad[name];assert.throws(check(bad));
   }
  }finally{rmSync(root,{recursive:true,force:true})}

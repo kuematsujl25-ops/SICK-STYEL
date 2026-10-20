@@ -6,6 +6,7 @@ import {tmpdir,homedir} from 'node:os';
 import {randomUUID,createHash} from 'node:crypto';
 import {spawn,spawnSync} from 'node:child_process';
 import {prepareEvidenceRoot,createEvidenceDirectory,saveEvidence,readEvidence} from './run-evidence.js';
+import {verifyUsageObservation} from './account-identity.js';
 import {collectApplicability,readApplicabilityContext,applicabilityPaths,HEADLESS_NOT_REQUESTED} from './policy-applicability.js';
 import {Utf8Capture,bytesHash} from './utf8-capture.js';
 import {sessionPluginBinding,verifySessionPluginConsent,SESSION_PLUGIN_PROFILE} from './session-plugin-binding.js';
@@ -190,23 +191,27 @@ export async function runDelegated({root,packet,delegate,model,approvalPath,mode
   const rawApproval=JSON.parse(privateFile(approvalPath));
   const withPlugins=rawApproval.profile===SESSION_PLUGIN_PROFILE;
   const paths=settingsPaths(root);
-  let policyText=null,approvalEvidence=null,policyEvidence=null,pluginState=null,pluginBinding=null;
+  let policyText=null,approvalEvidence=null,policyEvidence=null,pluginState=null,pluginBinding=null,usageText=null,usageEvidence=null;
   if(withPlugins){
     policyText=privateFile(rawApproval.policy_observation_path);
     const observation=verifyPolicyObservation(JSON.parse(policyText));
     policyEvidence=privateFile(observation.evidence_ref);
     approvalEvidence=privateFile(rawApproval.approval_evidence_ref);
     if(hash(policyEvidence)!==observation.evidence_sha256||hash(approvalEvidence)!==rawApproval.approval_evidence_sha256)fail();
+    usageText=privateFile(rawApproval.usage_observation_path);
+    const usage=verifyUsageObservation(JSON.parse(usageText),observation.remote_applicability.identity);
+    usageEvidence=privateFile(usage.evidence_ref);
+    if(hash(usageEvidence)!==usage.evidence_sha256)fail();
     pluginState=readSessionPluginInventory({paths,home:homedir(),policyObservation:observation});
   }
   const snapshot=()=>withPlugins?readSessionPluginInventory({paths,home:homedir(),policyObservation:JSON.parse(policyText)}).inventory:settingsSnapshot(paths);
   const inventory=pluginState?.inventory??settingsSnapshot(paths);
-  const sources=['policy-applicability.js','session-plugin-plan.js','session-plugin-binding.js','session-plugin-inventory.js','transcript-stats.js','transcript-baseline.js','run-evidence.js','utf8-capture.js','delegate-runtime.js','delegate-guard.js','delegate.js','transcript-async.js','cli.js','quality-policy.js','../../lib/ai-team.js'];
+  const sources=['account-identity.js','policy-applicability.js','session-plugin-plan.js','session-plugin-binding.js','session-plugin-inventory.js','transcript-stats.js','transcript-baseline.js','run-evidence.js','utf8-capture.js','delegate-runtime.js','delegate-guard.js','delegate.js','transcript-async.js','cli.js','quality-policy.js','../../lib/ai-team.js'];
   const definitionText=readFileSync(join(root,'scripts/ai-staff/agents',delegate+'.md'),'utf8');
   const definition=agentDefinition(delegate,definitionText);
   const source_hash=hash(sources.map(p=>hash(readFileSync(join(root,'scripts/ai-staff',p),'utf8'))).concat(hash(definitionText)));
   if(withPlugins)pluginBinding=sessionPluginBinding({...pluginState,cliVersion:'2.1.296 (Claude Code)',mode,packet,model,sourceHash:source_hash,
-    policyObservationHash:hash(policyText),token:rawApproval.token,checkedAt:rawApproval.checked_at});
+    policyObservationHash:hash(policyText),usageObservationHash:hash(usageText),identitySha256:pluginState.policyObservation.remote_applicability.identity.identity_sha256,token:rawApproval.token,checkedAt:rawApproval.checked_at});
   const approval=verifyApproval(rawApproval,{packet,delegate,model,inventory,source_hash,mode,pluginBinding});
   const evidenceDir=createEvidenceDirectory(prepareEvidenceRoot());
   // A copy of the same receipt cannot reset the token. Failed and uncertain runs consume it as well.
@@ -234,6 +239,8 @@ export async function runDelegated({root,packet,delegate,model,approvalPath,mode
       files['plugin-state.json']=JSON.stringify(pluginState);
       files['plugin-binding.json']=JSON.stringify(pluginBinding);
       files['policy-observation.json']=policyText;
+      files['usage-observation.json']=usageText;
+      files['usage-evidence.txt']=usageEvidence;
       files['policy-evidence.txt']=policyEvidence;
       files['consent-evidence.txt']=approvalEvidence;
       if(liveApplicability)files['live-applicability.json']=JSON.stringify(liveApplicability);
@@ -258,6 +265,7 @@ export async function runDelegated({root,packet,delegate,model,approvalPath,mode
     if(withPlugins){
       liveApplicability=collectApplicability({home:homedir(),env,cwd:root});
       if(hash(liveApplicability)!==hash(pluginState.policyObservation.remote_applicability))fail();
+      verifyUsageObservation(JSON.parse(usageText),liveApplicability.identity);
       launchEvidence=verifyHeadlessLaunch({args,session,delegate,model,definition,settings,mode});
       // Fresh diagnostics never extend the human receipt's expiry.
       verifyApproval(approval,{packet,delegate,model,inventory,source_hash,mode,pluginBinding});
@@ -298,6 +306,9 @@ export function replayRunEvidence(dir,manifestHash){
     const policyText=decode(files['policy-observation.json']);
     const observation=verifyPolicyObservation(JSON.parse(policyText),now);
     const live=JSON.parse(decode(files['live-applicability.json']));
+    const usageText=decode(files['usage-observation.json']);
+    const usage=verifyUsageObservation(JSON.parse(usageText),observation.remote_applicability.identity,now);
+    if(hash(decode(files['usage-evidence.txt']))!==usage.evidence_sha256)fail();
     if(hash(live)!==hash(observation.remote_applicability))fail();
     const invocation=JSON.parse(decode(files['invocation.json']));
     const definition=agentDefinition(m.delegate,decode(files['definition.txt']));
@@ -310,7 +321,7 @@ export function replayRunEvidence(dir,manifestHash){
       hash(state.inventory)!==hash(JSON.parse(decode(files['inventory.json'])))||
       hash(state.inventory)!==hash(JSON.parse(decode(files['final-inventory.json']))))fail();
     pluginBinding=sessionPluginBinding({...state,cliVersion:m.cli_version,mode:m.mode,packet,model:m.model,
-      sourceHash:m.source_sha256,policyObservationHash:hash(policyText),token:approval.token,checkedAt:approval.checked_at});
+      sourceHash:m.source_sha256,policyObservationHash:hash(policyText),usageObservationHash:hash(usageText),identitySha256:observation.remote_applicability.identity.identity_sha256,token:approval.token,checkedAt:approval.checked_at});
     if(hash(pluginBinding)!==hash(JSON.parse(decode(files['plugin-binding.json'])))||
       hash(JSON.parse(decode(files['settings.json'])).enabledPlugins)!==hash(pluginBinding.plan.override.enabledPlugins))fail();
     const rows=stdout.trim().split('\n').map(line=>JSON.parse(line));
