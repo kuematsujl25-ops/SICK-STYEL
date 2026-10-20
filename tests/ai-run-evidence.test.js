@@ -82,6 +82,13 @@ test('親単独監査: 追加tool・余分な結果・別model・過剰turn・�
  }
 });
 
+test('早期initとstartupは両順序を監査し、片方だけでassistant/resultへ進めない',()=>{
+ const rows=baselineRows(),check=r=>validateComparisonBaseline(jsonl(r),{packet,model,session_id:session,limits:LIMITS});
+ assert.deepEqual(check([rows[2],rows[0],rows[1],...rows.slice(3)]).output,output);
+ assert.throws(()=>check([rows[2],rows[4],rows[0],rows[1],rows[3],rows[5]]));
+ assert.throws(()=>check([rows[0],rows[1],rows[5]]));
+});
+
 test('私有証拠: cleanup後もraw/marker/承認を再監査でき、改変・欠落・権限緩和を拒否',()=>{
  const root=mkdtempSync(join(tmpdir(),'ss-evidence-')),dir=createEvidenceDirectory(root),source_hash=hash('fixture source');
  const stdout=jsonl(baselineRows()),c=new Utf8Capture(4000000);c.write(Buffer.from(stdout));const capture=c.end(),{raw,text,...meta}=capture;
@@ -91,7 +98,7 @@ test('私有証拠: cleanup後もraw/marker/承認を再監査でき、改変・
  try{
   const proof=saveEvidence(dir,{'stdout.bytes':raw,'stdout.utf8.txt':text,'started.json':JSON.stringify({stage:'startup',session_id:session}),
    'approval-token.used':'','approval.json':JSON.stringify(approval),'packet.json':JSON.stringify(packet),'inventory.json':'[]'},
-   {audit_status:'accepted',mode:'baseline',session,delegate,model,source_sha256:source_hash,started_at:new Date().toISOString(),streams:{stdout:meta},execution:{exit_code:0,signal:null,prompt_released:true,stopped:false}});
+   {audit_status:'accepted',mode:'baseline',session,delegate,model,source_sha256:source_hash,started_at:new Date().toISOString(),streams:{stdout:meta},execution:{exit_code:0,signal:null,prompt_released:true,stopped:false,prompt_delivery:'after_preflight_before_startup_audit',startup_audited:true,init_audited:true}});
   assert.equal(statSync(dir).mode&0o777,0o700);assert.equal(statSync(join(dir,'stdout.bytes')).mode&0o777,0o600);
   assert.equal(readEvidence(dir,proof.manifest_sha256).files['stdout.bytes'].equals(raw),true);
   assert.deepEqual(replayRunEvidence(dir,proof.manifest_sha256).checked.output,output);
@@ -121,7 +128,7 @@ test('委譲の私有証拠: 元作業dir削除後も実ガードmarkerと非同
  const dir=createEvidenceDirectory(root);
  try{
   const proof=saveEvidence(dir,files,{audit_status:'accepted',mode:'delegated',session:f.session,delegate:f.delegate,model:f.model,source_sha256:source_hash,
-    started_at:new Date().toISOString(),streams:{stdout:meta},execution:{exit_code:0,signal:null,prompt_released:true,stopped:false}});
+    started_at:new Date().toISOString(),streams:{stdout:meta},execution:{exit_code:0,signal:null,prompt_released:true,stopped:false,prompt_delivery:'after_preflight_before_startup_audit',startup_audited:true,init_audited:true}});
   rmSync(work,{recursive:true,force:true});
   assert.deepEqual(replayRunEvidence(dir,proof.manifest_sha256).checked.output,f.output);
   assert.equal(replayRunEvidence(dir,proof.manifest_sha256).guardEvidence.one_shot,true);
@@ -178,10 +185,12 @@ test('限定plugin証拠のreplay:旧承認再利用・設定差分・consent/po
   'plugin-binding.json':JSON.stringify(binding),'policy-observation.json':policyText,'policy-evidence.txt':policyEvidence,
   'consent-evidence.txt':consentEvidence,'settings.json':JSON.stringify(runtimeSettings('/guard','/policy','baseline',binding))};
  const metadata={audit_status:'accepted',mode:'baseline',session,delegate,model,source_sha256:source,cli_version:'2.1.296 (Claude Code)',
-  started_at:time,streams:{stdout:meta},execution:{exit_code:0,signal:null,prompt_released:true,stopped:false}};
+  started_at:time,streams:{stdout:meta},execution:{exit_code:0,signal:null,prompt_released:true,stopped:false,prompt_delivery:'after_preflight_before_startup_audit',startup_audited:true,init_audited:true}};
  try{
-  const check=f=>{const dir=createEvidenceDirectory(root),proof=saveEvidence(dir,f,metadata);return ()=>replayRunEvidence(dir,proof.manifest_sha256)};
+  const check=(f,meta=metadata)=>{const dir=createEvidenceDirectory(root),proof=saveEvidence(dir,f,meta);return ()=>replayRunEvidence(dir,proof.manifest_sha256)};
   assert.deepEqual(check(files)().checked.output,output);
+  for(const patch of [{prompt_delivery:'before_metadata_verified'},{prompt_delivery:undefined},{startup_audited:false},{init_audited:false}])
+   assert.throws(check(files,{...metadata,execution:{...metadata.execution,...patch}}));
   // Re-anchor altered bundles to test semantic checks independently of per-file integrity checks.
   for(const patch of [
    ...[{email:'other@example.com'},{orgId:'22222222-2222-4222-8222-222222222222'}].map(p=>({'live-applicability.json':JSON.stringify({...applicability(),identity:identityFromAuth({...authIdentity(),...p})})})),

@@ -77,31 +77,23 @@ test('実ガード: startupなしは拒否、startup/一回token/入力hashの�
   }finally{rmSync(dir,{recursive:true,force:true})}
 });
 
-test('代替プロセス:未ロード/異常hook/別sessionではpromptを送らず停止、正常startupだけが送信を解放',async()=>{
-  for(const kind of ['missing-marker','bad-hook','wrong-session','normal']){
-    const {dir,policy}=setup();let sent='';
-    const spawnProcess=()=>{
-      const p=new EventEmitter();p.stdout=new PassThrough();p.stderr=new PassThrough();p.stdin=new PassThrough();
-      p.stdin.on('data',d=>sent+=d);p.stdin.on('finish',()=>queueMicrotask(()=>p.emit('close',0,null)));
-      p.kill=()=>queueMicrotask(()=>p.emit('close',null,'SIGKILL'));
-      queueMicrotask(()=>{
-        if(kind!=='missing-marker')decide([policy,'startup'],JSON.stringify(startup));
-        const s=kind==='wrong-session'?randomUUID():session;
-        p.stdout.write(JSON.stringify({type:'system',subtype:'hook_started',session_id:s,hook_id:'hook1',hook_event:'SessionStart'})+'\n');
-        p.stdout.write(JSON.stringify({type:'system',subtype:'hook_response',session_id:s,hook_id:'hook1',hook_event:'SessionStart',exit_code:kind==='bad-hook'?1:0,outcome:'success',stdout:'{}'})+'\n');
-      });return p;
-    };
-    try{
-      const promise=executeGuarded({args:[],cwd:dir,env:{},prompt:'fixture task',session,dir,spawnProcess,timeout:1000});
-      if(kind==='normal'){await promise;assert.equal(sent,'fixture task')}
-      else{await assert.rejects(promise);assert.equal(sent,'')}
-    }finally{rmSync(dir,{recursive:true,force:true})}
-  }
+test('no-action設定は全ツール禁止、正しい担当要求でも単回markerを作らない',()=>{
+  const {dir,policy}=setup();
+  try{
+    const settings=runtimeSettings('/safe/guard.js',policy,'baseline');
+    assert.equal(settings.hooks.PreToolUse[0].hooks[0].args.at(-1),'deny');
+    const args=runtimeArgs({session,delegate,model,definition:{tools:[]},settings:'/safe/settings.json',mode:'baseline'});
+    assert.equal(args[args.indexOf('--tools')+1],'');assert.ok(!args.includes('--allowedTools'));
+    decide([policy,'startup'],JSON.stringify(startup));
+    assert.throws(()=>decide([policy,'deny'],JSON.stringify(tool)));
+    assert.ok(!existsSync(join(dir,'used')));assert.ok(!existsSync(join(dir,'tool.json')));
+  }finally{rmSync(dir,{recursive:true,force:true})}
 });
 
-test('限定plugin起動: startupだけではstdin未送信、initの実効plugin/MCP/CLI確認も必要',async()=>{
-  for(const kind of ['normal','init-first','missing-init','discord','missing-plugins','mcp','unknown-builtin']){
-    const {dir,policy}=setup();let sent='',beforeInit=null;
+test('stdin後にだけイベントを出すプロセスで成立、欠落/異常startup・init前のrun/resultは拒否',async()=>{
+  for(const kind of ['normal','init-first','missing-marker','bad-hook','wrong-session','missing-init','missing-startup',
+    'early-result','early-assistant','early-task','early-tool','discord','missing-plugins','mcp','unknown-builtin','stderr','no-events']){
+    const {dir,policy}=setup();let sent='',eventsBeforeInput=0;
     const init={type:'system',subtype:'init',session_id:session,claude_code_version:'2.1.296',
       tools:[],model,permissionMode:'dontAsk',apiKeySource:'none',mcp_servers:[],
       plugins:BUILTIN_PLUGINS.map(name=>({name,path:'builtin',source:`${name}@builtin`}))};
@@ -111,23 +103,35 @@ test('限定plugin起動: startupだけではstdin未送信、initの実効plugi
     if(kind==='unknown-builtin')init.plugins[0]={name:'new',path:'builtin',source:'new@builtin'};
     const spawnProcess=()=>{
       const p=new EventEmitter();p.stdout=new PassThrough();p.stderr=new PassThrough();p.stdin=new PassThrough();
-      p.stdin.on('data',d=>sent+=d);p.stdin.on('finish',()=>queueMicrotask(()=>p.emit('close',0,null)));
+      p.stdin.on('data',d=>sent+=d);
       p.kill=()=>queueMicrotask(()=>p.emit('close',null,'SIGKILL'));
-      queueMicrotask(()=>{
-        const emit=m=>p.stdout.write(JSON.stringify(m)+'\n');
-        decide([policy,'startup'],JSON.stringify(startup));
+      // Unlike the old mock, this process cannot produce any event before stdin EOF.
+      p.stdin.on('finish',()=>queueMicrotask(()=>{
+        const emit=m=>{if(!sent)eventsBeforeInput++;p.stdout.write(JSON.stringify(m)+'\n')};
+        if(kind==='no-events'){p.emit('close',0,null);return}
+        if(kind==='stderr'){p.stderr.write('synthetic warning');return}
+        if(kind.startsWith('early-')){
+          const type={'early-result':'result','early-assistant':'assistant','early-task':'system','early-tool':'assistant'}[kind];
+          emit({type,subtype:'task_started',session_id:session,message:{content:kind==='early-tool'?[{type:'tool_use',name:'Agent'}]:[]}});
+          return;
+        }
+        if(kind!=='missing-marker')decide([policy,'startup'],JSON.stringify(startup));
         if(kind==='init-first')emit(init);
-        emit({type:'system',subtype:'hook_started',session_id:session,hook_id:'h1',hook_event:'SessionStart'});
-        emit({type:'system',subtype:'hook_response',session_id:session,hook_id:'h1',hook_event:'SessionStart',exit_code:0,outcome:'success'});
-        if(kind!=='init-first')beforeInit=sent;
+        const s=kind==='wrong-session'?randomUUID():session;
+        if(kind!=='missing-startup'){
+          emit({type:'system',subtype:'hook_started',session_id:s,hook_id:'h1',hook_event:'SessionStart'});
+          emit({type:'system',subtype:'hook_response',session_id:s,hook_id:'h1',hook_event:'SessionStart',exit_code:kind==='bad-hook'?1:0,outcome:'success'});
+        }
         if(!['missing-init','init-first'].includes(kind))emit(init);
-      });return p;
+        p.emit('close',0,null);
+      }));return p;
     };
     try{
-      const result=executeGuarded({args:[],cwd:dir,env:{},prompt:'fixture',session,dir,spawnProcess,timeout:30,mode:'baseline',model,requirePluginInit:true});
-      if(['normal','init-first'].includes(kind)){await result;assert.equal(sent,'fixture')}
-      else{await assert.rejects(result);assert.equal(sent,'')}
-      if(kind!=='init-first')assert.equal(beforeInit,'');
+      const result=executeGuarded({args:[],cwd:dir,env:{},prompt:'synthetic no-action',session,dir,spawnProcess,timeout:100,mode:'baseline',model,requirePluginInit:true});
+      if(['normal','init-first'].includes(kind)){
+        const c=await result;assert.equal(c.prompt_delivery,'after_preflight_before_startup_audit');assert.equal(c.startup_audited,true);assert.equal(c.init_audited,true);
+      }else await assert.rejects(result,e=>{assert.equal(e.capture.prompt_released,true);return true});
+      assert.equal(sent,'synthetic no-action');assert.equal(eventsBeforeInput,0);
     }finally{rmSync(dir,{recursive:true,force:true})}
   }
   const init={claude_code_version:'2.1.296',mcp_servers:[],plugins:BUILTIN_PLUGINS.map(name=>({name,path:'builtin',source:`${name}@builtin`}))};

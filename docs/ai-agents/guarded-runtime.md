@@ -1,4 +1,4 @@
-# 限定委譲ランナー（観測者分離差分は独立レビュー待ち）
+# 限定委譲ランナー（起動順序差分は独立レビュー待ち）
 
 `run-task.js --provider claude --delegate <担当> --model <固定ID> --run --delegation-approval <私有JSON>` を追加した。承認ファイルなしの既存経路は認証前に停止する。API認証、設定変更、フック無効化、自動再試行は追加しない。今回の区切りはコードとオフライン負例のみで、実モデルの成功や本番反映を意味しない。
 
@@ -6,9 +6,9 @@
 
 記録の必須項目は `version:1`, `profile:claude-2.1.296-deny-only-v2`, `token`, `mode`（`baseline`または`delegated`）, `delegate`, `model`, `packet_sha256`, `settings_sha256`, `source_sha256`, `checked_at`、および次のtrue値: `subscription_confirmed`, `extra_usage_disabled`, `no_additional_charge_confirmed`, `usage_available`, `effective_policy_reviewed`, `no_other_hooks_or_plugins`, `no_remote_or_mdm_policy`, `quality_review_required`。hash方式は `delegate-runtime.js` の `hash` と `settingsPaths/settingsSnapshot` に定義する。これは本人の事実確認であり、設定ファイルだけで契約や接続を推測するものではない。
 
-この初期プロファイルは macOS + Claude Code 2.1.296 + firstPartyのpro/maxを限定対象とする。旧deny-only profileは `/status` と `claude doctor` による実効設定確認が必要。v4は非対話専用で、起動前の固定CLI診断とinventory、起動後かつ入力前のinitを別々に検証する。対話 `/status` を取得したと記録しない。ローカルinventoryは追加の変化検出で、MDM/サーバーポリシーを自動で完全に列挙できるとの保証はしない。既存のフック、インストール済みプラグイン、env上書き、未知の設定、MDM、別CLAUDE_CONFIG_DIRがある場合は停止する。それらを削除・無効化して通過させず、必要なら別の互換プロファイルを独立レビューする。現在のMacがこの限定条件に適合するかは未確認。
+この初期プロファイルは macOS + Claude Code 2.1.296 + firstPartyのpro/maxを限定対象とする。旧deny-only profileは `/status` と `claude doctor` による実効設定確認が必要。v4は非対話専用で、起動前の固定CLI診断とinventory、入力送信後の早期出力であるinitを別々に検証する。対話 `/status` を取得したと記録しない。ローカルinventoryは追加の変化検出で、MDM/サーバーポリシーを自動で完全に列挙できるとの保証はしない。既存のフック、インストール済みプラグイン、env上書き、未知の設定、MDM、別CLAUDE_CONFIG_DIRがある場合は停止する。それらを削除・無効化して通過させず、必要なら別の互換プロファイルを独立レビューする。現在のMacがこの限定条件に適合するかは未確認。
 
-追加するセッション設定はSessionStartと全ツール対象PreToolUseの同期command hookのみで、exec形式・`onFailure:block`。開始hookの成功イベントと私有markerが揃うまでstdinに依頼を渡さない。CLIがstdinを受け取るまでSessionStartを出さない場合、15秒で停止する。この順序が実CLIで成立するかは次の限定試験の対象であり、待機解除のために先にpromptを渡す回避はしない。
+追加するセッション設定はSessionStartと全ツール対象PreToolUseの同期command hookのみで、exec形式・`onFailure:block`。事前照合が完了した後、固定 `-p` 実行へ承認済みpromptをstdinで供給する。startup成功イベント・私有marker・initを早期監査として要求し、両方が揃う前のassistant/result/task/toolイベント、または15秒以内の監査未成立を拒否する。入力がモデルへ渡る前のmetadata確認とは表現しない。ツール実行前の実効境界は同期PreToolUseガードであり、出力監査はその代替ではない。
 
 PreToolUseは担当・全入力・session・親階層を検査し、一回markerと入力hash/ツールID証拠を残す。許可値やupdatedInputは返さず `{}` で既存permissionに委ねる。標準ツールはAgentのみ、子はtools[]、空MCP、depth1、最大同時2、親12/子8ターン、5分、出力4MB。未知のhook/ログ・拒否・stderr・追加使用・子ツールを検出するとプロセス群を停止する。
 
@@ -63,7 +63,7 @@ Remote Controlの判定はfresh UUIDをランナー自身で生成した非対�
 
 利用枠記録の本文hashとidentity hashは承認bindingに含める。実行直前のCLI identity、承認済みpolicy identity、ブラウザ本人hash、利用枠記録に結合したCLI identityのすべてが一致し、元の10分期限内でなければ実行しない。別account・別org・承認後の切替を拒否する。利用枠記録と証拠を私有保存し、replayでも同じ照合を行う。旧v2/v3承認は自動変換しない。
 
-CLIに渡す追加設定は対象3件の`enabledPlugins:false`と既存guardのみ。通常設定は変更しない。入力送信にはstartup markerと成功hookだけでなく、initのCLI版・ツール・model・dontAsk・API keyなし・空MCP・固定組込plugin集合の一致も必要。CLIがstdin前にinitを出さない場合は時間切れで停止する。組込は`cc-plugin-agents-md`、`cc-plugin-telemetry`、`cc-plugin-plugin-authoring`の3件で、すべてpath=`builtin`・source=`名前@builtin`を要求する。
+CLIに渡す追加設定は対象3件の`enabledPlugins:false`と既存guardのみ。通常設定は変更しない。入力後の早期監査でstartup markerと成功hook、およびinitのCLI版・ツール・model・dontAsk・API keyなし・空MCP・固定組込plugin集合の一致を要求する。両イベントの相対順序を固定せず、両方の成立前に通常応答が来れば拒否する。組込は`cc-plugin-agents-md`、`cc-plugin-telemetry`、`cc-plugin-plugin-authoring`の3件で、すべてpath=`builtin`・source=`名前@builtin`を要求する。
 
 initのMCP空とplugin集合の一致は、init前の通信やDiscordプロセス不在の証明ではない。実体hashは変更検出のためで、無効化するpluginの依存を実行して安全性を検査するものではない。プロセス不在、実際の開始順序、子の制約継承は実機検証まで未確認であり、品質承認は常にfalseのまま。この統合差分の独立レビュー前には実CLI/modelを起動しない。保存証拠のreplayでも限定承認・policy証拠・binding・initを再検証する。
 
@@ -78,7 +78,7 @@ policy/usageの `observation` は `{kind:"verified_tool_observation",observer:"a
 
 証拠本文hashを照合したうえで内容を検証する。authorization本文hashも新たにbindingへ含め、policy/usage本文hash、identity、単回token、mode、実装等の既存結合を維持。起動前とreplayの双方で証拠の意味を検証する。10分期限は延長しない。`verified_tool_observation` はこの照合方式の名前であり、サービス署名や第三者による独立検証の意味ではない。同じOSユーザーが原文参照と全証拠を捏造することを暗号学的に防ぐ仕組みではなく、記録作成者は信頼できる会話と実ツール出力から正直に転記する必要がある。出所を確認できなければ作成しない。成果の採用・品質承認は別工程のまま。
 
-### 実CLI前提のオフライン点検（2026-10-21 JST）
+### 旧起動順序のオフライン点検履歴（2026-10-21 JST）
 
 固定2.1.296の `--help` をモデルなしで取得。公式 [CLI reference](https://code.claude.com/docs/en/cli-reference) と [hooks](https://code.claude.com/docs/en/hooks) を再確認した。以下の未確認項目を成功へ変換しない。
 
@@ -94,3 +94,14 @@ policy/usageの `observation` は `{kind:"verified_tool_observation",observer:"a
 | 私有証拠/再監査 | 合成ログの保存・再監査は試験済み。実CLIの失敗ログを含む保存と実ログ監査は未実証。成果品質は常に別判定 |
 
 したがって「全前提を実機で充足済み」とはまだ報告できない。入力順序とCLIの実ログ形式が残る主要な実証項目。ガード検証最大3起動、成功後のdq-01比較1組という区切りは維持し、新モデルは本差分の独立レビュー後に限る。
+
+
+### 起動順序の最小訂正（独立レビュー待ち）
+
+旧順序で行った1回の実診断はstdout 0 bytes、startup/init/markerなし。CLIが「3秒間stdinなし、入力なしで続行」というstderr警告を出したためガードがSIGKILLした。相互待機と断定せず、同じ試行は繰り返していない。
+
+[公式headless仕様](https://code.claude.com/docs/en/headless#read-session-metadata)が示すinitは早期出力であり、stdin前の保証ではない。[同期PreToolUse](https://code.claude.com/docs/en/hooks)をツール実行前の制御として維持し、事前照合後のprompt供給と早期監査を分離する。固定CLI・引数・MCP空・許可された3plugin除外・本人/組織・Pro/Extra OFF・managed条件・10分期限・単回承認・正確な担当名/packet照合・atomic担当tokenは変更していない。`--bare`、hooks無効化、設定全無視、API fallback、SDK依存を追加していない。stderr警告も引き続き停止条件。
+
+証拠のexecutionへ `prompt_delivery:"after_preflight_before_startup_audit"`、`startup_audited`、`init_audited` を保存する。現行profileの成功replayはこれらと実イベント/markerの双方を要求する。metadata監査前にpromptがCLIへ渡るため、監査失敗でもオンライン利用枠を消費し得る。出力監査がCLI内部の実行と競争せずツールを事前阻止するとは主張しない。同期hookの実稼働・拒否・故障時停止は実機で別途確認する。
+
+独立レビュー後の最初の1回は、小さな合成no-action入力と既存 `baseline` modeを使用。`--tools ''`、空MCP、PreToolUseの `deny` modeで全ツールを拒否し、担当用 `used/tool.json` は作らない。実行承認tokenは一度だけ消費する。実データは送らず、Pro枠を消費するオンラインモデル試験として記録する。成功後にだけ別mode・別承認tokenの限定Agent試験へ進む。今回のコミットでは実モデルを起動していない。

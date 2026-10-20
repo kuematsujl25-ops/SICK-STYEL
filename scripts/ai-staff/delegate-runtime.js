@@ -112,8 +112,8 @@ export function verifyEffectivePlugins(init){
   }
   return {effective_plugins:[...names].sort(),mcp_servers:[],discord_process_absence:'not_established'};
 }
-// No user prompt is delivered until a successful startup hook AND its private marker are observed.
-// CLI variants that wait for stdin before SessionStart time out, without receiving the task prompt.
+// After preflight, deliver the approved prompt immediately. Startup/init are early output audits,
+// not a pre-model boundary. Synchronous deny-only PreToolUse hooks enforce tool restrictions.
 export function executeGuarded({args,cwd,env,prompt,session,dir,spawnProcess=spawn,model=null,mode='delegated',timeout=LIMITS.timeout_ms,requirePluginInit=false,executable='claude'}){
   return new Promise((resolveResult,reject)=>{
     let pending='',released=false,stopped=false,calls=0,startId=null,startReady=false,initReady=false;
@@ -121,7 +121,8 @@ export function executeGuarded({args,cwd,env,prompt,session,dir,spawnProcess=spa
     const child=spawnProcess(executable,args,{cwd,env,detached:true,stdio:['pipe','pipe','pipe']});
     const stop=()=>{stopped=true;try{if(child.pid)process.kill(-child.pid,'SIGKILL');else child.kill('SIGKILL')}catch{child.kill('SIGKILL')}};
     const timer=setTimeout(stop,timeout);
-    const startTimer=setTimeout(()=>{if(!released)stop()},15000);
+    const ready=()=>startReady&&initReady;
+    const startTimer=setTimeout(()=>{if(!ready())stop()},15000);
     child.on('error',()=>{stopped=true;});
     child.stdout.on('data',buf=>{
       try{pending+=stdoutCapture.write(buf);}catch{stop();return}
@@ -133,16 +134,16 @@ export function executeGuarded({args,cwd,env,prompt,session,dir,spawnProcess=spa
         if(m.type==='system'&&m.subtype==='hook_started'&&m.hook_event==='SessionStart'){
           if(startId!==null){stop();break}startId=m.hook_id;
         }else if(m.type==='system'&&m.subtype==='hook_response'&&m.hook_event==='SessionStart'){
-          if(startReady||released||!startId||m.hook_id!==startId||m.exit_code!==0||m.outcome!=='success'||!['','{}'].includes(m.stdout||'')){stop();break}
+          if(startReady||!startId||m.hook_id!==startId||m.exit_code!==0||m.outcome!=='success'||!['','{}'].includes(m.stdout||'')){stop();break}
           try{const receipt=JSON.parse(privateFile(join(dir,'started.json')));
             if(receipt.session_id!==session||receipt.stage!=='startup')fail();
           }catch{stop();break}
           startReady=true;
-        }else if(!released&&!(requirePluginInit&&m.type==='system'&&m.subtype==='init')){stop();break}
+        }else if(!ready()&&!(m.type==='system'&&m.subtype==='init')){stop();break}
         if(m.type==='system'&&m.subtype==='init'&&(!Array.isArray(m.tools)||(mode==='baseline'?m.tools.length!==0:m.tools.length!==1||!isDelegationTool(m.tools[0]))||
           (model!==null&&m.model!==model)||m.permissionMode!=='dontAsk'||m.apiKeySource!=='none'||m.mcp_servers?.length))stop();
-        if(requirePluginInit&&m.type==='system'&&m.subtype==='init'){
-          try{verifyEffectivePlugins(m);initReady=true}catch{stop()}
+        if(m.type==='system'&&m.subtype==='init'){
+          try{if(requirePluginInit)verifyEffectivePlugins(m);initReady=true}catch{stop()}
         }
         if(m.type==='system'&&String(m.subtype).startsWith('hook_')&&!['SessionStart','PreToolUse'].includes(m.hook_event))stop();
         if(m.type==='system'&&m.subtype==='hook_response'&&(m.exit_code!==0||m.outcome!=='success'||!['','{}'].includes(m.stdout||'')))stop();
@@ -150,19 +151,20 @@ export function executeGuarded({args,cwd,env,prompt,session,dir,spawnProcess=spa
         for(const c of Array.isArray(m.message?.content)?m.message.content:[])
           if(!c||typeof c!=='object'||c.type==='tool_use'&&(mode==='baseline'||m.parent_tool_use_id||!isDelegationTool(c.name)||++calls>1))stop();
         if(m.type==='result'&&(m.is_error||m.permission_denials?.length))stop();
-        if(!stopped&&!released&&startReady&&(!requirePluginInit||initReady)){
-          released=true;clearTimeout(startTimer);child.stdin.end(prompt);
-        }
+        if(!stopped&&ready())clearTimeout(startTimer);
       }
     });
     child.stderr.on('data',buf=>{try{stderrCapture.write(buf);}catch{stop();return}if(buf.some(b=>![9,10,13,32].includes(b)))stop()});
     child.stdin.on('error',stop);
     child.on('close',(code,signal)=>{clearTimeout(timer);clearTimeout(startTimer);
-      const capture={stdout:stdoutCapture.end(),stderr:stderrCapture.end(),exit_code:code,signal,prompt_released:released,stopped};
-      if(stopped||!released||code!==0||signal||pending.trim()||!capture.stdout.utf8_valid||!capture.stderr.utf8_valid){
+      const capture={stdout:stdoutCapture.end(),stderr:stderrCapture.end(),exit_code:code,signal,prompt_released:released,stopped,
+        prompt_delivery:'after_preflight_before_startup_audit',startup_audited:startReady,init_audited:initReady};
+      if(stopped||!released||!ready()||code!==0||signal||pending.trim()||!capture.stdout.utf8_valid||!capture.stderr.utf8_valid){
         const error=new TeamError('委任ガード・CLI記録が未確認または異常です。成果物は保存しません');error.capture=capture;reject(error);
       }else resolveResult(capture);
     });
+    // All listeners are installed before stdin closes; no dependence on pre-stdin CLI output.
+    if(!stopped){released=true;try{child.stdin.end(prompt)}catch{stop()}}
   });
 }
 export function verifyGuardEvidence(stdout,dir,session,mode='delegated'){
@@ -257,7 +259,8 @@ export async function runDelegated({root,packet,delegate,model,approvalPath,mode
     }}
     const evidence=saveEvidence(evidenceDir,files,{session,model,delegate,mode,started_at:startedAt,finished_at:new Date().toISOString(),
       source_sha256:source_hash,cli_version:version.stdout.trim(),limits:{...LIMITS,effort:'low'},audit_status:accepted?'accepted':'rejected',quality_approved:false,
-      streams,execution:capture?{exit_code:capture.exit_code,signal:capture.signal,prompt_released:capture.prompt_released,stopped:capture.stopped}:null});
+      streams,execution:capture?{exit_code:capture.exit_code,signal:capture.signal,prompt_released:capture.prompt_released,stopped:capture.stopped,
+        prompt_delivery:capture.prompt_delivery,startup_audited:capture.startup_audited,init_audited:capture.init_audited}:null});
     archived=true;return evidence;
   };
   try{
@@ -304,6 +307,7 @@ export function replayRunEvidence(dir,manifestHash){
   let pluginBinding=null;
   if(approval.profile!==SESSION_PLUGIN_PROFILE&&files['plugin-binding.json'])fail();
   if(approval.profile===SESSION_PLUGIN_PROFILE){
+    if(m.execution.prompt_delivery!=='after_preflight_before_startup_audit'||m.execution.startup_audited!==true||m.execution.init_audited!==true)fail();
     const now=Date.parse(m.started_at),state=JSON.parse(decode(files['plugin-state.json']));
     const policyText=decode(files['policy-observation.json']);
     const observation=verifyPolicyObservation(JSON.parse(policyText),now);

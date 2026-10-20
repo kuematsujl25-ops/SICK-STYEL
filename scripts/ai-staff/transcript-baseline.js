@@ -19,11 +19,11 @@ export function validateComparisonBaseline(stdout,{packet,model,session_id,limit
         if(!hook||hookDone||m.hook_id!==hook.hook_id||m.hook_name!==hook.hook_name||m.hook_event!=='SessionStart'||
           m.exit_code!==0||m.outcome!=='success'||!['','{}'].includes(m.stdout||''))fail();hookDone=true;continue;
       }
-      if(m.subtype!=='init'||init||!hookDone||m.claude_code_version!=='2.1.296'||m.model!==model||
+      if(m.subtype!=='init'||init||m.claude_code_version!=='2.1.296'||m.model!==model||
         m.apiKeySource!=='none'||m.permissionMode!=='dontAsk'||!Array.isArray(m.tools)||m.tools.length||
         !Array.isArray(m.mcp_servers)||m.mcp_servers.length)fail();init=m;continue;
     }
-    if(!init)fail();
+    if(!init||!hookDone)fail();
     if(m.type==='rate_limit_event'){
       if(m.rate_limit_info?.status!=='allowed'||m.rate_limit_info.isUsingOverage!==false||m.rate_limit_info.overageStatus!=='rejected')fail();rates++;continue;
     }
