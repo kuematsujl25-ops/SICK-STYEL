@@ -4,7 +4,7 @@ import {sessionPluginBinding,verifySessionPluginConsent,SESSION_PLUGIN_PROFILE} 
 import {SESSION_PLUGIN_IDS} from '../scripts/ai-staff/session-plugin-plan.js';
 import {packet,model} from './helpers/async-run.js';
 const checkedAt=new Date().toISOString(),token='10000000-0000-4000-8000-000000000001';
-const input=()=>({cliVersion:'2.1.296 (Claude Code)',mode:'baseline',packet,model,sourceHash:'b'.repeat(64),policyObservationHash:'a'.repeat(64),usageObservationHash:'e'.repeat(64),identitySha256:'f'.repeat(64),
+const input=()=>({cliVersion:'2.1.296 (Claude Code)',mode:'baseline',packet,model,sourceHash:'b'.repeat(64),policyObservationHash:'a'.repeat(64),userAuthorizationHash:'d'.repeat(64),usageObservationHash:'e'.repeat(64),identitySha256:'f'.repeat(64),
   token,checkedAt,
   inventory:[{path:'/synthetic/settings.json',sha256:'c'.repeat(64)}],planInput:{
     managedState:'confirmed_absent',userSettings:{enabledPlugins:Object.fromEntries(SESSION_PLUGIN_IDS.map(id=>[id,true])),
@@ -19,7 +19,7 @@ const receipt=p=>({identity_sha256:p.binding.identity_sha256,usage_observation_s
 test('承認はmode/入力/実装/設定/plugin版に結合し、実効確認や実行許可を生成しない',()=>{
   const p=sessionPluginBinding(input()),r=receipt(p);
   assert.deepEqual(verifySessionPluginConsent(r,p),{consent_matches:true,effective_session_verified:false,execution_authorized:false});
-  for(const mutate of [x=>x.mode='delegated',x=>x.sourceHash='e'.repeat(64),x=>x.policyObservationHash='e'.repeat(64),x=>x.identitySha256='e'.repeat(64),x=>x.usageObservationHash='f'.repeat(64),
+  for(const mutate of [x=>x.userAuthorizationHash='c'.repeat(64),x=>x.mode='delegated',x=>x.sourceHash='e'.repeat(64),x=>x.policyObservationHash='e'.repeat(64),x=>x.identitySha256='e'.repeat(64),x=>x.usageObservationHash='f'.repeat(64),
     x=>x.token='10000000-0000-4000-8000-000000000002',x=>x.checkedAt=new Date(Date.parse(checkedAt)-1000).toISOString(),
     x=>x.inventory[0].sha256='f'.repeat(64),x=>x.planInput.userSettings.theme='light',
     x=>x.planInput.installed[SESSION_PLUGIN_IDS[0]].version='changed']){

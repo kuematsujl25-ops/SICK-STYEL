@@ -1,4 +1,5 @@
 // Identity binding only: never retain OAuth tokens, raw email, or display names.
+import {verifyProvenance} from './observation-provenance.js';
 import {createHash} from 'node:crypto';
 import {TeamError} from '../../lib/ai-team.js';
 const sha=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -24,8 +25,8 @@ export function verifyIdentity(value){
   return value;
 }
 export function verifyUsageObservation(proof,identity,now=Date.now()){
-  verifyIdentity(identity);
-  if(proof?.version!==1||proof.source!=='claude.ai_account_and_usage_ui'||proof.reviewed_by!=='human'||
+  verifyIdentity(identity);verifyProvenance(proof,'usage');
+  if(proof?.version!==2||proof.source!=='claude.ai_account_and_usage_ui'||
     proof.browser_account_sha256!==identity.account_sha256||proof.cli_identity_sha256!==identity.identity_sha256||
     proof.subscription_type!=='pro'||proof.extra_usage_enabled!==false||proof.usage_available!==true||
     typeof proof.evidence_ref!=='string'||!proof.evidence_ref.trim()||!digest(proof.evidence_sha256)||

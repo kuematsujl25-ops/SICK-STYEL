@@ -1,9 +1,10 @@
+import {provenance,authorizationScope} from '../scripts/ai-staff/observation-provenance.js';
 import {test} from 'node:test';import assert from 'node:assert/strict';
 import {identityFromAuth,verifyIdentity,verifyUsageObservation} from '../scripts/ai-staff/account-identity.js';
 import {applicability,authIdentity} from './helpers/policy-applicability.js';
 import {collectApplicability,DOCTOR_REMOTE_LINE,parseApplicabilityDiagnostics} from '../scripts/ai-staff/policy-applicability.js';
 const auth=()=>({...applicability().credential,...authIdentity()});
-const usage=()=>({version:1,source:'claude.ai_account_and_usage_ui',reviewed_by:'human',checked_at:new Date().toISOString(),
+const usage=()=>({version:2,source:'claude.ai_account_and_usage_ui',observation:provenance('usage'),checked_at:new Date().toISOString(),
  browser_account_sha256:applicability().identity.account_sha256,cli_identity_sha256:applicability().identity.identity_sha256,
  subscription_type:'pro',extra_usage_enabled:false,usage_available:true,evidence_ref:'/synthetic/ui-evidence',evidence_sha256:'e'.repeat(64)});
 const ok=stdout=>({status:0,signal:null,stderr:'',stdout});

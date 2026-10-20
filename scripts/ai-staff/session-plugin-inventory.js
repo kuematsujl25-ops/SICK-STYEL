@@ -1,4 +1,5 @@
 // Read-only inventory. Local absence never establishes remote policy or Remote Control state.
+import {verifyProvenance} from './observation-provenance.js';
 import {readFileSync,lstatSync,readdirSync,realpathSync,readlinkSync} from 'node:fs';
 import {join,resolve,relative,isAbsolute,dirname} from 'node:path';
 import {createHash} from 'node:crypto';
@@ -45,9 +46,10 @@ export function pluginTreeHash(root){
   walk(root);return sha(JSON.stringify(manifest));
 }
 export function verifyPolicyObservation(proof,now=Date.now()){
-  if(proof?.version!==2||proof.managed_policy!=='confirmed_absent'||
+  verifyProvenance(proof,'policy');
+  if(proof?.version!==3||proof.managed_policy!=='confirmed_absent'||
     proof.remote_policy!==REMOTE_NOT_APPLICABLE||proof.remote_control!==HEADLESS_NOT_REQUESTED||
-    proof.reviewed_by!=='human'||typeof proof.evidence_ref!=='string'||!proof.evidence_ref.trim()||
+    typeof proof.evidence_ref!=='string'||!proof.evidence_ref.trim()||
     !/^[a-f0-9]{64}$/.test(proof.evidence_sha256||'')||
     !Number.isFinite(now)||!Number.isFinite(Date.parse(proof.checked_at))||
     Date.parse(proof.checked_at)>now||now-Date.parse(proof.checked_at)>600000)fail();

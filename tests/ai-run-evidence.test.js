@@ -1,3 +1,4 @@
+import {provenance,authorizationScope} from '../scripts/ai-staff/observation-provenance.js';
 import {identityFromAuth} from '../scripts/ai-staff/account-identity.js';
 import {applicability,authIdentity} from './helpers/policy-applicability.js';
 import {test} from 'node:test';
@@ -133,22 +134,28 @@ test('限定plugin証拠のreplay:旧承認再利用・設定差分・consent/po
  const {SESSION_PLUGIN_IDS}=await import('../scripts/ai-staff/session-plugin-plan.js');
  const {BUILTIN_PLUGINS,verifyHeadlessLaunch}=await import('../scripts/ai-staff/delegate-runtime.js');
  const root=mkdtempSync(join(tmpdir(),'ss-plugin-replay-')),time=new Date().toISOString(),source=hash('fixture source');
- const policyEvidence='synthetic human policy observation',consentEvidence='synthetic limited consent';
- const observation={version:2,managed_policy:'confirmed_absent',remote_policy:'not_applicable_to_current_credential',remote_control:'headless_not_requested',remote_applicability:applicability(),
-  reviewed_by:'human',evidence_ref:'/synthetic/policy',evidence_sha256:hash(policyEvidence),checked_at:time};
- const usageEvidence='synthetic UI account and usage evidence';
- const usage={version:1,source:'claude.ai_account_and_usage_ui',reviewed_by:'human',checked_at:time,
+ const inventory=[{path:'/synthetic/settings.json',sha256:hash('fixture')}];
+ const envelope=kind=>({version:1,observer:'assistant',kind,checked_at:time,identity_sha256:applicability().identity.identity_sha256});
+ const policyEvidence=JSON.stringify({...envelope('policy'),cli:applicability(),endpoint:{dep_enrolled:false,mdm_enrolled:false,inventory_sha256:hash(inventory)}});
+ const consentEvidence=JSON.stringify({version:1,authority:'user',identity_sha256:applicability().identity.identity_sha256,
+  source_references:[{author:'user',thread_id:'synthetic',message_ref:'synthetic-user-message',quote:'synthetic user consent'}],
+  scope:authorizationScope({mode:'baseline',delegate,model,packet})});
+ const observation={version:3,managed_policy:'confirmed_absent',remote_policy:'not_applicable_to_current_credential',remote_control:'headless_not_requested',remote_applicability:applicability(),
+  observation:provenance('policy'),evidence_ref:'/synthetic/policy',evidence_sha256:hash(policyEvidence),checked_at:time};
+ const usageEvidence=JSON.stringify({...envelope('usage'),account:{url:'https://claude.ai/settings/account',account_sha256:applicability().identity.account_sha256},
+  usage:{url:'https://claude.ai/settings/usage',subscription_type:'pro',extra_usage_enabled:false,session_used_percent:0,weekly_used_percent:4}});
+ const usage={version:2,source:'claude.ai_account_and_usage_ui',observation:provenance('usage'),checked_at:time,
   browser_account_sha256:applicability().identity.account_sha256,cli_identity_sha256:applicability().identity.identity_sha256,
   subscription_type:'pro',extra_usage_enabled:false,usage_available:true,evidence_ref:'/synthetic/usage',evidence_sha256:hash(usageEvidence)};
  const usageText=JSON.stringify(usage);
- const policyText=JSON.stringify(observation),inventory=[{path:'/synthetic/settings.json',sha256:hash('fixture')}];
+ const policyText=JSON.stringify(observation);
  const state={inventory,policyObservation:observation,planInput:{managedState:'confirmed_absent',
   userSettings:{enabledPlugins:Object.fromEntries(SESSION_PLUGIN_IDS.map(id=>[id,true])),
    extraKnownMarketplaces:{'openai-codex':{source:{source:'github',repo:'openai/codex-plugin-cc'}}},
    theme:'dark',inputNeededNotifEnabled:true,agentPushNotifEnabled:true},
   installed:Object.fromEntries(SESSION_PLUGIN_IDS.map(id=>[id,{version:'fixture',tree_sha256:hash(id)}]))}};
  const token=randomUUID();
- const binding=sessionPluginBinding({...state,cliVersion:'2.1.296 (Claude Code)',mode:'baseline',packet,model,sourceHash:source,policyObservationHash:hash(policyText),usageObservationHash:hash(usageText),identitySha256:applicability().identity.identity_sha256,token,checkedAt:time});
+ const binding=sessionPluginBinding({...state,cliVersion:'2.1.296 (Claude Code)',mode:'baseline',packet,model,sourceHash:source,policyObservationHash:hash(policyText),usageObservationHash:hash(usageText),userAuthorizationHash:hash(consentEvidence),identitySha256:applicability().identity.identity_sha256,token,checkedAt:time});
  const approval={version:1,profile:SESSION_PLUGIN_PROFILE,mode:'baseline',token,delegate,model,
   packet_sha256:hash(packet),settings_sha256:hash(inventory),source_sha256:source,checked_at:time,
   subscription_confirmed:true,extra_usage_disabled:true,no_additional_charge_confirmed:true,usage_available:true,

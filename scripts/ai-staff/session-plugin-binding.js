@@ -5,14 +5,14 @@ import {KNOWN_MODELS} from './delegate.js';
 import {TeamError} from '../../lib/ai-team.js';
 import {validateTaskPacket} from '../../lib/ai-team.js';
 import {buildSessionPluginPlan,SESSION_PLUGIN_IDS} from './session-plugin-plan.js';
-export const SESSION_PLUGIN_PROFILE='claude-2.1.296-session-three-plugins-v3';
+export const SESSION_PLUGIN_PROFILE='claude-2.1.296-session-three-plugins-v4';
 const sha=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const digest=v=>typeof v==='string'&&/^[a-f0-9]{64}$/.test(v);
 const fail=()=>{throw new TeamError('セッション限定設定の承認・実装・入力の対応を確認できません');};
-export function sessionPluginBinding({planInput,cliVersion,mode,packet,model,sourceHash,inventory,policyObservationHash,usageObservationHash,identitySha256,token,checkedAt}){
+export function sessionPluginBinding({planInput,cliVersion,mode,packet,model,sourceHash,inventory,policyObservationHash,usageObservationHash,userAuthorizationHash,identitySha256,token,checkedAt}){
   validateTaskPacket(packet);
   if(cliVersion!=='2.1.296 (Claude Code)'||!['baseline','delegated'].includes(mode)||
-    !KNOWN_MODELS.includes(model)||!digest(sourceHash)||!digest(policyObservationHash)||!digest(usageObservationHash)||!digest(identitySha256)||
+    !KNOWN_MODELS.includes(model)||!digest(sourceHash)||!digest(policyObservationHash)||!digest(usageObservationHash)||!digest(userAuthorizationHash)||!digest(identitySha256)||
     typeof token!=='string'||!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(token)||
     !Number.isFinite(Date.parse(checkedAt))||
     !Array.isArray(inventory)||inventory.length===0)fail();
@@ -25,13 +25,14 @@ export function sessionPluginBinding({planInput,cliVersion,mode,packet,model,sou
   const plan=buildSessionPluginPlan(planInput);
   const binding={profile:SESSION_PLUGIN_PROFILE,cli_version:cliVersion,mode,model,token,checked_at:checkedAt,
     packet_sha256:sha(packet),source_sha256:sourceHash,inventory_sha256:sha(inventory),policy_observation_sha256:policyObservationHash,
-    usage_observation_sha256:usageObservationHash,identity_sha256:identitySha256,
+    usage_observation_sha256:usageObservationHash,user_authorization_sha256:userAuthorizationHash,identity_sha256:identitySha256,
     user_settings_sha256:plan.user_settings_sha256,installed_snapshot_sha256:plan.installed_snapshot_sha256,
     override_sha256:plan.override_sha256};
   return {plan,binding,binding_sha256:sha(binding),execution_authorized:false};
 }
 export function verifySessionPluginConsent(receipt,prepared,now=Date.now()){
   if(receipt?.profile!==SESSION_PLUGIN_PROFILE||receipt.binding_sha256!==prepared.binding_sha256||
+    receipt.approval_evidence_sha256!==prepared.binding.user_authorization_sha256||
     receipt.identity_sha256!==prepared.binding.identity_sha256||receipt.usage_observation_sha256!==prepared.binding.usage_observation_sha256||
     receipt.token!==prepared.binding.token||receipt.checked_at!==prepared.binding.checked_at||
     prepared.binding_sha256!==sha(prepared.binding)||prepared.execution_authorized!==false||
