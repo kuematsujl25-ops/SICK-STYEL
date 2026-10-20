@@ -1,10 +1,11 @@
 // Phase T: deny-only PreToolUse command hook for one pre-fixed delegation (offline/local, no network or model).
-// Used by approved session-only CLI probes; general delegate.js execution remains stopped.
+// Used by approved probes and the explicit opt-in delegate-runtime.js route.
 // Usage: node delegate-guard.js /abs/private-run-dir/policy.json  (hook stdin = PreToolUse event JSON)
 // It never returns "allow" or updatedInput: the single valid Agent request gets "{}" + exit 0 (defer to the
 // existing permission rules); everything else exits 2 with a short reason that contains no input or secret text.
 // The hook must be configured with onFailure: block so a crash/timeout of this guard also blocks the tool call.
-import {closeSync,constants,fstatSync,lstatSync,openSync,readSync} from 'node:fs';
+import {closeSync,constants,fstatSync,lstatSync,openSync,readSync,writeFileSync,existsSync} from 'node:fs';
+import {createHash} from 'node:crypto';
 import {dirname,isAbsolute,join,normalize} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {validateTaskPacket} from '../../lib/ai-team.js';
@@ -91,13 +92,23 @@ export function claimOnce(dir){
 }
 
 export function decide(argv,stdinText,now=Date.now()){
-  if(!Array.isArray(argv)||argv.length!==1)deny('引数');
+  if(!Array.isArray(argv)||![1,2].includes(argv.length)||argv.length===2&&!['startup','tool'].includes(argv[1]))deny('引数');
   const {dir,policy}=readPolicyFile(argv[0],now);
   if(typeof stdinText!=='string'||Buffer.byteLength(stdinText)>GUARD_LIMITS.max_stdin_bytes)deny('入力サイズ');
   let event;
   try{event=JSON.parse(stdinText);}catch{deny('入力形式');}
+  if(argv[1]==='startup'){
+    if(event.hook_event_name!=='SessionStart'||event.session_id!==policy.session_id||event.source!=='startup'||
+      Object.hasOwn(event,'agent_id')||Object.hasOwn(event,'agent_type'))deny('startup不一致');
+    writeFileSync(join(dir,'started.json'),JSON.stringify({stage:'startup',session_id:policy.session_id}),{mode:0o600,flag:'wx'});
+    return {};
+  }
   checkEvent(event,policy);
+  if(argv[1]==='tool'&&(!existsSync(join(dir,'started.json'))||typeof event.tool_use_id!=='string'||!event.tool_use_id))deny('startup証拠/ツールID');
   claimOnce(dir);
+  if(argv[1]==='tool')writeFileSync(join(dir,'tool.json'),JSON.stringify({stage:'tool',session_id:policy.session_id,
+    tool_use_id:event.tool_use_id,tool_name:event.tool_name,
+    input_sha256:createHash('sha256').update(JSON.stringify(event.tool_input)).digest('hex')}),{mode:0o600,flag:'wx'});
   return {};
 }
 

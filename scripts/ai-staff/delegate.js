@@ -1,7 +1,7 @@
 // Phase T: proposed Claude-only delegation to one allowlisted SICK STYLE specialist.
 // Three limited stages were approved and specialist files placed; the first comparison failed.
-// General delegation and additional evaluations remain disabled (no flag/env bypass).
-// Only pure, offline validation helpers remain; the limits below are proposals checked offline, not runtime guarantees.
+// Delegation without a private explicit approval stays stopped; delegate-runtime.js owns the opt-in route.
+// These validation helpers alone are not runtime enforcement; the guarded runner adds admission and hook evidence.
 import {createHash} from 'node:crypto';
 import {TeamError,buildPrompt,validateOutput,validateTaskPacket} from '../../lib/ai-team.js';
 import {claudeEnv} from './cli.js';
@@ -13,7 +13,7 @@ export const DELEGATION_UNAVAILABLE='限定3段階は承認・配置済みです
 // Always throws. Called before any file, definition, authentication, CLI or model access.
 export function delegationUnavailable(){fail(DELEGATION_UNAVAILABLE);}
 const sha=v=>createHash('sha256').update(typeof v==='string'?v:JSON.stringify(v)).digest('hex');
-export const USAGE='使い方: node scripts/ai-staff/run-task.js TASK.json [--provider codex|claude] [--delegate 担当名] [--model モデルID] [--run]';
+export const USAGE='使い方: node scripts/ai-staff/run-task.js TASK.json [--provider codex|claude] [--delegate 担当名] [--model モデルID] [--run] [--delegation-approval 本人確認JSON]';
 export const DELEGATES=Object.freeze(['ss-data-auditor','ss-profit-inventory','ss-qa-security']);
 export const KNOWN_MODELS=Object.freeze(['claude-opus-5-5','claude-sonnet-5-5','claude-haiku-5-5','claude-fable-5-1']);
 export const MIN_CLAUDE_VERSION='2.1.296';
@@ -25,7 +25,7 @@ export const STRUCTURED_OUTPUT_TOOL='StructuredOutput';
 export const isDelegationTool=name=>name==='Agent'||name==='Task';
 
 export function parseRunArgs(args){
-  if(!Array.isArray(args)||!args.length||args.length>8)fail(USAGE);
+  if(!Array.isArray(args)||!args.length||args.length>10)fail(USAGE);
   const [filename,...rest]=args;
   if(typeof filename!=='string'||!filename||filename.startsWith('-'))fail(USAGE);
   const opts={filename,provider:'codex',delegate:null,model:null,run:false},seen=new Set();
@@ -33,7 +33,7 @@ export function parseRunArgs(args){
     const flag=rest[i];
     if(seen.has(flag))fail('同じ引数を重複して指定できません。'+USAGE);
     if(flag==='--run'){seen.add(flag);opts.run=true;continue;}
-    if(!['--provider','--delegate','--model'].includes(flag))fail('対応していない引数です。'+USAGE);
+    if(!['--provider','--delegate','--model','--delegation-approval'].includes(flag))fail('対応していない引数です。'+USAGE);
     const value=rest[i+1];
     if(typeof value!=='string'||!value||value.startsWith('-'))fail(USAGE);
     seen.add(flag);opts[flag.slice(2)]=value;i++;
@@ -42,6 +42,7 @@ export function parseRunArgs(args){
   if((opts.delegate!==null||opts.model!==null)&&opts.provider!=='claude')fail('委任・モデル指定はClaude Code（--provider claude）だけで使えます');
   if(opts.delegate!==null&&!DELEGATES.includes(opts.delegate))fail('委任先は許可された担当名だけです: '+DELEGATES.join(', '));
   if(opts.model!==null&&!KNOWN_MODELS.includes(opts.model))fail('モデルは確認済みのID（'+KNOWN_MODELS.join(', ')+'）だけです');
+  if(opts['delegation-approval']&&(!opts.delegate||!opts.run||!opts.model))fail('委任承認には担当・固定モデル・--runが必要です');
   return opts;
 }
 
