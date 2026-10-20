@@ -105,3 +105,15 @@ policy/usageの `observation` は `{kind:"verified_tool_observation",observer:"a
 証拠のexecutionへ `prompt_delivery:"after_preflight_before_startup_audit"`、`startup_audited`、`init_audited` を保存する。現行profileの成功replayはこれらと実イベント/markerの双方を要求する。metadata監査前にpromptがCLIへ渡るため、監査失敗でもオンライン利用枠を消費し得る。出力監査がCLI内部の実行と競争せずツールを事前阻止するとは主張しない。同期hookの実稼働・拒否・故障時停止は実機で別途確認する。
 
 独立レビュー後の最初の1回は、小さな合成no-action入力と既存 `baseline` modeを使用。`--tools ''`、空MCP、PreToolUseの `deny` modeで全ツールを拒否し、担当用 `used/tool.json` は作らない。実行承認tokenは一度だけ消費する。実データは送らず、Pro枠を消費するオンラインモデル試験として記録する。成功後にだけ別mode・別承認tokenの限定Agent試験へ進む。今回のコミットでは実モデルを起動していない。
+
+### no-action実測とAgent監査結合（2026-10-21 JST）
+
+独立レビュー済み `c1632ba` でbaselineを1回だけ実行した。本人Pro/Extra OFF/identity/設定/期限付き単回承認を直前に照合。実順序はSessionStart開始→成功応答→init→assistant→rate limit→success result。exit 0、stderr 0 bytes、startup/init監査成立、ツール呼出し0、子起動0、担当用used/tool markerなし。通常設定の実行前後hashは一致した。
+
+ただし成果物は**拒否**。モデルがJSONをMarkdownコード枠に包み、厳密JSON契約に違反した。私有証拠は拒否状態で保存し、再実行・自動補正・成果取込みは行っていない。診断用のメモリ上コピーからコード枠だけを除くと既存validatorを通過し、拒否箇所を切り分けたが、元証拠は変更していない。内容は欠落原価をnullのまま扱い、根拠のない利益を算出しなかった。これは品質採用承認ではない。
+
+結果usageはinput 2、cache creation 4250、cache read 535、output 1484 tokens。rate limitはallowed、isUsingOverage false、overageStatus rejected。公式UIのセッション使用表示は0%→1%、週間4%→4%、Extra OFF。UIは丸め値であり、この差分だけで厳密な消費量を算定しない。Pro枠を消費したオンライン試験であり、ゼロ消費の試験ではない。
+
+Agent側の同期境界ではstartup markerだけで委譲を通していたため、親がstartup成功応答とinitの双方を検証した後に限り `parent-audit.json` を排他的に作成する。記録はsessionとpolicy全体hash（packet・担当・期限を含む）に結合する。PreToolUse `tool` modeはこの私有記録の形式・所有者・権限・単一リンク・session/policy一致を、担当用token消費前に検証する。欠落・別session/policy・改変・symlink/hardlinkは同期拒否。baselineはこの記録を発行せず、deny modeを維持する。
+
+記録は私有証拠に保存し、委譲replayでも必須とする。stdout観測が遅れて記録がまだなければ、ツール要求は失敗として拒否する。待機や再試行で許可へ変換しない。この差分の独立レビューと別途の実機検証まで、Agentの成立・故障時拒否・本番適用は未確認。

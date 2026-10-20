@@ -60,7 +60,7 @@ export function checkEvent(event,policy){
 
 const ownerOk=st=>typeof process.getuid!=='function'||st.uid===process.getuid();
 // Reads only the policy path given as the argument (never paths from the hook input).
-export function readPolicyFile(policyPath,now=Date.now()){
+function readPrivateJson(policyPath){
   if(typeof policyPath!=='string'||!isAbsolute(policyPath)||normalize(policyPath)!==policyPath)deny('policyパス');
   const dir=dirname(policyPath);
   let dst,st,fd;
@@ -80,7 +80,24 @@ export function readPolicyFile(policyPath,now=Date.now()){
   finally{if(fd!==undefined)closeSync(fd);}
   let parsed;
   try{parsed=JSON.parse(text);}catch{deny('policy形式');}
-  return {dir,policy:checkPolicy(parsed,now)};
+  return {dir,value:parsed};
+}
+
+export function readPolicyFile(policyPath,now=Date.now()){
+  const {dir,value}=readPrivateJson(policyPath);
+  return {dir,policy:checkPolicy(value,now)};
+}
+// Written only by the parent after both early audits; the tool hook never creates this receipt.
+export function parentAuditRecord(policyPath){
+  const {value}=readPrivateJson(policyPath);
+  return {version:1,stage:'startup_init_audited',session_id:value.session_id,
+    policy_sha256:createHash('sha256').update(canonicalJson(value)).digest('hex')};
+}
+export function verifyParentAudit(policyPath,session){
+  const expected=parentAuditRecord(policyPath);
+  const {value}=readPrivateJson(join(dirname(policyPath),'parent-audit.json'));
+  if(expected.session_id!==session||canonicalJson(value)!==canonicalJson(expected))deny('親startup/init監査証拠');
+  return true;
 }
 
 // One-shot marker: created exclusively before deferring. Empty file; no input, prompt or output is recorded.
@@ -106,6 +123,7 @@ export function decide(argv,stdinText,now=Date.now()){
   if(argv[1]==='deny')deny('親単独のツール禁止');
   checkEvent(event,policy);
   if(argv[1]==='tool'&&(!existsSync(join(dir,'started.json'))||typeof event.tool_use_id!=='string'||!event.tool_use_id))deny('startup証拠/ツールID');
+  if(argv[1]==='tool')verifyParentAudit(argv[0],policy.session_id);
   claimOnce(dir);
   if(argv[1]==='tool')writeFileSync(join(dir,'tool.json'),JSON.stringify({stage:'tool',session_id:policy.session_id,
     tool_use_id:event.tool_use_id,tool_name:event.tool_name,

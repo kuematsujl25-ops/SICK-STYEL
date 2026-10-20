@@ -1,13 +1,13 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,writeFileSync,rmSync,existsSync,readFileSync} from 'node:fs';
+import {mkdtempSync,writeFileSync,rmSync,existsSync,readFileSync,chmodSync,symlinkSync,linkSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {EventEmitter} from 'node:events';
 import {PassThrough} from 'node:stream';
 import {hash,PROFILE,verifyApproval,runtimeArgs,runtimeSettings,settingsSnapshot,executeGuarded,verifyGuardEvidence,BUILTIN_PLUGINS,verifyEffectivePlugins} from '../scripts/ai-staff/delegate-runtime.js';
-import {decide} from '../scripts/ai-staff/delegate-guard.js';
+import {decide,parentAuditRecord} from '../scripts/ai-staff/delegate-guard.js';
 import {parseRunArgs} from '../scripts/ai-staff/delegate.js';
 import {FIXTURES,fixtureInput} from '../scripts/ai-staff/eval-fixtures.js';
 import {createJob,taskPacket} from '../lib/ai-team.js';
@@ -63,6 +63,9 @@ test('実ガード: startupなしは拒否、startup/一回token/入力hashの�
     assert.throws(()=>decide([policy,'tool'],JSON.stringify(tool)));assert.ok(!existsSync(join(dir,'used')));
     assert.deepEqual(decide([policy,'startup'],JSON.stringify(startup)),{});
     assert.throws(()=>decide([policy,'startup'],JSON.stringify(startup)));
+    assert.throws(()=>decide([policy,'tool'],JSON.stringify(tool)));
+    assert.ok(!existsSync(join(dir,'used')));assert.ok(!existsSync(join(dir,'tool.json')));
+    writeFileSync(join(dir,'parent-audit.json'),JSON.stringify(parentAuditRecord(policy)),{mode:0o600});
     assert.deepEqual(decide([policy,'tool'],JSON.stringify(tool)),{});
     assert.throws(()=>decide([policy,'tool'],JSON.stringify(tool)));
     const rows=[{type:'system',subtype:'hook_response',hook_event:'SessionStart',exit_code:0,outcome:'success'},
@@ -136,4 +139,57 @@ test('stdin後にだけイベントを出すプロセスで成立、欠落/異�
   }
   const init={claude_code_version:'2.1.296',mcp_servers:[],plugins:BUILTIN_PLUGINS.map(name=>({name,path:'builtin',source:`${name}@builtin`}))};
   assert.equal(verifyEffectivePlugins(init).discord_process_absence,'not_established');
+});
+
+
+test('Agent同期ガードは親監査の欠落・別session/policy・不正形式/権限/linkをtoken消費前に拒否',()=>{
+  for(const kind of ['missing','session','policy','stage','extra','invalid','permissions','symlink','hardlink']){
+    const {dir,policy}=setup(),audit=join(dir,'parent-audit.json');
+    try{
+      decide([policy,'startup'],JSON.stringify(startup));
+      const receipt=parentAuditRecord(policy);
+      if(kind==='session')receipt.session_id=randomUUID();
+      if(kind==='policy')receipt.policy_sha256=hash('different packet');
+      if(kind==='stage')receipt.stage='startup';
+      if(kind==='extra')receipt.extra=true;
+      if(kind!=='missing')writeFileSync(audit,kind==='invalid'?'null':JSON.stringify(receipt),{mode:0o600});
+      if(kind==='permissions')chmodSync(audit,0o644);
+      if(['symlink','hardlink'].includes(kind)){
+        const target=join(dir,'other.json');writeFileSync(target,JSON.stringify(receipt),{mode:0o600});rmSync(audit);
+        (kind==='symlink'?symlinkSync:linkSync)(target,audit);
+      }
+      assert.throws(()=>decide([policy,'tool'],JSON.stringify(tool)),kind);
+      assert.ok(!existsSync(join(dir,'used')),kind);assert.ok(!existsSync(join(dir,'tool.json')),kind);
+    }finally{rmSync(dir,{recursive:true,force:true})}
+  }
+});
+
+test('親監査receiptは両イベントの検証後だけ発行し、発行前のAgentを同期拒否する',async()=>{
+  for(const order of ['startup-first','init-first','bad-init','missing-startup']){
+    const {dir,policy}=setup();
+    const spawnProcess=()=>{
+      const p=new EventEmitter();p.stdout=new PassThrough();p.stderr=new PassThrough();p.stdin=new PassThrough();
+      p.kill=()=>queueMicrotask(()=>p.emit('close',null,'SIGKILL'));
+      p.stdin.on('finish',()=>queueMicrotask(()=>{
+        const emit=m=>p.stdout.write(JSON.stringify({...m,session_id:session})+'\n');
+        const init={type:'system',subtype:'init',tools:order==='bad-init'?['Bash']:['Agent'],model,permissionMode:'dontAsk',apiKeySource:'none',mcp_servers:[]};
+        decide([policy,'startup'],JSON.stringify(startup));
+        assert.throws(()=>decide([policy,'tool'],JSON.stringify(tool)));
+        if(order==='init-first')emit(init);
+        if(order!=='missing-startup'){
+          emit({type:'system',subtype:'hook_started',hook_event:'SessionStart',hook_id:'h1'});
+          assert.throws(()=>decide([policy,'tool'],JSON.stringify(tool)));
+          emit({type:'system',subtype:'hook_response',hook_event:'SessionStart',hook_id:'h1',exit_code:0,outcome:'success'});
+        }
+        if(order!=='init-first')emit(init);
+        if(['startup-first','init-first'].includes(order))assert.deepEqual(decide([policy,'tool'],JSON.stringify(tool)),{});
+        else {assert.throws(()=>decide([policy,'tool'],JSON.stringify(tool)));assert.ok(!existsSync(join(dir,'used')));}
+        p.emit('close',0,null);
+      }));return p;
+    };
+    try{
+      const run=executeGuarded({args:[],cwd:dir,env:{},prompt:'synthetic',session,dir,spawnProcess,model,mode:'delegated',timeout:100});
+      if(['startup-first','init-first'].includes(order))await run;else await assert.rejects(run);
+    }finally{rmSync(dir,{recursive:true,force:true})}
+  }
 });

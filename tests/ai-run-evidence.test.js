@@ -111,10 +111,11 @@ test('私有証拠: cleanup後もraw/marker/承認を再監査でき、改変・
 });
 
 test('委譲の私有証拠: 元作業dir削除後も実ガードmarkerと非同期全文を再照合、used/tool欠落を拒否',async()=>{
- const f=await import('./helpers/async-run.js'),{decide}=await import('../scripts/ai-staff/delegate-guard.js');
+ const f=await import('./helpers/async-run.js'),{decide,parentAuditRecord}=await import('../scripts/ai-staff/delegate-guard.js');
  const root=mkdtempSync(join(tmpdir(),'ss-delegated-evidence-')),work=join(root,'work');mkdirSync(work,{mode:0o700});
  const policy=join(work,'policy.json');writeFileSync(policy,JSON.stringify({version:1,session_id:f.session,delegate:f.delegate,packet:f.packet,expires_at:new Date(Date.now()+60000).toISOString()}),{mode:0o600});
  decide([policy,'startup'],JSON.stringify({hook_event_name:'SessionStart',source:'startup',session_id:f.session}));
+ writeFileSync(join(work,'parent-audit.json'),JSON.stringify(parentAuditRecord(policy)),{mode:0o600});
  decide([policy,'tool'],JSON.stringify({hook_event_name:'PreToolUse',tool_name:'Agent',tool_use_id:f.tool,tool_input:f.input,session_id:f.session}));
  const rows=f.fixture();rows.splice(4,0,
   {session_id:f.session,uuid:randomUUID(),type:'system',subtype:'hook_started',hook_event:'PreToolUse',hook_id:'guard_tool',hook_name:'PreToolUse:Agent'},
@@ -124,7 +125,7 @@ test('委譲の私有証拠: 元作業dir削除後も実ガードmarkerと非同
   checked_at:new Date().toISOString(),subscription_confirmed:true,extra_usage_disabled:true,no_additional_charge_confirmed:true,usage_available:true,
   effective_policy_reviewed:true,no_other_hooks_or_plugins:true,no_remote_or_mdm_policy:true,quality_review_required:true};
  const files={'stdout.bytes':raw,'stdout.utf8.txt':text,'approval-token.used':'','approval.json':JSON.stringify(approval),'packet.json':JSON.stringify(f.packet),'inventory.json':'[]'};
- for(const n of ['policy.json','started.json','tool.json','used'])files[n]=readFileSync(join(work,n));
+ for(const n of ['policy.json','started.json','parent-audit.json','tool.json','used'])files[n]=readFileSync(join(work,n));
  const dir=createEvidenceDirectory(root);
  try{
   const proof=saveEvidence(dir,files,{audit_status:'accepted',mode:'delegated',session:f.session,delegate:f.delegate,model:f.model,source_sha256:source_hash,
@@ -132,7 +133,7 @@ test('委譲の私有証拠: 元作業dir削除後も実ガードmarkerと非同
   rmSync(work,{recursive:true,force:true});
   assert.deepEqual(replayRunEvidence(dir,proof.manifest_sha256).checked.output,f.output);
   assert.equal(replayRunEvidence(dir,proof.manifest_sha256).guardEvidence.one_shot,true);
-  for(const n of ['used','tool.json']){const old=readFileSync(join(dir,n));rmSync(join(dir,n));assert.throws(()=>replayRunEvidence(dir,proof.manifest_sha256));writeFileSync(join(dir,n),old,{mode:0o600});}
+  for(const n of ['used','tool.json','parent-audit.json']){const old=readFileSync(join(dir,n));rmSync(join(dir,n));assert.throws(()=>replayRunEvidence(dir,proof.manifest_sha256));writeFileSync(join(dir,n),old,{mode:0o600});}
  }finally{rmSync(root,{recursive:true,force:true})}
 });
 

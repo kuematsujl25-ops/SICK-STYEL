@@ -12,6 +12,7 @@ import {collectApplicability,readApplicabilityContext,applicabilityPaths,HEADLES
 import {Utf8Capture,bytesHash} from './utf8-capture.js';
 import {sessionPluginBinding,verifySessionPluginConsent,SESSION_PLUGIN_PROFILE} from './session-plugin-binding.js';
 import {readSessionPluginInventory,verifyPolicyObservation} from './session-plugin-inventory.js';
+import {parentAuditRecord,verifyParentAudit} from './delegate-guard.js';
 import {validateComparisonBaseline} from './transcript-baseline.js';
 import {TeamError} from '../../lib/ai-team.js';
 import {checkSubscription} from './cli.js';
@@ -116,7 +117,7 @@ export function verifyEffectivePlugins(init){
 // not a pre-model boundary. Synchronous deny-only PreToolUse hooks enforce tool restrictions.
 export function executeGuarded({args,cwd,env,prompt,session,dir,spawnProcess=spawn,model=null,mode='delegated',timeout=LIMITS.timeout_ms,requirePluginInit=false,executable='claude'}){
   return new Promise((resolveResult,reject)=>{
-    let pending='',released=false,stopped=false,calls=0,startId=null,startReady=false,initReady=false;
+    let pending='',released=false,stopped=false,calls=0,startId=null,startReady=false,initReady=false,parentAudited=false;
     const stdoutCapture=new Utf8Capture(LIMITS.max_transcript_bytes),stderrCapture=new Utf8Capture(100000);
     const child=spawnProcess(executable,args,{cwd,env,detached:true,stdio:['pipe','pipe','pipe']});
     const stop=()=>{stopped=true;try{if(child.pid)process.kill(-child.pid,'SIGKILL');else child.kill('SIGKILL')}catch{child.kill('SIGKILL')}};
@@ -151,7 +152,13 @@ export function executeGuarded({args,cwd,env,prompt,session,dir,spawnProcess=spa
         for(const c of Array.isArray(m.message?.content)?m.message.content:[])
           if(!c||typeof c!=='object'||c.type==='tool_use'&&(mode==='baseline'||m.parent_tool_use_id||!isDelegationTool(c.name)||++calls>1))stop();
         if(m.type==='result'&&(m.is_error||m.permission_denials?.length))stop();
-        if(!stopped&&ready())clearTimeout(startTimer);
+        if(!stopped&&ready()){
+          clearTimeout(startTimer);
+          if(mode==='delegated'&&!parentAudited){
+            try{writeFileSync(join(dir,'parent-audit.json'),JSON.stringify(parentAuditRecord(join(dir,'policy.json'))),{mode:0o600,flag:'wx'});parentAudited=true}
+            catch{stop()}
+          }
+        }
       }
     });
     child.stderr.on('data',buf=>{try{stderrCapture.write(buf);}catch{stop();return}if(buf.some(b=>![9,10,13,32].includes(b)))stop()});
@@ -179,6 +186,7 @@ export function verifyGuardEvidence(stdout,dir,session,mode='delegated'){
     return {startup:true,no_tools:true,quality_approved:false};
   }
   if(mode!=='delegated'||calls.length!==1)fail();
+  verifyParentAudit(join(dir,'policy.json'),session);
   const receipt=JSON.parse(privateFile(join(dir,'tool.json')));
   if(receipt.session_id!==session||receipt.stage!=='tool'||receipt.tool_use_id!==calls[0].id||
     receipt.tool_name!==calls[0].name||receipt.input_sha256!==hash(calls[0].input)||!existsSync(join(dir,'used')))fail();
@@ -251,7 +259,7 @@ export async function runDelegated({root,packet,delegate,model,approvalPath,mode
       if(launchEvidence)files['launch-applicability.json']=JSON.stringify(launchEvidence);
       if(finalInventory)files['final-inventory.json']=JSON.stringify(finalInventory);
     }
-    for(const name of ['policy.json','settings.json','started.json','used','tool.json'])
+    for(const name of ['policy.json','settings.json','started.json','parent-audit.json','used','tool.json'])
       if(existsSync(join(dir,name)))files[name]=readFileSync(join(dir,name));
     let streams=null;
     if(capture){streams={};for(const name of ['stdout','stderr']){
