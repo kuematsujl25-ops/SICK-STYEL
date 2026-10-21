@@ -58,6 +58,11 @@ test('preview is default and needs no terminal or auth',()=>{const r=spawnSync(p
 test('apply refuses noninteractive invocation before reading credentials',()=>{const r=spawnSync(process.execPath,['scripts/set-secrets.js','amazon','--apply'],{encoding:'utf8'});assert.notEqual(r.status,0);assert.match(r.stderr,/ターミナル/)});
 test('ambiguous flags cannot mutate secrets',()=>{const r=spawnSync(process.execPath,['scripts/set-secrets.js','amazon','--plan','--apply'],{encoding:'utf8'});assert.notEqual(r.status,0)});
 test('unsafe callback origin is rejected',()=>assert.throws(()=>registrationPlan({...config,vars:{APP_ORIGIN:'http://localhost:3000'}},'instagram')));
+test('Zoom/Googleカレンダーの登録計画はコールバックURLと秘密値なしを示す',()=>{
+ const z=registrationPlan({...config,vars:{...config.vars,ZOOM_CLIENT_SECRET:'must-not-appear'}},'zoom');
+ assert.equal(z.appliesChanges,false);assert.equal(JSON.stringify(z).includes('must-not-appear'),false);assert.match(z.callback,/\/api\/zoom\/callback$/);assert.deepEqual(z.requiredNames,['ZOOM_CLIENT_ID','ZOOM_CLIENT_SECRET']);
+ const g=registrationPlan(config,'googlecalendar');assert.match(g.callback,/\/api\/googlecalendar\/callback$/);assert.deepEqual(g.requiredNames,['GOOGLE_CLIENT_ID','GOOGLE_CLIENT_SECRET']);
+});
 
 test('Instagram profile without any Insights is not a verified sync',async t=>{const {store,env}=await fixture(t);await withRuntime({...env,INSTAGRAM_APP_ID:'123456',INSTAGRAM_APP_SECRET:'fixture-only'},async()=>{
  await store.put('instagram-private',{id:'123456',encrypted:encrypt({access:'fixture-access'}),expiresAt:Date.now()+30*86400000,issuedAt:Date.now(),granted:[]});
