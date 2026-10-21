@@ -19,7 +19,7 @@ test('Google Calendar OAuth: オフラインアクセス必須・state固定・�
    if(body.get('grant_type')==='refresh_token')return Response.json({access_token:'fresh-access-secret'});
    return Response.json({error:'invalid_grant'},{status:400});
   }
-  if(u.hostname==='www.googleapis.com'&&u.pathname==='/oauth2/v3/userinfo')return Response.json({email:'owner@example.com'});
+  if(u.hostname==='www.googleapis.com'&&u.pathname==='/oauth2/v3/userinfo')return Response.json({error:{code:403,message:'insufficient authentication scopes'}},{status:403});
   if(u.pathname==='/calendar/v3/calendars/primary/events'&&options.method==='POST')return Response.json({id:'evt123',htmlLink:'https://calendar.google.com/event?eid=evt123'});
   if(u.pathname==='/calendar/v3/calendars/primary/events/evt123'&&options.method==='PATCH')return new Response(null,{status:204});
   if(u.pathname==='/calendar/v3/calendars/primary/events/evt123'&&options.method==='DELETE')return new Response(null,{status:204});
@@ -34,7 +34,7 @@ test('Google Calendar OAuth: オフラインアクセス必須・state固定・�
  const priv=JSON.parse((await store.doc('googlecalendar-private')).body);
  assert.equal(JSON.stringify(priv).includes('refresh-secret'),false);
  assert.equal(decrypt(priv.encrypted).refresh,'refresh-secret');
- const status=await safeStatus(store);assert.equal(status.connected,true);assert.equal(status.email,'owner@example.com');
+ const status=await safeStatus(store);assert.equal(status.connected,true);assert.equal(status.email,null,'カレンダー予定権限のみでプロフィール情報は取得しない');
  const event=await createEvent(store,{summary:'SICKSTYLE｜初回ZOOM｜FC Example',description:'desc',location:'https://zoom.us/j/1',startIso:'2026-10-28T05:00:00.000Z',endIso:'2026-10-28T05:45:00.000Z',attendees:[]});
  assert.equal(event.eventId,'evt123');
  await updateEvent(store,'evt123',{summary:'変更後',description:'d',location:'',startIso:'2026-10-29T05:00:00.000Z',endIso:'2026-10-29T05:45:00.000Z'});
@@ -57,7 +57,7 @@ test('Googleのエラー応答を401/403/429のヒント付きで分類する',a
  t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
  global.fetch=async(url,options)=>{const u=new URL(url);
   if(u.pathname==='/token')return Response.json({access_token:'a',refresh_token:'r'});
-  if(u.pathname==='/oauth2/v3/userinfo')return Response.json({email:'o@example.com'});
+  if(u.pathname==='/oauth2/v3/userinfo')return Response.json({error:{code:403,message:'insufficient authentication scopes'}},{status:403});
   if(u.pathname==='/calendar/v3/calendars/primary/events'&&options.method==='POST')return Response.json({error:{code:403,message:'Forbidden'}},{status:403});
   return new Response(null,{status:404});
  };
