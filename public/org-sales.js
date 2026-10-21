@@ -3,10 +3,13 @@
 export const ORG_STAGES=['DM送信','初回ZOOM予約','初回ZOOM実施','サンプル発送','到着確認','試用確認','活用法提案ZOOM予約','活用法提案ZOOM実施','有償導入','継続購入'];
 export const ORG_SIDE_STAGES=['返信待ち','保留','失注','連絡不要'];
 export const ORG_ALL_STAGES=[...ORG_STAGES,...ORG_SIDE_STAGES];
+export const ORG_PHASES=[['DM','DM送信'],['ZOOM','初回ZOOM予約','初回ZOOM実施'],['サンプル','サンプル発送','到着確認'],['試用','試用確認'],['活用法提案ZOOM','活用法提案ZOOM予約','活用法提案ZOOM実施'],['導入','有償導入','継続購入']];
+import {googleCalendarDraft} from './meeting-links.js';
 export const ORG_STAFF=['入戸野','竹田','植松'];
 
 export const newOrg=()=>({category:'',size:'',assignee:'',contact:'',stage:'DM送信',
  sampleQty:null,sampleCost:null,shippingCost:null,trialUsers:null,feedback:'',proposal:'',
+ initialZoomAt:'',initialZoomUrl:'',proposalZoomAt:'',proposalZoomUrl:'',
  paidQty:null,paidRevenue:null,paidCost:null,lostReason:'',nextAction:'',nextDue:'',notes:'',history:[]});
 
 function fmtN(v){return v===null||v===undefined?'未入力':Number(v).toLocaleString('ja-JP');}
@@ -14,14 +17,16 @@ function stageDate(history,stage){const h=[...history].reverse().find(x=>x.stage
 
 function orgRow(o,esc,today){
  const late=o.nextDue&&o.nextDue<today&&!['失注','継続購入'].includes(o.stage);
- return `<div class="listrow" data-search="${esc([o.name,o.category,o.assignee,o.stage,o.nextAction].join(' ').toLowerCase())}"><div class="grow"><b>${esc(o.name)}</b><small>${esc(o.category||'未入力')} · 担当${esc(o.assignee||'未設定')}${o.nextAction?' · 次: '+esc(o.nextAction)+(o.nextDue?'（'+esc(o.nextDue)+'）':''):''}${late?' · 期限超過':''}</small></div><span class="badge ${ORG_SIDE_STAGES.includes(o.stage)?'warn':'ok'}">${esc(o.stage)}</span><button data-editorg="${esc(o.id)}">編集</button></div>`;
+ const stageIndex=ORG_PHASES.findIndex(([, ...stages])=>stages.includes(o.stage));
+ const step=stageIndex<0?o.stage:ORG_PHASES[stageIndex][0];
+ return `<div class="listrow" data-search="${esc([o.name,o.category,o.assignee,o.stage,o.nextAction].join(' ').toLowerCase())}"><div class="grow"><b>${esc(o.name)}</b><small>${esc(o.category||'未入力')} · 担当${esc(o.assignee||'未設定')}${o.nextAction?' · 次: '+esc(o.nextAction)+(o.nextDue?'（'+esc(o.nextDue)+'）':''):''}${late?' · 期限超過':''}</small><small>営業フェーズ: ${esc(step)}</small></div><span class="badge ${ORG_SIDE_STAGES.includes(o.stage)?'warn':'ok'}">${esc(o.stage)}</span><button data-editorg="${esc(o.id)}">編集</button></div>`;
 }
 
 export function renderOrgList(orgs,ui,esc,today){
  const active=orgs.filter(x=>!x.deletedAt);
  const filtered=active.filter(x=>(ui.stage==='all'||x.stage===ui.stage)&&(ui.assignee==='all'||x.assignee===ui.assignee));
  const sorted=[...filtered].sort((a,b)=>(b.updatedAt||'').localeCompare(a.updatedAt||''));
- return `<section class="panel"><div class="panelhead"><h2>団体一覧 <small id="orgcount">${sorted.length} / ${active.length} 件</small></h2><button class="primary" data-neworg>＋ 団体を追加</button></div>
+ return `<section class="panel"><h2>団体営業の進行フロー</h2><div class="orgpipeline" aria-label="DMから有償導入まで">${ORG_PHASES.map(([name],i)=>`<span class="orgphase">${i+1}. ${name}</span>`).join('<span class="orgarrow" aria-hidden="true">→</span>')}</div><p class="note">DM → 初回ZOOM → サンプル → 試してもらう → 活用法提案ZOOM → 有償導入。各段階の予約・実施・到着確認の詳細履歴は維持します。ZOOMはオンラインMTG、導入は有償購入のみを指します。</p></section><section class="panel"><div class="panelhead"><h2>団体一覧 <small id="orgcount">${sorted.length} / ${active.length} 件</small></h2><button class="primary" data-neworg>＋ 団体を追加</button></div>
  <div class="formfields"><label>段階<select id="orgstagefilter"><option value="all" ${ui.stage==='all'?'selected':''}>すべて</option>${ORG_ALL_STAGES.map(s=>`<option value="${s}" ${ui.stage===s?'selected':''}>${s}</option>`).join('')}</select></label><label>担当<select id="orgassigneefilter"><option value="all" ${ui.assignee==='all'?'selected':''}>全員</option>${ORG_STAFF.map(s=>`<option value="${s}" ${ui.assignee===s?'selected':''}>${s}</option>`).join('')}</select></label><label>検索<input id="orgsearch" value="${esc(ui.q||'')}" placeholder="団体名・次の行動など"></label></div>
  ${sorted.length?`<div class="records">${sorted.map(o=>orgRow(o,esc,today)).join('')}</div>`:'<div class="empty"><div aria-hidden="true">＋</div><b>団体はまだ登録されていません。</b><p>団体を追加できます。</p></div>'}</section>`;
 }
@@ -86,6 +91,14 @@ export function renderOrgEditor(org,esc,today){
  <label>連絡先<input name="contact" maxlength="500" value="${esc(o.contact)}"></label>
  <label>現在の段階<select name="stage">${ORG_ALL_STAGES.map(s=>`<option value="${s}" ${o.stage===s?'selected':''}>${s}</option>`).join('')}</select></label>
  <label>段階変更のメモ（履歴に残ります）<input name="stageNote" maxlength="500" placeholder="例: 電話で合意"></label>
+ <div class="orgmeeting"><h3>Googleカレンダー・ZOOM商談</h3><p class="note">現在は予定をアプリに保存し、Googleカレンダーの予定作成画面に事前入力する方式です。Zoom会議の自動発行・予定の自動保存はまだ接続していません。既存のZOOM招待URLがあれば入力できます。</p>
+ <label>初回ZOOM開始予定（日本時間）<input name="initialZoomAt" type="datetime-local" value="${esc(o.initialZoomAt||'')}"></label>
+ <label>初回ZOOM参加URL（任意・発行済みのみ）<input name="initialZoomUrl" type="url" maxlength="2000" placeholder="https://..." value="${esc(o.initialZoomUrl||'')}"></label>
+ ${googleCalendarDraft(o,'intro')?`<a class="secondary" href="${esc(googleCalendarDraft(o,'intro'))}" target="_blank" rel="noopener noreferrer">初回ZOOMの予定をGoogleカレンダーへ追加（手動で保存） ↗</a>`:''}
+ <label>活用法提案ZOOM開始予定（日本時間）<input name="proposalZoomAt" type="datetime-local" value="${esc(o.proposalZoomAt||'')}"></label>
+ <label>活用法提案ZOOM参加URL（任意・発行済みのみ）<input name="proposalZoomUrl" type="url" maxlength="2000" placeholder="https://..." value="${esc(o.proposalZoomUrl||'')}"></label>
+ ${googleCalendarDraft(o,'proposal')?`<a class="secondary" href="${esc(googleCalendarDraft(o,'proposal'))}" target="_blank" rel="noopener noreferrer">提案ZOOMの予定をGoogleカレンダーへ追加（手動で保存） ↗</a>`:''}
+ <p class="note">日程を入力・保存後に再度編集を開くと、Googleカレンダーへ追加するリンクが表示されます。参加者への招待や送信は手動で確認してください。</p></div>
  <label>サンプル数量<input name="sampleQty" type="number" min="0" step="1" value="${o.sampleQty??''}"></label>
  <label>サンプル原価（円）<input name="sampleCost" type="number" min="0" step="1" value="${o.sampleCost??''}"></label>
  <label>送料（円）<input name="shippingCost" type="number" min="0" step="1" value="${o.shippingCost??''}"></label>
