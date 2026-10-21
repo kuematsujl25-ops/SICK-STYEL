@@ -16,6 +16,7 @@ let experimentUI={status:'all'};
 import {renderAccounts,accountFields,PLATFORMS as ACCOUNT_PLATFORMS} from './accounts.js';
 let accountUI={platform:'all'};
 import {renderPlayers,playerFields,LEAGUES as PLAYER_LEAGUES,TIERS as PLAYER_TIERS} from './players.js';
+import {RESEARCHED_PLAYERS,toCandidate} from './player-research.js';
 let playerUI={league:'all',tier:'all'};
 // SICKSTYLE 管理アプリ（単一管理者）。業務データはサーバーDBに保存し、ブラウザーには保存しません。
 const app=document.querySelector('#app');
@@ -183,6 +184,12 @@ function bind(){if(section==='team')bindTeam({model:team,api,setModel:v=>team=v,
  for(const id of ['#refresh','#mrefresh'])document.querySelector(id).onclick=refresh;for(const id of ['#logout','#mlogout'])document.querySelector(id).onclick=logout;
  document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=async e=>{e.preventDefault();section=b.dataset.nav;if(section==='team')try{team=await api('ai-team');}catch(x){toast(x.message);}if(section==='site'&&!site)try{site=await api('site');}catch(x){toast(x.message);}render();window.scrollTo(0,0);});
  document.querySelectorAll('[data-new]').forEach(b=>b.onclick=()=>editor(b.dataset.new));
+ document.querySelectorAll('[data-addresearch]').forEach(b=>b.onclick=async()=>{
+   const p=RESEARCHED_PLAYERS.find(x=>x.key===b.dataset.addresearch);
+   if(!p||state.playerCandidates.some(x=>x.name===p.name&&x.period===p.period)){toast('候補はすでに登録されています');return;}
+   try{await persist({...state,playerCandidates:[...state.playerCandidates,{...toCandidate(p),id:crypto.randomUUID()}]});}
+   catch(e){toast(e.message);}
+ });
  document.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>{const [key,id]=b.dataset.edit.split(':');editor(key,state[key].find(r=>r.id===id));});
  document.querySelectorAll('[data-check]').forEach(b=>b.onchange=async()=>{const n=structuredClone(state);n.tasks.find(x=>x.id===b.dataset.check).done=b.checked;try{await persist(n);}catch(e){toast(e.message);render();}});
  const csv=document.querySelector('#csvopen');if(csv)csv.onclick=csvDialog;
