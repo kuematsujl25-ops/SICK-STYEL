@@ -23,18 +23,34 @@ test('管理者登録・認証・業務データ保存・復元・永続化', as
  d.tasks.push({id:'t1',title:'新作を撮影',due:'2026-10-16',priority:'高',done:false,notes:'自然光'});
  d.shipments.push({id:'s1',title:'Tシャツ',order:'001',recipient:'テスト',due:'2026-10-17',carrier:'ヤマト',tracking:'123456',status:'未発送'});
  d.metrics.push({id:'m1',date:'2026-10-16',sales:10000,orders:2,followers:100,reach:500,engagement:20});
- d.staffTasks.push({id:'st1',title:'サンプル発送の確認',assignee:'竹田',due:'2026-10-18',priority:'高',status:'進行中',relatedOrg:'テスト団体',relatedPlayer:'',relatedPost:'',nextAction:'発送業者に確認',notes:'',updatedAt:'2026-10-16T00:00:00.000Z'});
+ d.staffTasks.push({id:'st1',title:'サンプル発送の確認',assignee:'竹田',due:'2026-10-18',priority:'高',status:'進行中',relatedOrg:'テスト団体',relatedPlayer:'',relatedPost:'',nextAction:'発送業者に確認',notes:'',updatedAt:'2026-10-16T00:00:00.000Z',deletedAt:null});
+ d.orgSales.push({id:'o1',name:'テストFCサッカー部',category:'サッカー',size:'20名',assignee:'竹田',contact:'coach@example.com',stage:'サンプル発送',sampleQty:3,sampleCost:1500,shippingCost:500,trialUsers:null,feedback:'',proposal:'',paidQty:null,paidRevenue:null,paidCost:null,lostReason:'',nextAction:'到着確認の連絡',nextDue:'2026-10-20',notes:'',updatedAt:'2026-10-16T00:00:00.000Z',deletedAt:null,history:[{stage:'DM送信',at:'2026-10-14T00:00:00.000Z',note:''},{stage:'サンプル発送',at:'2026-10-16T00:00:00.000Z',note:'3着発送'}]});
+ d.collectionTasks.push({id:'ct1',title:'SKU別販売個数',category:'商品・利益',purpose:'売れ筋判断',source:'注文データ',frequency:'月次',assignee:'入戸野',due:'',period:'2026年10月',status:'未収集',value:'',notes:'',updatedAt:'2026-10-16T00:00:00.000Z'});
  d.brand.Mission='スタイルを届ける';
  assert.equal((await req('data','PUT',d)).status,200);d.revision=1;assert.deepEqual((await req('data')).data,d);cookie=secondCookie;assert.equal((await req('data')).data.tasks[0].title,'新作を撮影');cookie=primaryCookie;
  const badAssignee=structuredClone(d);badAssignee.staffTasks[0].assignee='権限外担当';assert.equal((await req('data','PUT',badAssignee)).status,400);
+ const badStage=structuredClone(d);badStage.orgSales[0].stage='謎の段階';assert.equal((await req('data','PUT',badStage)).status,400);
+ const badCategory=structuredClone(d);badCategory.collectionTasks[0].category='謎';assert.equal((await req('data','PUT',badCategory)).status,400);
  assert.equal((await req('data','PUT',d,{Origin:'https://evil.example'})).status,403);
  const invalid=structuredClone(d);invalid.metrics[0].sales=-1;assert.equal((await req('data','PUT',invalid)).status,400);
  const malformed=structuredClone(d);malformed.tasks[0].due='2026-02-31';assert.equal((await req('data','PUT',malformed)).status,400);
  const duplicate=structuredClone(d);duplicate.metrics.push({...duplicate.metrics[0],id:'m2'});assert.equal((await req('data','PUT',duplicate)).status,400);
  const backup=(await req('backup')).data;assert.equal(backup.version,1);assert.equal(backup.data.brand.Mission,'スタイルを届ける');assert.equal(JSON.stringify(backup).includes('Test-password'),false);
+ assert.equal(backup.data.staffTasks.length,1);assert.equal(backup.data.orgSales.length,1);assert.equal(backup.data.collectionTasks.length,1);
  const stale=structuredClone(d);stale.revision=0;assert.equal((await req('data','PUT',stale)).status,409);
- d.tasks[0].done=true;assert.equal((await req('data','PUT',d)).status,200);assert.equal((await req('restore','POST',{version:0,data:d,revision:2})).status,400);assert.equal((await req('restore','POST',{...backup,revision:2})).status,200);assert.equal((await req('data')).data.tasks[0].done,false);
- await stop();await start();assert.equal((await req('data')).data.shipments[0].tracking,'123456');
+ d.tasks[0].done=true;assert.equal((await req('data','PUT',d)).status,200);assert.equal((await req('restore','POST',{version:0,data:d,revision:2})).status,400);assert.equal((await req('restore','POST',{...backup,revision:2})).status,200);
+ const restored=(await req('data')).data;assert.equal(restored.tasks[0].done,false);assert.equal(restored.staffTasks.length,1);assert.equal(restored.orgSales[0].name,'テストFCサッカー部');assert.equal(restored.collectionTasks[0].title,'SKU別販売個数');
+ // 論理削除（ゴミ箱）→復元が、保存・再読込を経て維持されることを確認する。
+ const withDeleted=structuredClone(restored);withDeleted.staffTasks[0].deletedAt='2026-10-19T00:00:00.000Z';const delSave=await req('data','PUT',withDeleted);assert.equal(delSave.status,200);withDeleted.revision=delSave.data.revision;
+ assert.equal((await req('data')).data.staffTasks[0].deletedAt,'2026-10-19T00:00:00.000Z');
+ withDeleted.staffTasks[0].deletedAt=null;const unSave=await req('data','PUT',withDeleted);assert.equal(unSave.status,200);
+ assert.equal((await req('data')).data.staffTasks[0].deletedAt,null);
+ // 旧データ互換性: staffTasks/orgSales/collectionTasksを含まない（本機能追加前の）文書もPUTで受理され、GETで空配列が補われる。
+ const latest=(await req('data')).data;const oldShaped={goals:latest.goals,tasks:latest.tasks,shipments:latest.shipments,metrics:latest.metrics,brand:latest.brand,integrations:latest.integrations,revision:latest.revision};
+ const oldPut=await req('data','PUT',oldShaped);assert.equal(oldPut.status,200);
+ const afterOld=(await req('data')).data;assert.deepEqual(afterOld.staffTasks,[]);assert.deepEqual(afterOld.orgSales,[]);assert.deepEqual(afterOld.collectionTasks,[]);assert.equal(afterOld.tasks.length,1);
+ await stop();await start();assert.equal((await req('data')).data.shipments[0].tracking,'123456');assert.deepEqual((await req('data')).data.staffTasks,[]);
+ for(const p of ['/staff-tasks.js','/org-sales.js','/collection-tasks.js']){const r=await fetch(base+p);assert.equal(r.status,200,'GET '+p);assert.match(r.headers.get('content-type'),/javascript/,'Content-Type '+p);}
  assert.equal((await req('logout','POST',{})).status,200);assert.equal((await req('data')).status,401);assert.equal((await req('backup')).status,401);assert.equal((await req('instagram/status')).status,401);assert.equal((await req('amazon/status')).status,401);cookie=secondCookie;assert.equal((await req('data')).status,200);cookie='';
  assert.equal((await req('login','POST',{...creds,password:'wrong-password-123'})).status,401);const login=await req('login','POST',creds);assert.equal(login.status,200);cookie=login.cookie.split(';')[0];assert.equal((await req('session')).data.authenticated,true);
  const html=await fetch(base);assert.equal(html.status,200);assert.match(await html.text(),/lang="ja"/);assert.match(html.headers.get('content-security-policy'),/default-src 'self'/);
