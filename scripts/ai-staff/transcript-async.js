@@ -33,7 +33,7 @@ export function validateAsyncTranscript(rows,{delegate,model,packet,session_id,l
     check(obj(m)&&m.session_id===session_id&&uuid(m.uuid)&&!uuids.has(m.uuid),'session/重複イベント');
     uuids.add(m.uuid);
     const parent=m.parent_tool_use_id??null;
-    if(results.length)check(m.type==='result','結果後のイベント');
+    if(results.length)check(m.type==='result'||(results.length===1&&m.type==='system'&&m.subtype==='thinking_tokens'),'結果後のイベント');
     if(parent!==null)check(call&&task&&parent===call.id&&!updated&&!notified&&launch,'子の階層・順序');
     else check(!Object.hasOwn(m,'agent_id')&&!Object.hasOwn(m,'agent_type'),'親の子ID');
     if(m.type==='system'){
@@ -63,10 +63,11 @@ export function validateAsyncTranscript(rows,{delegate,model,packet,session_id,l
         epoch++;init??=m;continue;
       }
       if(m.subtype==='thinking_tokens'){
-        // Observed 2.1.296 continuation-only profile. Approximate progress, never billed usage.
+        // Fixed 2.1.296 emits progress from stream_event in either parent epoch.
+        // This metadata never advances task, hook, permission or completion state.
         // Optional user_message_uuid from other producers is deliberately unsupported here.
         check(keys(m,['type','subtype','estimated_tokens','estimated_tokens_delta','uuid','session_id'])&&
-          init&&epoch===1&&notified&&cleared&&parentText[1]===''&&
+          init&&(epoch===0||epoch===1)&&
           [...hooks.values()].every(h=>h.done),'thinking metadataの形・段階');
         check(Number.isSafeInteger(m.estimated_tokens)&&m.estimated_tokens>=0&&
           Number.isSafeInteger(m.estimated_tokens_delta)&&m.estimated_tokens_delta>=0&&

@@ -25,10 +25,43 @@ test('thinking metadataの未知field/型/値/session/重複/子帰属を拒否'
  const {rows,at}=withMetadata();rows[at+1].uuid=rows[at].uuid;assert.throws(()=>check(rows));
 });
 
-test('初期化前/初回turn/子動作中/最終本文後/result後は拒否し既存permission制御も維持',()=>{
- const rows=fixture();
- for(const at of [0,3,9,rows.findLastIndex(x=>x.subtype==='init'),rows.length-2,rows.length]){
-  const bad=fixture();bad.splice(at,0,event());assert.throws(()=>check(bad),'position '+at);
+test('両親epochのinit後から最終result前の各位置でmetadataは状態を変えない',()=>{
+ const base=fixture(),expected=check(base),firstInit=base.findIndex(x=>x.subtype==='init'),lastResult=base.findLastIndex(x=>x.type==='result');
+ for(let at=firstInit+1;at<=lastResult;at++){
+  const rows=fixture();rows.splice(at,0,event(),event(171,121),event(0,0));const actual=check(rows);
+  assert.deepEqual(actual.output,expected.output);assert.deepEqual(actual.result,expected.result);
+  assert.deepEqual(actual.audit,expected.audit);assert.deepEqual({...actual.counts,transcript_lines:expected.counts.transcript_lines},expected.counts,'position '+at);
  }
- const {rows:bad}=withMetadata();bad.at(-1).permission_denials=[{tool_name:'Bash'}];assert.throws(()=>check(bad));
+});
+
+test('初期化前/最終result後と未完hookの位置は拒否する',()=>{
+ const base=fixture(),firstInit=base.findIndex(x=>x.subtype==='init'),firstResult=base.findIndex(x=>x.type==='result');
+ for(const at of [...Array(firstInit+1).keys(),base.length]){
+  const rows=fixture();rows.splice(at,0,event());assert.throws(()=>check(rows),'position '+at);
+ }
+ const rows=fixture();rows.splice(4,0,{type:'system',subtype:'hook_started',hook_id:'pending',hook_name:'PreToolUse',hook_event:'PreToolUse',session_id:session,uuid:randomUUID()},event());assert.throws(()=>check(rows));
+});
+
+test('初回担当中でも不正metadataと子帰属を拒否しtool/permission/完了検証を維持',()=>{
+ for(const patch of [{parent_tool_use_id:'tool_fixture',agent_id:'task_fixture',subagent_type:delegate},
+  {parent_tool_use_id:null},{agent_id:'task_fixture'},{task_id:'task_fixture'},{tool_use_id:'tool_fixture'},
+  {permission:'allow'},{result:'completed'},{estimated_tokens:NaN},{estimated_tokens:Infinity},
+  {estimated_tokens_delta:null},{estimated_tokens_delta:Number.MAX_SAFE_INTEGER+1},{subtype:'unknown_system'}]){
+  const rows=fixture();rows.splice(8,0,{...event(),...patch});assert.throws(()=>check(rows));
+ }
+ for(const mutate of [rows=>rows.splice(rows.findIndex(x=>x.subtype==='task_notification'),1),
+  rows=>{rows.at(-1).permission_denials=[{tool_name:'Bash'}]},
+  rows=>{rows.find(x=>x.agent_id).message.content.push({type:'tool_use',name:'Bash',id:'bad',input:{}})},
+  rows=>{rows.find(x=>x.subtype==='task_updated').patch.status='failed'},
+  rows=>{rows.find(x=>x.subtype==='hook_response').exit_code=1}]){
+  const rows=fixture();rows.splice(8,0,event());mutate(rows);assert.throws(()=>check(rows));
+ }
+});
+
+test('result間に許すのは厳密thinkingだけで他のイベントや不正metadataは拒否',()=>{
+ for(const e of [{...event(),permission:'allow'},{...event(),parent_tool_use_id:'tool_fixture'},
+  {...event(),session_id:randomUUID()},{...event(),subtype:'task_notification'},
+  {type:'rate_limit_event',rate_limit_info:{status:'allowed',isUsingOverage:false,overageStatus:'rejected'},uuid:randomUUID(),session_id:session}]){
+  const rows=fixture();rows.splice(rows.length-1,0,e);assert.throws(()=>check(rows));
+ }
 });

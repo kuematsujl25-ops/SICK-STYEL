@@ -42,10 +42,20 @@ PreToolUse hook記録が出る場合は開始/応答を対応付け、exit0・su
 
 型は `type:system / subtype:thinking_tokens`、2つのnumber、uuidとsession_id、optional user_message_uuidを定義する。説明上、estimated_tokensは現在のthinking blockの概算累積値、estimated_tokens_deltaは当該frameの増分であり、課金output_tokensとは異なる。最新SDK型だけを旧CLIの仕様とみなさず、実際に固定したCLI 2.1.296（SHA256 `c9b5341637becbd423ddffc5b254afb645682a3868cb708bbc6cc0e7bb419937`）の内蔵schemaも読み取り、2値のinteger型、同じfieldと説明、およびstream_eventからこのsystemイベントを生成する実装を確認した。バイナリの読取りのみで起動していない。
 
-実ログは継続init後・最終本文前に `(estimated_tokens, estimated_tokens_delta) = (50,50), (200,150)` の2件。6項目のみでoptional user_message_uuidも子帰属もない。公式型はイベントの完全な時系列を保証していないため、受理位置はこの実測に基づく**本プロジェクトの狭いprofile制約**とする。全systemイベントの一般許容ではない。
+実ログは継続init後・最終本文前に `(estimated_tokens, estimated_tokens_delta) = (50,50), (200,150)` の2件。6項目のみでoptional user_message_uuidも子帰属もない。公式型はイベントの完全な時系列を保証していないため、当初の受理位置はこの実測に基づく**本プロジェクトの狭いprofile制約**だった。現在の位置制約は次節のとおり訂正する。全systemイベントの一般許容ではない。
 
-受理条件は正確な6項目、同一session、既存のUUID一意性、非負の安全整数、delta<=total、成功hookと子完了通知・背景終了・一致する継続initの成立後、最終本文より前。親以外の帰属・optional追加field・未観測位置・未知systemは拒否する。数値の非負性等は公式のinteger型より厳しい本profileの制限であり、公式の全生成値を受理するとは主張しない。blockを特定するIDがないためblockを跨ぐ累積値や厳密課金量へ変換しない。tool/action/permission/result検証を変更せず、推定値をusageへ加算しない。
+現在の受理条件は正確な6項目、同一session、既存のUUID一意性、非負の安全整数、delta<=total、検証済み初回init後から最終result前、開始済みhookの成功応答完了。親以外の帰属・optional追加field・init前・最終result後・未知systemは拒否する。数値の非負性等は公式のinteger型より厳しい本profileの制限であり、公式の全生成値を受理するとは主張しない。blockを特定するIDがないためblockを跨ぐ累積値や厳密課金量へ変換しない。tool/action/permission/result検証を変更せず、推定値をusageへ加算しない。
 
 この対応で元のpi-01拒否ログを削除・編集せず別途事後監査できた。元manifestは拒否のまま保持する。プロトコル監査の成立と、evaluatorの手動確認（2,250円の言及等）、成果採用判断は別。evaluatorや語句判定は変更しておらず、quality_approvedはfalse。本番適用・残りモデル試験への許可を生成しない。
 
 独立の内容レビューでは、2,250円が貢献利益ではない中間値と明記され、利益不存在を断定しない否定も適切と確認された。機械結果score 100/pass false/手動2件は維持し、この文脈レビューは別の補足記録に保存する。人間による採用承認ではない。
+
+### 初回epochの思考進捗（dq-06事後監査）
+
+同じhashの固定CLIを起動せず再読取りした。stream_eventの処理は思考推定関数のemissionがあればsystem/thinking_tokensをyieldし、その後で元イベントを処理する。この生成箇所にはtask完了・継続init・親本文未出力という条件がない。API metrics経路もthinking_progressとthinking_signatureから概算進捗を送る。公開型は完全な時系列保証ではなく、この固定実装と実ログを根拠に限定profileを訂正する。
+
+dq-06の23行ログは初回init→task_started→起動応答後、子完了通知より前に6項目の親sessionイベント `(50,50), (171,121)` を出した。epoch===1という従来の観測ベース制約で拒否されたため、両親epoch（0/1）のinit後から最終result前へ位置だけを広げる。初回resultと最終resultの間にもこの厳密なsubtypeだけを許可し、他の非resultイベントは従来どおり拒否する。開始済みhookの未応答中も拒否を維持する。
+
+metadataはcall/task/launch/updated/notified/cleared/epoch/parentTextや権限・完了状態を更新せず、usageにも加算しない。各挿入位置でoutput/result/audit/行数以外のcountsが不変であることを試験し、init前/最終result後/未完hook、session/UUID/型/追加field/子帰属、子ツール/権限拒否/偽完了/通知欠落を拒否する。親本文の有無は位置制約にしない。block resetは許すが厳密課金量には変換しない。
+
+業務評価条件のうちプロトコル監査の位置制約だけの変更であり、モデル・effort・担当指示・業務prompt・30fixtureは変更しない。dq-06の元manifestは拒否のまま、別manifestに元hash・修正実装SHA・全23行事後監査・元出力一致を保存する。イベント削除、モデル再実行、過去拒否の上書き、本人採用は行わない。
