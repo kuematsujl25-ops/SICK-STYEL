@@ -26,8 +26,11 @@ export async function connect(store,session,url){
  const form=new URLSearchParams({grant_type:'authorization_code',code,redirect_uri:callback(),client_id:runtime().GOOGLE_CLIENT_ID,client_secret:runtime().GOOGLE_CLIENT_SECRET});
  const raw=await remote('https://oauth2.googleapis.com/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:form});
  if(!raw.access_token||!raw.refresh_token)throw Error('Googleの認可トークン（オフラインアクセス）を取得できませんでした。再認可時はGoogleアカウントの権限を一度解除してから実行してください');
- const info=await remote('https://www.googleapis.com/oauth2/v3/userinfo',{headers:{Authorization:`Bearer ${raw.access_token}`}});
- const data={email:info.email||null,encrypted:encrypt({refresh:raw.refresh_token}),issuedAt:Date.now(),connectedAt:new Date().toISOString(),scope:String(raw.scope||'')};
+// calendar.events only grants calendar event access, NOT profile/email access.
+ // Do not call /oauth2/v3/userinfo: it requires an additional userinfo/OIDC scope and
+ // causes OAuth to fail despite valid Calendar consent. We intentionally do not request
+ // extra personal-data scopes just for a cosmetic account label.
+ const data={email:null,encrypted:encrypt({refresh:raw.refresh_token}),issuedAt:Date.now(),connectedAt:new Date().toISOString(),scope:String(raw.scope||'')};
  await store.put('googlecalendar-private',data);return data;
 }
 async function accessToken(store,p){
