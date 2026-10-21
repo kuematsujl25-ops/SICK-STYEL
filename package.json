@@ -25,6 +25,8 @@
     "integrations:instagram": "node scripts/set-secrets.js instagram",
     "integrations:amazon": "node scripts/set-secrets.js amazon",
     "integrations:amazon-refresh": "node scripts/set-secrets.js amazon-refresh",
+    "integrations:zoom": "node scripts/set-secrets.js zoom",
+    "integrations:googlecalendar": "node scripts/set-secrets.js googlecalendar",
     "ai:task": "node scripts/ai-staff/run-task.js",
     "ai:review": "node scripts/ai-staff/review-code.js",
     "deploy:existing": "node scripts/deploy-existing.js",

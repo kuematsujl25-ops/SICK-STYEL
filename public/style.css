@@ -235,3 +235,11 @@ dialog::backdrop{background:#000b;backdrop-filter:blur(3px)}
 .financehero .filelabel:focus-within{outline:3px solid var(--focus);outline-offset:3px}
 
 .teamroles{margin:20px 0}.teamroles .record{display:flex;flex-direction:column;gap:8px}.teamroles .record button{margin-top:auto}.teamoutput{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;max-height:500px;overflow:auto}#teamcreate{display:grid;gap:14px;margin-top:18px}#teamcreate textarea{min-height:90px}
+
+/* 団体営業6段階フロー・商談予定 */
+.orgpipeline{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:16px 0}.orgphase{border:1px solid var(--line-strong);border-radius:8px;background:var(--surface-2);padding:7px 10px;font-size:13px;font-weight:600}.orgarrow{color:var(--silver-2)}.orgmeeting{grid-column:1/-1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;border:1px solid var(--line);padding:14px;border-radius:10px}.orgmeeting h3,.orgmeeting p{grid-column:1/-1}.orgmeeting>a{width:fit-content;max-width:100%}@media(max-width:720px){.orgmeeting{grid-template-columns:minmax(0,1fr)}.orgphase{font-size:12px}}
+
+.meetingsync{grid-column:1/-1;display:flex;flex-direction:column;gap:8px;padding:10px;border:1px dashed var(--line-strong);border-radius:8px}.meetingsync .actions{flex-wrap:wrap}
+
+/* 選手調査カード：写真は権利確認済みURLのみ読み込む */
+.playerprofile{display:flex;align-items:flex-start;gap:14px;margin:12px 0}.playerprofile h3{margin:0}.playerprofile>div:last-child{min-width:0}.playerphoto{width:72px;height:88px;flex:0 0 72px;object-fit:cover;object-position:top center;border-radius:9px;background:var(--surface-3);border:1px solid var(--line-strong)}.playerplaceholder{display:flex;align-items:center;justify-content:center;font-size:25px;color:var(--silver-2)}@media(max-width:720px){.playerphoto{width:58px;height:72px;flex-basis:58px}}
