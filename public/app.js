@@ -64,6 +64,8 @@ const nav=[['overview','◈','ダッシュボード'],['goals','◎','目標'],[
 const names=Object.fromEntries(nav.map(([id,,name])=>[id,name]));
 const rate=g=>Math.min(100,Math.max(0,Math.round(Number(g.current||0)/Number(g.target||1)*100)));
 function render(){
+ const previousNav=document.querySelector('#app aside nav');
+ const navScrollTop=previousNav?.scrollTop||0,navScrollLeft=previousNav?.scrollLeft||0;
  const views={team:()=>renderTeam(team,esc),finance:()=>renderFinance(financeReport,esc),overview,instagram:instagramView,amazon:amazonView,brand,settings,site:siteView,staffTasks:()=>renderStaffTasks(state.staffTasks,staffUI,esc,today()),orgSales:orgSalesView,collectionTasks:()=>renderCollectionTasks(state.collectionTasks,collectUI,esc),
  reelPosts:()=>renderReels(state.reelPosts,reelUI,esc,today()),growthExperiments:()=>renderExperiments(state.growthExperiments,experimentUI,esc),competitorAccounts:()=>renderAccounts(state.competitorAccounts,accountUI,esc),playerCandidates:()=>renderPlayers(state.playerCandidates,playerUI,esc)};
  app.innerHTML=`<aside><div class="brandtop"><a href="#" class="brandmark" data-nav="overview">${LOGO}<span><b>SICKSTYLE</b><small>管理アプリ</small></span></a><span class="mobileonly"><button id="mrefresh" aria-label="最新データに更新">↻</button><button id="mlogout" aria-label="ログアウト">ログアウト</button></span></div><nav aria-label="メニュー">${nav.map(([id,icon,name])=>`<button data-nav="${id}" class="${section===id?'active':''}" ${section===id?'aria-current="page"':''}><span aria-hidden="true">${icon}</span>${name}</button>`).join('')}</nav><div class="sidebottom"><div>管理者<small>${esc(storageKind==='d1'?'クラウド保存（Cloudflare D1）':'このPCに保存（SQLite）')}</small></div><button id="logout">ログアウト</button></div></aside>
@@ -71,6 +73,8 @@ function render(){
  <div class="content"><div class="pageheading"><div><h1>${names[section]}</h1></div><span class="date">${today().replaceAll('-',' / ')}</span></div>${(views[section]||(()=>collection(section)))()}</div>
  <footer><span>SICKSTYLE 管理アプリ</span><a href="/privacy.html">プライバシー</a></footer></main><dialog id="editor"></dialog>`;
  bind();
+ const currentNav=document.querySelector('#app aside nav');
+ if(currentNav){currentNav.scrollTop=navScrollTop;currentNav.scrollLeft=navScrollLeft;}
 }
 function sourceTag(api){return `<span class="source ${api?'api':''}">${api?'公式API':'手入力'}</span>`;}
 function overview(){
@@ -109,7 +113,14 @@ function settings(){return `<div class="settingsgrid"><section class="panel"><h2
 function safeLink(value){try{const u=new URL(value);return u.protocol==='https:'&&['www.instagram.com','instagram.com'].includes(u.hostname)?esc(u.href):'#';}catch{return '#';}}
 function instagramView(){const c=ig?.cache;const expired=ig?.expiresAt&&ig.expiresAt<Date.now();const dm=c?.dm;
  return `<section class="panel"><div class="panelhead"><h2>接続状態</h2>${expired?'<span class="badge warn">認可期限切れ</span>':statusBadge(ig)}</div><p>Meta公式のInstagramログイン（ビジネス／クリエイターアカウント）で接続します。Instagramのパスワードをこのアプリに入力・保存することはありません。</p>
- ${!ig?.configured?`<div class="guide"><b>Metaアプリの設定待ちです</b><p>Meta for Developersでアプリを作成し、App ID / App Secret をサーバー（Cloudflare）に登録すると「Instagramを接続」ボタンが表示されます。本人が設定するまでは実データ同期を行えません。</p><p><a href="https://developers.facebook.com/apps/" target="_blank" rel="noopener noreferrer">Metaのアプリ管理を開く ↗</a>。普段使う端末で操作し、端末セキュリティ制限中は公式の解除を待ってください。Secrets登録は別途承認後に行います。</p></div>`:''}
+
+ <details class="guide" ${!ig?.configured?'open':''}><summary><b>Instagram連携の手順（5ステップ）</b></summary><ol>
+ <li>接続するInstagramを「ビジネス」または「クリエイター」のプロアカウントにします。個人アカウントではInsightsを取得できません。</li>
+ <li><a href="https://developers.facebook.com/apps/" target="_blank" rel="noopener noreferrer">Meta for Developers ↗</a>で既存アプリを確認し、Instagram Login（Instagramでメッセージとコンテンツを管理）を設定します。対象アカウントのテスター招待があれば本人が承認します。端末の安全制限があればMeta公式の解除を待ってください。</li>
+ <li>「Instagram Business Login settings」のOAuth redirect URIに <code>https://sickstyle-manager.sickstyle-74h4.workers.dev/api/instagram/callback</code> を登録します。プライバシー <a href="/privacy.html" target="_blank" rel="noopener noreferrer">/privacy.html</a> とデータ削除 <a href="/data-deletion.html" target="_blank" rel="noopener noreferrer">/data-deletion.html</a> もMeta側に登録します。</li>
+ <li>Instagram App ID / App Secretを確認し、Macのターミナルで <code>npm run integrations:instagram -- --plan</code> を実行します。Cloudflareへの反映が別途承認済みの場合に限り、同じコマンドの <code>--apply</code> で非表示入力して登録します。既存の <code>TOKEN_ENCRYPTION_KEY</code> は上書きしません。秘密値はチャットやGitに貼らないでください。</li>
+ <li>管理画面を更新 →「Instagramを接続」→ Meta公式画面で本人認可 →「今すぐ同期」。最終成功時刻とフォロワー・リール指標を確認します。「認可済み」だけでは同期完了ではありません。</li>
+ </ol><p class="note">必要な権限: instagram_business_basic / instagram_business_manage_insights。DM取得には別途 instagram_business_manage_messages が必要です。<a href="https://developers.facebook.com/documentation/instagram-platform/instagram-api-with-instagram-login" target="_blank" rel="noopener noreferrer">Meta公式資料 ↗</a></p></details>
  <div class="actions">${ig?.configured?`<button class="primary" id="igconnect">${ig.connected?'再認可する':'Instagramを接続'}</button>`:''}${ig?.connected?'<button class="secondary" id="igsync">今すぐ同期</button><button id="igdisconnect" class="red">接続を解除</button>':''}</div>
  <dl class="facts"><dt>アカウント</dt><dd>${esc(ig?.username?'@'+ig.username:'未接続')}</dd><dt>最終同期（成功）</dt><dd>${fmtTime(c?.syncedAt)}</dd><dt>最終試行</dt><dd>${fmtTime(c?.attemptedAt)}</dd><dt>認可の有効期限</dt><dd>${fmtTime(ig?.expiresAt)}</dd><dt>許可された権限</dt><dd>${esc((ig?.granted||[]).join(', ')||'—')}</dd></dl>
  ${c?.error?`<p class="errorbox" role="alert">取得失敗：${esc(c.error)}<br>表示中の数値は最後に成功した同期時点のものです。</p>`:''}${c?.warnings?.length?`<details open><summary>一部の指標を取得できませんでした（${c.warnings.length}件）</summary><p>${c.warnings.map(esc).join('<br>')}</p></details>`:''}</section>
@@ -128,7 +139,14 @@ function bindInstagram(){const connect=document.querySelector('#igconnect');if(c
 const statusJa={PENDING:'保留（支払い確認待ち）',UNSHIPPED:'未発送',PARTIALLY_SHIPPED:'一部発送済み',SHIPPED:'発送済み',CANCELLED:'キャンセル',UNFULFILLABLE:'出荷不能',PENDING_AVAILABILITY:'予約注文（入荷待ち）',INVOICE_UNCONFIRMED:'請求書未確認'};
 function amazonView(){const c=amz?.cache;const o=c?.orders;
  return `<section class="panel"><div class="panelhead"><h2>接続状態</h2>${statusBadge(amz)}</div><p>Amazon公式の Selling Partner API（SP-API）で接続します。対象は ${esc(amz?.marketplace||'Amazon.co.jp (A1VC38T7YXB528)')} です。Amazonのパスワードはこのアプリに入力・保存しません。</p>
- ${!amz?.connected?`<div class="guide"><b>${amz?.configured?'認可（リフレッシュトークン）の登録待ちです':'SP-APIのアプリ設定待ちです'}</b><p>既存の大口出品アカウントのプライマリユーザーで、<a href="https://solutionproviderportal.amazon.com/home" target="_blank" rel="noopener noreferrer">AmazonのSolution Provider Portalを開く ↗</a>。自社用のプライベートアプリは下書きのままセルフ認可できます。有料アップグレードや支払い情報の追加は行わず、求められたら停止してください。</p><p>登録項目は <code>npm run integrations:amazon -- --plan</code> と <code>npm run integrations:amazon-refresh -- --plan</code> で確認できます。Secretsの変更は別途承認後に、本人の非表示入力で行います。認可前は手入力・CSVを利用できます。</p></div>`:''}
+
+ <details class="guide" ${!amz?.connected?'open':''}><summary><b>Amazon SP-API連携の手順（5ステップ）</b></summary><ol>
+ <li><a href="https://sellercentral.amazon.co.jp/" target="_blank" rel="noopener noreferrer">Amazon Seller Central ↗</a>に既存の大口出品アカウントのプライマリユーザーでログインします。新たな有料アップグレードは行いません。</li>
+ <li>「アプリとサービス」→「アプリの開発」→ <a href="https://solutionproviderportal.amazon.com/home" target="_blank" rel="noopener noreferrer">Solution Provider Portal ↗</a>で、既存の開発者登録がなければ自社専用の「非公開開発者」として登録します。Sales/Ordersに必要な読み取りロールの承認を確認します。</li>
+ <li>「Develop Apps」から自社用アプリを作成または再利用し、LWAクライアントID・シークレットを確認します。アプリを自分のAmazon.co.jp出品アカウントに「Self authorize」し、リフレッシュトークンを発行します。公開アプリ・Webサイト認可は不要です。</li>
+ <li>Macのターミナルで <code>npm run integrations:amazon -- --plan</code> と <code>npm run integrations:amazon-refresh -- --plan</code> を確認します。Cloudflare Secrets変更が別途承認済みの場合のみ、それぞれ <code>--apply</code> で非表示入力して登録してください。認証情報はチャット・Gitに貼らないでください。</li>
+ <li>管理画面を更新 →「Amazon連携」→「今すぐ同期」。売上（Sales API）と注文・発送状況（Orders API）の両方で最終成功時刻とデータを確認します。片方だけ成功しても連携完了とは扱いません。</li>
+ </ol><p class="note">審査中・認可前は「売上・SNS実績」で手入力/CSV取込が可能です。追加料金や支払い登録が表示された場合は停止して条件を確認してください。<a href="https://developer-docs.amazon.com/sp-api/docs/register-as-a-private-developer" target="_blank" rel="noopener noreferrer">Amazon公式資料 ↗</a></p></details>
  <div class="actions">${amz?.websiteFlow?`<button class="primary" id="amzconnect">${amz.connected?'再認可する':'Amazonを認可する'}</button>`:''}${amz?.connected?'<button class="secondary" id="amzsync">今すぐ同期</button><button id="amzdisconnect" class="red">接続を解除</button>':''}</div>
  <dl class="facts"><dt>認可方式</dt><dd>${amz?.authorization==='website'?'Webサイト認可（Seller Centralで同意）':amz?.authorization==='self'?'セルフ認可（Seller Centralで発行）':'未認可'}</dd><dt>セラーID</dt><dd>${esc(amz?.sellerId||'—')}</dd><dt>最終同期（成功）</dt><dd>${fmtTime(c?.syncedAt)}</dd><dt>最終試行</dt><dd>${fmtTime(c?.attemptedAt)}</dd><dt>売上の最終取得成功</dt><dd>${fmtTime(c?.salesSyncedAt)}</dd><dt>注文の最終取得成功</dt><dd>${fmtTime(c?.ordersSyncedAt)}</dd><dt>売上の対象期間</dt><dd>${c?.salesPeriod?`${esc(c.salesPeriod.start)} 〜 ${esc(c.salesPeriod.end)}`:'未取得'}</dd><dt>注文の対象期間</dt><dd>${c?.ordersPeriod?`${esc(c.ordersPeriod.start)} 〜 ${esc(c.ordersPeriod.end)}`:'未取得'}</dd><dt>集計期間</dt><dd>${c?.period?`${esc(c.period.start)} 〜 ${esc(c.period.end)}（日本時間・同期時点まで）`:'直近31日（日本時間）'}</dd></dl>
  ${c?.error?`<p class="errorbox" role="alert">取得失敗：${esc(c.error)}<br>表示中の数値は最後に成功した同期時点のものです。</p>`:''}${c?.warnings?.length?`<details open><summary>一部のデータを取得できませんでした（${c.warnings.length}件）</summary><p>${c.warnings.map(esc).join('<br>')}</p></details>`:''}</section>
