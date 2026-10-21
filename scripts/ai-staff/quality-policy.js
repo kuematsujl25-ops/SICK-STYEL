@@ -1,0 +1,19 @@
+// Review signals, not a natural-language truth/negation classifier.
+export const JSON_OUTPUT_INSTRUCTION='最終成果物は指定schemaのJSON本体のみ。Markdownコード枠は禁止。recommendations[].kpiは文字列（配列不可）、stepsとrisksは文字列配列です。出力前に全fieldの型を確認し、型違反を後処理で自動補正しません。';
+export const QUALITY_INSTRUCTIONS=[JSON_OUTPUT_INSTRUCTION,
+  '根拠がないことと、対象が存在しないことを区別してください。利益を確認できないときは「利益を評価できない」とし、「利益が見込める施策はない」と断定しないでください。',
+  '鮮度の許容日数・更新周期・合格基準は、入力に明記された根拠がなければ未確認です。観測日時は報告できますが、月次なので許容範囲などの基準を作らないでください。',
+  'summaryだけでなくhypothesesのclaim/test、recommendationsのsteps/kpi/risksを含む全fieldで、計算の式・単位・期間・成立条件を一致させてください。利益差や上限を述べる各文にも条件を明記し、末尾の留保で別欄の断定を正当化しないでください。',
+  '差額と増減率は別です。基準値0なら差額は計算可能でも増減率は算出不可。倍率と百分率を区別します。利益上限は全未控除項目の符号付き純控除額合計が非負と確認できる場合だけです。発注候補は各不足時点までに到着する入荷だけを対応づけ、期間末の在庫差引だけで途中の不足を否定しません。',
+  '否定・引用・仮説は確認済みの事実と明確に分けてください。推奨は確認済み根拠と不足条件を示し、未確認の効果を保証しないでください。'
+].join('\n');
+
+export function qualitySignals(text){
+  const rules=[
+    ['absence_from_missing_evidence',/(?:利益|効果|収益|収益性|有効性)[^。\n]{0,35}(?:施策|対策|方法|選択肢)[^。\n]{0,12}(?:存在しない|ありません|ない|ゼロ|0件)/u],
+    ['absence_from_missing_evidence',/(?:施策|対策|方法|選択肢)[^。\n]{0,20}(?:全くない|存在しない|一つもない|ありません)/u],
+    ['invented_freshness_threshold',/(?:鮮度|月次|週次|日次|データ|観測|更新)[^。\n]{0,45}(?:許容範囲|許容でき|問題ない|問題ありません|十分新し|十分に新し|有効と判断|基準を満た)/u],
+    ['invented_freshness_threshold',/(?:\d+|[一二三四五六七八九十]+)(?:日|週間|か月|ヶ月|月)以内(?:なら|であれば)[^。\n]{0,25}(?:有効|十分|許容|新鮮)/u],
+  ];
+  return [...new Set(rules.filter(([,pattern])=>pattern.test(text)).map(([name])=>name))];
+}
