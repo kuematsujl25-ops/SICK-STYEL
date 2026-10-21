@@ -75,3 +75,23 @@ test('overdue rows are flagged for styling, completed overdue rows are not', () 
  const redCount = (html.match(/class="red"/g) || []).length;
  assert.equal(redCount, 1);
 });
+
+test('deletedAtが設定された（論理削除済みの）タスクは一覧・集計から除外される', () => {
+ const tasks = [sample({ id: 'a', deletedAt: '2026-10-19T00:00:00.000Z' }), sample({ id: 'b' })];
+ const html = renderStaffTasks(tasks, { assignee: 'all', sort: 'due' }, esc, '2026-10-20');
+ assert.match(html, /1 \/ 1 件/);
+});
+
+test('論理削除済みタスクはゴミ箱セクションに表示され、復元ボタンを持つ', () => {
+ const tasks = [sample({ id: 'a', deletedAt: '2026-10-19T12:00:00.000Z' })];
+ const html = renderStaffTasks(tasks, { assignee: 'all', sort: 'due' }, esc, '2026-10-20');
+ assert.match(html, /ゴミ箱（1件/);
+ assert.match(html, /data-restore-stafftask="a"/);
+});
+
+test('deletedAtはnull・未設定・ISO文字列のいずれも検証を通過する', () => {
+ assert.doesNotThrow(() => validate(withTask({})));
+ assert.doesNotThrow(() => validate(withTask({ deletedAt: null })));
+ assert.doesNotThrow(() => validate(withTask({ deletedAt: '2026-10-20T00:00:00.000Z' })));
+ assert.throws(() => validate(withTask({ deletedAt: 'not-a-date' })));
+});
