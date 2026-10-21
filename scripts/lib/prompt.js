@@ -4,7 +4,14 @@ import {stdin,stdout} from 'node:process';
 export function requireTerminal(){
  if(!stdin.isTTY||!stdout.isTTY)throw Error('このコマンドは「ターミナル」アプリで直接実行してください（パスワードを引数やログに出さないため）。');
 }
-export async function ask(prompt){const rl=createInterface({input:stdin,output:stdout});try{return (await rl.question(prompt)).trim();}finally{rl.close();}}
+// 直前に stdio:'inherit' の子プロセス（wranglerの進捗表示など）が実行されていると、
+// 端末がraw modeのまま・カーソル位置が不定のまま残ることがあり、確認プロンプトが
+// 見えない／入力を受け付けないように見える。質問の前に明示的に改行してcooked modeへ戻す。
+export async function ask(prompt){
+ if(stdin.isTTY){try{stdin.setRawMode(false);}catch{}stdin.resume();}
+ stdout.write('\n');
+ const rl=createInterface({input:stdin,output:stdout});try{return (await rl.question(prompt)).trim();}finally{rl.close();}
+}
 export function secret(prompt){
  stdout.write(prompt);stdin.setRawMode(true);stdin.resume();stdin.setEncoding('utf8');let value='';
  return new Promise((resolve,reject)=>{

@@ -97,6 +97,7 @@ try {
       writeFileSync(resolve(directory,'previous-versions.json'),JSON.stringify(previous,null,2)+'\n',{mode:0o600,flag:'wx'});
       writeFileSync(resolve(directory,'rollback.json'),JSON.stringify({command:[process.execPath,'node_modules/wrangler/bin/wrangler.js',...rollbackArgs(previous)],
         note:'コードだけを戻す。AI保存v2/分割形式を旧Versionが読めない場合はAIを停止して確認。DBを無断で復元・削除しない。'},null,2)+'\n',{mode:0o600,flag:'wx'});
+      console.log('\nD1バックアップとローカル復元・整合性確認が完了しました: '+relative(root,backupFile)+'\n以下の2件の確認に y/yes/はい と入力してください（入力が見えない／反応しない場合は一度 Enter を押してから再度お試しください）。');
       await confirmed('コード専用Version方式でSecrets・Variables・DBスキーマ・Cron・ルートを変更しないことを確認しましたか？');
       await confirmed('直前Versionへの復旧方法とAI保存形式の互換性を確認しましたか？ 未確認ならNで停止してください');
       mkdirSync(dirname(receiptPath),{recursive:true,mode:0o700});
