@@ -6,6 +6,9 @@ import {hash,token,equal} from '../lib/security.js';
 import {hashPassword,verifyPassword} from '../lib/password.js';
 import * as instagram from '../integrations/instagram.js';
 import * as amazon from '../integrations/amazon.js';
+import * as zoom from '../integrations/zoom.js';
+import * as googlecalendar from '../integrations/googlecalendar.js';
+import {syncMeeting,status as meetingSyncStatus} from '../lib/meeting-sync.js';
 import {emptySite,validateSite,publicView,DEFAULT_SITE_ORIGINS} from '../lib/site.js';
 
 function json(res,status,value){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(value));}
@@ -32,7 +35,7 @@ export default async function handler(req,res){
   const o=req.headers.origin;if(o&&origins.includes(o)){res.setHeader('Access-Control-Allow-Origin',o);res.setHeader('Vary','Origin');}
   if(req.method==='OPTIONS'){res.setHeader('Access-Control-Allow-Methods','GET');res.writeHead(204);return res.end();}
   if(!['GET','HEAD'].includes(req.method))return json(res,405,{error:'読み取り専用です'});
-  const r=await store.doc('site-public');const body=r?r.body:JSON.stringify({version:1,publishedAt:null,products:[],news:[],philosophy:null,links:null});
+  const r=await store.doc('site-public');const body=r?r.body:JSON.stringify({version:1,publishedAt:null,products:[],news:[],players:[],philosophy:null,links:null});
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'public, max-age=60, s-maxage=300','X-Content-Type-Options':'nosniff'});return res.end(req.method==='HEAD'?undefined:body);
  }
  if(!['GET','HEAD'].includes(req.method)){
@@ -68,7 +71,7 @@ export default async function handler(req,res){
   const t=token();await store.transaction([['DELETE FROM ss_sessions WHERE expires<$1',[Date.now()]],['DELETE FROM ss_attempts WHERE key=$1',['email:'+hash(email)]],['INSERT INTO ss_sessions(token,expires) VALUES ($1,$2)',[hash(t),Date.now()+86400000]]]);res.setHeader('Set-Cookie',cookie(t,86400));return json(res,200,{ok:true});
  }
  const redirect=location=>{res.writeHead(303,{Location:location,'Cache-Control':'no-store'});res.end();};
- if(['/api/amazon/login','/api/amazon/callback','/api/instagram/callback'].includes(route)&&req.method==='GET'&&!authorized)return redirect('/?auth=required');
+ if(['/api/amazon/login','/api/amazon/callback','/api/instagram/callback','/api/zoom/callback','/api/googlecalendar/callback'].includes(route)&&req.method==='GET'&&!authorized)return redirect('/?auth=required');
  if(!authorized)return json(res,401,{error:'ログインしてください'});
  if(route==='/api/ai-team'&&req.method==='GET')return json(res,200,await readTeam(store));
  if(route==='/api/ai-team'&&req.method==='POST'){try{return json(res,200,await writeTeam(store,await body(req)));}catch(e){if(e instanceof TeamError)return json(res,e.status,{error:e.message});throw e;}}
@@ -84,6 +87,20 @@ export default async function handler(req,res){
  if(route==='/api/amazon/callback'&&req.method==='GET'){try{await amazon.connect(store,sessionHash,url);return redirect('/?amazon=connected');}catch(e){console.error(JSON.stringify({event:'amazon_callback',error:e instanceof amazon.AmazonError?String(e.code):'authorization_failed'}));return redirect('/?amazon=error');}}
  if(route==='/api/amazon/sync'&&req.method==='POST'){try{await amazon.sync(store);}catch(e){return json(res,502,{error:e.message,status:await amazon.safeStatus(store)});}return json(res,200,await amazon.safeStatus(store));}
  if(route==='/api/amazon/disconnect'&&req.method==='POST')return json(res,200,await amazon.disconnect(store));
+ if(route==='/api/zoom/status'&&req.method==='GET')return json(res,200,await zoom.safeStatus(store));
+ if(route==='/api/zoom/connect'&&req.method==='POST')return json(res,200,{url:await zoom.begin(store,sessionHash)});
+ if(route==='/api/zoom/callback'&&req.method==='GET'){try{await zoom.connect(store,sessionHash,url);return redirect('/?zoom=connected');}catch(e){console.error(JSON.stringify({event:'zoom_callback',error:e instanceof zoom.ZoomError?String(e.code):'authorization_failed'}));return redirect('/?zoom=error');}}
+ if(route==='/api/zoom/disconnect'&&req.method==='POST')return json(res,200,await zoom.disconnect(store));
+ if(route==='/api/googlecalendar/status'&&req.method==='GET')return json(res,200,await googlecalendar.safeStatus(store));
+ if(route==='/api/googlecalendar/connect'&&req.method==='POST')return json(res,200,{url:await googlecalendar.begin(store,sessionHash)});
+ if(route==='/api/googlecalendar/callback'&&req.method==='GET'){try{await googlecalendar.connect(store,sessionHash,url);return redirect('/?googlecalendar=connected');}catch(e){console.error(JSON.stringify({event:'googlecalendar_callback',error:e instanceof googlecalendar.GoogleCalendarError?String(e.code):'authorization_failed'}));return redirect('/?googlecalendar=error');}}
+ if(route==='/api/googlecalendar/disconnect'&&req.method==='POST')return json(res,200,await googlecalendar.disconnect(store));
+ if(route==='/api/orgsales/meeting-status'&&req.method==='GET')return json(res,200,await meetingSyncStatus(store));
+ if(route==='/api/orgsales/meeting'&&req.method==='POST'){
+  const b=await body(req);
+  const result=await syncMeeting(store,{orgId:String(b.orgId||''),kind:String(b.kind||''),action:String(b.action||''),revision:b.revision});
+  return json(res,200,{ok:true,org:result.org,revision:result.revision,warnings:result.warnings||[]});
+ }
  if(route==='/api/logout'&&req.method==='POST'){await store.query('DELETE FROM ss_sessions WHERE token=$1',[sessionHash]);res.setHeader('Set-Cookie',cookie('',0));return json(res,200,{ok:true});}
  if(route==='/api/data'&&req.method==='GET')return json(res,200,await revisionOf(store));
  if(route==='/api/data'&&req.method==='PUT'){
@@ -101,7 +118,7 @@ export default async function handler(req,res){
    ['UPDATE ss_documents SET body=$1,revision=revision+1 WHERE name=$2 AND revision=$3 RETURNING revision',[JSON.stringify(data),'workspace',b.revision]]]);
   if(!result[2].length)return json(res,409,{error:'他の端末で更新されました。再読み込み後に復元してください'});return json(res,200,{ok:true});
  }
- if(route==='/api/site'&&req.method==='GET'){const d=await store.doc('site-draft');const p=await store.doc('site-public');return json(res,200,{draft:d?JSON.parse(d.body):emptySite(),revision:d?.revision||0,published:p?JSON.parse(p.body):null});}
+ if(route==='/api/site'&&req.method==='GET'){const d=await store.doc('site-draft');const p=await store.doc('site-public');return json(res,200,{draft:d?{...emptySite(),...JSON.parse(d.body)}:emptySite(),revision:d?.revision||0,published:p?JSON.parse(p.body):null});}
  if(route==='/api/site'&&req.method==='PUT'){
   const b=await body(req);const d=validateSite(b.draft);if(!Number.isSafeInteger(b.revision)||b.revision<0)return json(res,400,{error:'更新バージョンが必要です'});
   await store.query('INSERT INTO ss_documents(name,body,revision) VALUES ($1,$2,0) ON CONFLICT(name) DO NOTHING',['site-draft',JSON.stringify(emptySite())]);
@@ -133,5 +150,10 @@ export default async function handler(req,res){
  }
  if(route==='/api/instagram/resolve'&&req.method==='POST'){const b=await body(req);await instagram.resolveConversation(store,String(b.peer||''));return json(res,200,{ok:true});}
  return json(res,404,{error:'見つかりません'});
- }catch(e){const validation=/掲載|下書き|データ|形式|バックアップ|認可|Instagram|Meta|Amazon|同期|トークン|アカウント|キー|コード/.test(e.message);console.error(JSON.stringify({event:'api_error',type:e.name,code:e instanceof instagram.MetaError?e.code:undefined}));return json(res,validation?400:503,{error:validation?e.message:'サービスに接続できません。管理者はデータベース設定を確認してください。'});}
+ }catch(e){
+  if(e.conflict)return json(res,409,{error:e.message});
+  const validation=/掲載|下書き|データ|形式|バックアップ|認可|Instagram|Meta|Amazon|Zoom|Google|カレンダー|MTG|団体|同期|トークン|アカウント|キー|コード|種別|操作|更新バージョン/.test(e.message);
+  console.error(JSON.stringify({event:'api_error',type:e.name,code:e instanceof instagram.MetaError?e.code:undefined}));
+  return json(res,validation?400:503,{error:validation?e.message:'サービスに接続できません。管理者はデータベース設定を確認してください。'});
+ }
 }
