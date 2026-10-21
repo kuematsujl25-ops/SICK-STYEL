@@ -92,9 +92,11 @@ progress::-moz-progress-bar{background:var(--silver)}
 .badge.ok{color:var(--ok);border-color:#3f5a45}
 .badge.warn,.badge.danger{background:var(--danger-bg);color:var(--danger);border-color:#5a2e28}
 .listrow{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}
+.listrow[hidden]{display:none}
 .listrow b{font-size:14px;overflow-wrap:anywhere}
 .listrow small{display:block;font-size:12px;color:var(--muted);margin-top:2px}
 .listrow input[type=checkbox]{width:22px;height:22px;accent-color:var(--silver);flex-shrink:0}
+.listrow select{width:auto;min-height:36px;flex-shrink:0}
 .grow{flex:1;min-width:0}
 .done b{text-decoration:line-through;color:var(--muted)}
 .red{color:var(--danger)!important}
