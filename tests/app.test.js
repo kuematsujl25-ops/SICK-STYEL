@@ -22,8 +22,11 @@ test('管理者登録・認証・業務データ保存・復元・永続化', as
  d.goals.push({id:'g1',title:'売上目標',type:'monthly',month:'2026-10',current:10000,target:50000,unit:'円'});
  d.tasks.push({id:'t1',title:'新作を撮影',due:'2026-10-16',priority:'高',done:false,notes:'自然光'});
  d.shipments.push({id:'s1',title:'Tシャツ',order:'001',recipient:'テスト',due:'2026-10-17',carrier:'ヤマト',tracking:'123456',status:'未発送'});
- d.metrics.push({id:'m1',date:'2026-10-16',sales:10000,orders:2,followers:100,reach:500,engagement:20});d.brand.Mission='スタイルを届ける';
+ d.metrics.push({id:'m1',date:'2026-10-16',sales:10000,orders:2,followers:100,reach:500,engagement:20});
+ d.staffTasks.push({id:'st1',title:'サンプル発送の確認',assignee:'竹田',due:'2026-10-18',priority:'高',status:'進行中',relatedOrg:'テスト団体',relatedPlayer:'',relatedPost:'',nextAction:'発送業者に確認',notes:'',updatedAt:'2026-10-16T00:00:00.000Z'});
+ d.brand.Mission='スタイルを届ける';
  assert.equal((await req('data','PUT',d)).status,200);d.revision=1;assert.deepEqual((await req('data')).data,d);cookie=secondCookie;assert.equal((await req('data')).data.tasks[0].title,'新作を撮影');cookie=primaryCookie;
+ const badAssignee=structuredClone(d);badAssignee.staffTasks[0].assignee='権限外担当';assert.equal((await req('data','PUT',badAssignee)).status,400);
  assert.equal((await req('data','PUT',d,{Origin:'https://evil.example'})).status,403);
  const invalid=structuredClone(d);invalid.metrics[0].sales=-1;assert.equal((await req('data','PUT',invalid)).status,400);
  const malformed=structuredClone(d);malformed.tasks[0].due='2026-02-31';assert.equal((await req('data','PUT',malformed)).status,400);
