@@ -46,3 +46,34 @@ test('独立採点用の在庫・日付境界例: 遅着入荷を先取りせず
  const boundary=utc=>{const d=new Date(jst(utc));return d.getUTCDate()===1&&d.getUTCHours()<9;};
  assert.equal(boundary('2026-09-30T15:00:00Z'),true);assert.equal(boundary('2026-10-01T00:00:00Z'),false);assert.equal(boundary('2026-10-01T15:30:00Z'),false);
 });
+
+test('前月比: 基準月0でも差額は算出、倍率/増減百分率と欠測を区別する反例',()=>{
+ const compare=(current,base)=>current===null||base===null?{status:'missing',difference:null,multiple:null,percent:null}:
+  {status:base===0?'zero_denominator':'known',difference:current-base,multiple:base===0?null:current/base,percent:base===0?null:(current/base-1)*100};
+ assert.deepEqual(compare(90000,0),{status:'zero_denominator',difference:90000,multiple:null,percent:null});
+ assert.deepEqual(compare(0,0),{status:'zero_denominator',difference:0,multiple:null,percent:null});
+ assert.deepEqual(compare(90000,null),{status:'missing',difference:null,multiple:null,percent:null});
+ assert.deepEqual(compare(90000,60000),{status:'known',difference:30000,multiple:1.5,percent:50});
+ assert.equal(compare(0,60000).percent,-100);
+ const data=read('ss-data-auditor');for(const term of ['基準月0','差額は計算可能','増減率は算出不可','倍率','百分率'])assert.ok(data.includes(term),term);
+});
+test('利益上限: 非負手数料だけでは不十分、符号付き純調整の反例を保持',()=>{
+ const profit=(gross,costs)=>costs.some(x=>x===null)?null:gross-costs.reduce((a,b)=>a+b,0);
+ const bounded=costs=>costs.every(x=>x!==null)&&costs.reduce((a,b)=>a+b,0)>=0;
+ assert.equal(profit(18000,[100,200,-1000]),18700);assert.equal(bounded([100,200,-1000]),false);
+ assert.equal(profit(18000,[100,200,0]),17700);assert.equal(bounded([100,200,0]),true);
+ assert.equal(profit(18000,[100,200,null]),null);assert.equal(bounded([100,200,null]),false);
+ assert.equal(bounded([100,200,-300]),true); // net zero: equality, not a forced loss
+ const profitText=read('ss-profit-inventory');for(const term of ['符号付き純調整','純控除額合計Cが非負','上限も未確定','FBA手数料・紹介料だけ'])assert.ok(profitText.includes(term),term);
+});
+test('発注候補: 期間末差引0は途中不足を解消しない。時点別に入荷を照合する',()=>{
+ const balances=(arrivalDay,reserved=0)=>Array.from({length:30},(_,i)=>{const day=i+1;return -reserved+(day>=arrivalDay?45:0)-1.5*day;});
+ const late=balances(30),timely=balances(1);
+ assert.equal(late.at(-1),0);assert.equal(late[0],-1.5);assert.equal(late[28],-43.5);
+ assert.equal(late.filter(x=>x<0).length,29);assert.ok(timely.every(x=>x>=0));
+ assert.equal(Math.max(0,45-45-0),0); // rejected period-total shortcut: says zero despite 29 shortage days
+ assert.equal(Math.max(0,...late.map(x=>-x)),43.5); // bridge deficit, not an authorized order quantity
+ assert.equal(Math.ceil(43.5/5)*5,45); // only if timely delivery and lot=5 are confirmed
+ assert.equal(0/1.5,0);assert.equal(balances(30,3)[0],-4.5); // unknown reservations cannot be silently set to zero
+ const p=read('ss-profit-inventory');for(const term of ['各不足時点まで','期間内到着','1〜29日目','仮定付き参考値0÷1.5=0日'])assert.ok(p.includes(term),term);
+});
