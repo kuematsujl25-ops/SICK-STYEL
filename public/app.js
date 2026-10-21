@@ -63,7 +63,9 @@ function auth(){
  const f=document.querySelector('#auth');if(f)f.onsubmit=async e=>{e.preventDefault();const btn=f.querySelector('button');btn.disabled=true;document.querySelector('#autherror').textContent='';try{await api(configured?'login':'setup','POST',Object.fromEntries(new FormData(f)));await load();}catch(err){const t=document.querySelector('#autherror');if(t)t.textContent=err.message;}finally{btn.disabled=false;}};
 }
 // ---------- 画面 ----------
-const nav=[['overview','◈','ダッシュボード'],['goals','◎','目標'],['tasks','☑','タスク'],['staffTasks','▤','担当タスク'],['orgSales','⬡','団体営業'],['collectionTasks','▦','集める数字'],['reelPosts','▶','リール分析'],['growthExperiments','⚗','購入実験'],['competitorAccounts','⟡','参考アカウント'],['playerCandidates','⚽','選手候補'],['shipments','▣','発送管理'],['metrics','↗','売上・SNS実績'],['finance','◫','利益・在庫'],['team','♙','AI社員'],['amazon','◆','Amazon連携'],['instagram','◉','Instagram連携'],['site','◇','サイト掲載'],['brand','✳','ブランド'],['settings','⚙','設定・バックアップ']];
+// 団体営業・集める数字・購入実験・選手候補・利益在庫はメニューから削除（データ・コードは保持、いつでも復元可能）。
+// リール分析・参考アカウント・売上SNS実績（SNS側）はInstagram画面へ、売上SNS実績（Amazon側）・利益在庫の広告費のみAmazon画面へ統合。
+const nav=[['overview','◈','ダッシュボード'],['goals','◎','目標'],['tasks','☑','タスク'],['staffTasks','▤','担当タスク'],['shipments','▣','発送管理'],['team','♙','AI社員'],['amazon','◆','Amazon連携'],['instagram','◉','Instagram連携'],['site','◇','サイト掲載'],['brand','✳','ブランド'],['settings','⚙','設定・バックアップ']];
 const names=Object.fromEntries(nav.map(([id,,name])=>[id,name]));
 const rate=g=>Math.min(100,Math.max(0,Math.round(Number(g.current||0)/Number(g.target||1)*100)));
 function render(){
@@ -152,7 +154,15 @@ function instagramView(){const c=ig?.cache;const expired=ig?.expiresAt&&ig.expir
  <section class="panel"><h2>対応待ちDMの集計定義</h2><p><b>集計方法：</b>Conversations APIで、直近30日に更新された会話（最大25件）を取得し、最新メッセージの送信者が相手（自分以外）の会話を「対応待ち」と数えます。未読数やInstagramの受信箱表示とは一致しません。</p><p><b>制限（Meta公式）：</b>メッセージ詳細は各会話の最新20件のみ。リクエストフォルダで30日以上動きのない会話は取得されません。<code>instagram_business_manage_messages</code> 権限の本人認可が必要です。</p>${dm?`<p>確認日時：${fmtTime(dm.checkedAt)}${dm.unknown?` · 判定不能 ${dm.unknown}件`:''}${dm.truncated?' · 25件を超える会話は対象外':''}</p>`:''}
  <p><b>Webhook観測（任意）：</b>${ig?.dmStartedAt?`${fmtTime(ig.dmStartedAt)} 以降の受信を観測、対応待ち ${num(ig.dmPending)} 件。受信漏れや停止期間は補完されません。`:'未設定（Webhookなしでも上の推定値は利用できます）'}</p>${ig?.webhookError?`<p class="red">Webhook設定エラー：${esc(ig.webhookError)}</p>`:''}${conversations.map(x=>`<div class="listrow"><div class="grow"><b>会話 ${esc(x.peer)}</b><small>最終受信 ${fmtTime(Number(x.received))}</small></div><button data-resolve="${esc(x.peer)}">対応済みにする</button></div>`).join('')}</section>
  <section class="panel"><div class="panelhead"><h2>リール別の実績</h2><span class="badge">${c?.reels?.length||0} 件</span></div><p>${esc(c?.scope||'接続して同期すると、最新25件の投稿に含まれるリールを表示します')}。再生数は Instagram の views です。数値は最大48時間遅れることがあります。「未取得」は権限不足・取得失敗・API未提供を示し、0とは区別しています。</p>
- ${c?.reels?.length?`<div class="records">${c.reels.map(r=>`<article class="record"><h3>${esc((r.caption||'').slice(0,120))}</h3><p class="note">${fmtTime(r.timestamp)}</p><div class="metricmini">${[['views','再生'],['reach','リーチ'],['total_interactions','反応合計'],['likes','いいね'],['comments','コメント'],['saved','保存'],['shares','シェア']].map(([k,label])=>`<span>${label}<b>${num(r.values[k])}</b></span>`).join('')}</div><p><a href="${safeLink(r.permalink)}" target="_blank" rel="noopener noreferrer">Instagramで開く ↗</a></p></article>`).join('')}</div>`:empty('リールのデータはまだありません。','接続後に同期してください。')}</section>`;}
+ ${c?.reels?.length?`<div class="records">${c.reels.map(r=>`<article class="record"><h3>${esc((r.caption||'').slice(0,120))}</h3><p class="note">${fmtTime(r.timestamp)}</p><div class="metricmini">${[['views','再生'],['reach','リーチ'],['total_interactions','反応合計'],['likes','いいね'],['comments','コメント'],['saved','保存'],['shares','シェア']].map(([k,label])=>`<span>${label}<b>${num(r.values[k])}</b></span>`).join('')}</div><p><a href="${safeLink(r.permalink)}" target="_blank" rel="noopener noreferrer">Instagramで開く ↗</a></p></article>`).join('')}</div>`:empty('リールのデータはまだありません。','接続後に同期してください。')}</section>
+ <h2 class="sectiondivider">リール分析（自己記録・テーマ別のレート分析）</h2>${renderReels(state.reelPosts,reelUI,esc,today())}
+ <h2 class="sectiondivider">参考アカウント</h2>${renderAccounts(state.competitorAccounts,accountUI,esc)}
+ <h2 class="sectiondivider">SNS実績（手入力・日次記録）</h2>${renderSnsMetrics(state.metrics,esc)}`;}
+function renderSnsMetrics(metrics,esc){
+ const rows=[...metrics].filter(m=>m.instagramEntered!==false).sort((a,b)=>b.date.localeCompare(a.date));
+ return `<section class="panel"><div class="panelhead"><h2>フォロワー・リーチ・反応の記録 <small>${rows.length} 件</small></h2><button class="primary" data-new="metrics">＋ 記録を追加</button></div>
+ <p class="note">Amazon売上・注文件数は同じ記録の一部ですが、Amazon連携画面に表示します。日付ごとに1件の記録です。</p>
+ ${rows.length?`<div class="records">${rows.slice(0,30).map(r=>`<article class="record"><div class="recordtop"><span class="badge">${esc(r.date)}</span><button data-edit="metrics:${esc(r.id)}">編集</button></div><div class="metricmini"><span>フォロワー<b>${esc(r.followers)}</b></span><span>リーチ<b>${esc(r.reach)}</b></span><span>反応<b>${esc(r.engagement)}</b></span></div>${r.notes?`<p class="note">${esc(r.notes)}</p>`:''}</article>`).join('')}</div>`:empty('SNS実績の記録はまだありません。','日次のフォロワー・リーチ・反応数を記録できます。','metrics')}</section>`;}
 function bindInstagram(){const connect=document.querySelector('#igconnect');if(connect)connect.onclick=async()=>{connect.disabled=true;try{location.assign((await api('instagram/connect','POST',{})).url);}catch(e){toast(e.message);connect.disabled=false;}};
  const sync=document.querySelector('#igsync');if(sync)sync.onclick=async()=>{sync.disabled=true;sync.textContent='同期しています…';try{ig=await api('instagram/sync','POST',{});conversations=(await api('instagram/conversations')).data;render();toast(syncMessage(ig));}catch(e){try{ig=await api('instagram/status');render();}catch{}toast(e.message);}};
  const dis=document.querySelector('#igdisconnect');if(dis)dis.onclick=async()=>{if(!confirm('Instagram接続を解除し、取得データとDM観測履歴を削除しますか？手入力データは残ります。'))return;try{const r=await api('instagram/disconnect','POST',{});ig=await api('instagram/status');conversations=[];render();toast(r.warning||'接続を解除しました');}catch(e){toast(e.message);}};
@@ -176,7 +186,38 @@ function amazonView(){const c=amz?.cache;const o=c?.orders;
  <section class="panel"><h2>集計の定義</h2><p><b>売上：</b>${esc(amz?.salesDefinition||'')}</p><p><b>注文・発送状況：</b>${esc(amz?.ordersDefinition||'')}</p></section>
  ${o?`<section class="panel"><h2>注文の状況（直近31日）</h2><div class="tablewrap"><table class="data"><thead><tr><th>状況</th><th>件数</th></tr></thead><tbody>${Object.entries(o.counts).map(([k,v])=>`<tr><td>${esc(statusJa[k]||k)}</td><td>${v}</td></tr>`).join('')}</tbody></table></div>${o.open.length?`<h3>未発送の注文（古い順）</h3>${o.open.map(x=>`<div class="listrow"><div class="grow"><b>${esc(x.orderId)}</b><small>${fmtTime(x.createdTime)} · ${esc(statusJa[x.status]||x.status)} · ${x.fulfilledBy==='AMAZON'?'FBA':'自己発送'} · ${x.items}点</small></div></div>`).join('')}`:''}</section>`:''}
  ${c?.daily?.length?`<section class="panel"><h2>日別売上（Sales API）</h2><div class="tablewrap"><table class="data"><thead><tr><th>日付</th><th>売上</th><th>注文</th><th>点数</th></tr></thead><tbody>${[...c.daily].reverse().map(d=>`<tr><td>${esc(d.date)}</td><td>${d.sales===null?'未取得':yen(d.sales)}</td><td>${num(d.orders)}</td><td>${num(d.units)}</td></tr>`).join('')}</tbody></table></div></section>`:''}
- <section class="panel"><h2>認可前・認可待ちの入力方法</h2><p>「売上・SNS実績」画面で日次の売上・注文件数を手入力するか、CSV（日付・売上・注文件数の列）を取り込めます。Seller Centralの「レポート」→「ビジネスレポート」の日付別レポート（売上とトラフィック）をCSVでダウンロードし、取り込み時に列を選択してください。</p><button class="secondary" data-nav="metrics">売上・SNS実績を開く</button></section>`;}
+ ${renderSalesChart(c,state.metrics)}
+ ${renderRoas()}
+ ${renderFactorNotes(c)}
+ <section class="panel"><h2>認可前・認可待ちの入力方法</h2><p>日次の売上・注文件数を手入力するか、CSV（日付・売上・注文件数の列）を取り込めます。Seller Centralの「レポート」→「ビジネスレポート」の日付別レポート（売上とトラフィック）をCSVでダウンロードし、取り込み時に列を選択してください。</p><div class="actions"><button class="secondary" id="csvopen">CSVから取り込む</button><button class="primary" data-new="metrics">＋ 今日の売上を手入力</button></div></section>`;}
+function dailySalesRows(c,metrics){
+ if(c?.daily?.length)return c.daily.map(d=>({date:d.date,value:d.sales,source:'api'}));
+ const t=today();const ym=month();
+ return metrics.filter(m=>m.date.startsWith(ym)&&m.date<=t).sort((a,b)=>a.date.localeCompare(b.date)).map(m=>({date:m.date,value:m.sales,source:'manual'}));
+}
+function renderSalesChart(c,metrics){
+ const rows=dailySalesRows(c,metrics);
+ const t=today();const todayRow=rows.find(r=>r.date===t);
+ const max=Math.max(1,...rows.map(r=>r.value||0));
+ return `<section class="panel"><div class="panelhead"><h2>月の売上（棒グラフ）</h2><span class="badge">${rows[0]?.source==='api'?'Sales API':'手入力・CSV'}</span></div>
+ <div class="stats igstats"><article><small>今日の売上（${esc(t)}）</small><strong>${todayRow&&todayRow.value!==null?yen(todayRow.value):'未取得'}</strong><span>${rows.length?'当月の記録から':'記録なし'}</span></article></div>
+ ${rows.length?`<div class="barchart" role="img" aria-label="日別売上の棒グラフ">${rows.map(r=>{const pct=r.value===null?2:Math.max(2,Math.round(r.value/max*100));const step=Math.max(0,Math.min(20,Math.round(pct/5)));return `<div class="bar h${step} ${r.date===t?'today':''}" title="${esc(r.date)}: ${r.value===null?'未取得':yen(r.value)}"></div>`;}).join('')}</div><p class="note">棒の高さは当月内の最大売上日を100%とした相対表示（5%刻み）です。「未取得」の日は最小の目印のみです。</p>`:'<p class="note">当月の売上記録がまだありません。</p>'}</section>`;}
+function renderRoas(){
+ const r=financeReport;
+ if(!r||r.status!=='analyzed'||!r.totals)return `<section class="panel"><h2>広告費用対効果</h2><p class="note">「利益レポートを読み込む」から、広告費（advertising_jpy）を含むレポートを読み込むと表示します。ブラウザーのメモリ上のみで保持し、送信・保存はしません。</p><label class="secondary filelabel">利益レポートを読み込む<input id="financefile" class="sr-only" type="file" accept="application/json,.json"></label></section>`;
+ const ad=r.totals.advertising_jpy,rev=r.totals.revenue_jpy;
+ const roas=ad&&ad>0&&rev!==null?Math.round(rev/ad*100)/100:null;
+ return `<section class="panel"><div class="panelhead"><h2>広告費用対効果</h2><div class="actions"><label class="secondary filelabel">レポートを読み込み直す<input id="financefile" class="sr-only" type="file" accept="application/json,.json"></label><button id="financeclear" class="secondary">表示を消去</button></div></div>
+ <p class="note">対象期間（レポートの集計期間。今月とは限りません）: ${esc(new Date(r.period.start).toLocaleString('ja-JP',{timeZone:'Asia/Tokyo'}))} 〜 ${esc(new Date(r.period.end).toLocaleString('ja-JP',{timeZone:'Asia/Tokyo'}))}</p>
+ <div class="stats igstats"><article><small>広告費</small><strong>${ad===null?'未取得':yen(ad)}</strong></article><article><small>売上（同期間）</small><strong>${rev===null?'未取得':yen(rev)}</strong></article><article><small>ROAS（売上 ÷ 広告費）</small><strong>${roas===null?'未取得':roas+'倍'}</strong><span>${roas===null?'広告費が0または未取得のため算出できません':'手数料・原価は考慮していません（粗利ベースではありません）'}</span></article></div></section>`;}
+function renderFactorNotes(c){
+ const ig_delta=typeof ig?.cache?.delta==='number'?ig.cache.delta:null;
+ const ad=financeReport?.status==='analyzed'?financeReport.totals?.advertising_jpy:null;
+ const salesDelta=(()=>{const rows=dailySalesRows(c,state.metrics);const vals=rows.filter(r=>r.value!==null);if(vals.length<2)return null;return vals.at(-1).value-vals[0].value;})();
+ return `<section class="panel"><h2>売上に関わりうる要因の整理（相関ではありません）</h2>
+ <p class="note">以下は同時期に観測された数値を並べているだけで、因果関係・相関係数を計算・断定したものではありません。Instagramのフォロワー増減と広告費は「売上とは別の指標」として個別に確認してください。</p>
+ <div class="metricmini"><span>Instagramフォロワー増減<b>${ig_delta===null?'未取得':(ig_delta>0?'+':'')+ig_delta.toLocaleString('ja-JP')}</b></span><span>広告費（読み込んだ期間）<b>${ad===null||ad===undefined?'未取得':yen(ad)}</b></span><span>当月の売上変化（月初→直近記録）<b>${salesDelta===null?'未取得':(salesDelta>0?'+':'')+yen(salesDelta)}</b></span></div>
+ <p class="note">データ数が少ないため統計的な検証はできません。要因を特定するには、広告のオン/オフや投稿テーマを変えたうえでの比較（施策前後の差分測定）が必要です。</p></section>`;}
 function bindAmazon(){const c=document.querySelector('#amzconnect');if(c)c.onclick=async()=>{c.disabled=true;try{location.assign((await api('amazon/connect','POST',{})).url);}catch(e){toast(e.message);c.disabled=false;}};
  const s=document.querySelector('#amzsync');if(s)s.onclick=async()=>{s.disabled=true;s.textContent='同期しています…';try{amz=await api('amazon/sync','POST',{});render();toast(syncMessage(amz));}catch(e){if(e.body?.status)amz=e.body.status;render();toast(e.message);}};
  const d=document.querySelector('#amzdisconnect');if(d)d.onclick=async()=>{if(!confirm('Amazon接続を解除し、保存した認可トークンと取得データを削除しますか？手入力データは残ります。'))return;try{const r=await api('amazon/disconnect','POST',{});amz=await api('amazon/status');render();toast(r.warning||'接続を解除しました');}catch(e){toast(e.message);}};}
