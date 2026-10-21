@@ -3,10 +3,16 @@
 import {RESEARCHED_PLAYERS} from './player-research.js';
 export const LEAGUES=['Jリーグ','海外'];
 export const TIERS=['候補','提供済み','憧れ枠','相談可能性枠'];
+export const PRIORITY=['高','中','低'];
+export const SAMPLE_STATUS=['未提供','提供準備中','提供済み'];
+export const HOMEPAGE_STATUS=['非掲載','掲載候補','公開済み'];
 export const playerFields=[
  ['name','選手・候補者名','text',undefined,undefined,true],
  ['league','リーグ区分','select',LEAGUES],
  ['tier','区分','select',TIERS],
+ ['priority','候補の優先度','select',PRIORITY],
+ ['sampleStatus','サンプル提供状況','select',SAMPLE_STATUS],
+ ['homepageStatus','ホームページ掲載（提供済みのみ選択可）','select',HOMEPAGE_STATUS],
  ['affiliation','所属','text'],
  ['position','ポジション','text'],
  ['profileUrl','公式プロフィールURL','text'],
@@ -24,21 +30,22 @@ export const playerFields=[
  ['sourceUrl','出典URL','text'],
  ['brandFitReason','ブランド適合の理由（仮説として記載）','textarea'],
  ['confirmItems','確認事項（契約費・連絡可否・競合スポンサー等）','textarea'],
- ['negotiationStatus','交渉状況','text'],
+ ['negotiationStatus','連絡状況（交渉状況）','text'],
 ];
 const n=v=>v===null||v===undefined?'未取得':v.toLocaleString('ja-JP');
 const pct=v=>v===null||v===undefined?'未取得':Math.round(v*1000)/10+'%';
 const safeUrl=v=>typeof v==='string'&&/^https:\/\/[^\s"<>]+$/i.test(v)?v:'';
 function row(x,esc){
- return `<article class="record"><div class="recordtop"><span class="badge ${x.tier==='提供済み'?'ok':''}">${esc(x.tier)}</span><button data-edit="playerCandidates:${esc(x.id)}">編集</button></div><h3>${esc(x.name)}</h3>
+ return `<article class="record"><div class="recordtop"><span class="badge ${x.tier==='提供済み'?'ok':''}">${esc(x.tier)}</span>${x.priority?`<span class="badge ${x.priority==='高'?'danger':''}">優先度 ${esc(x.priority)}</span>`:''}<button data-edit="playerCandidates:${esc(x.id)}">編集</button></div><h3>${esc(x.name)}</h3>
  <div class="playerprofile">${safeUrl(x.photoUrl)?`<img class="playerphoto" loading="lazy" src="${esc(x.photoUrl)}" alt="${esc(x.name)}の許諾済み写真" referrerpolicy="no-referrer">`:'<div class="playerphoto playerplaceholder" aria-hidden="true">⚽</div>'}<div>
  <p class="note">${esc(x.affiliation||'所属未入力')} · ${esc(x.position||'ポジション未入力')}${x.period?' · 集計期間 '+esc(x.period):''}</p>
  ${safeUrl(x.profileUrl)?`<a href="${esc(x.profileUrl)}" target="_blank" rel="noopener noreferrer">公式プロフィール・写真 ↗</a>`:''}</div></div>
  <div class="metricmini"><span>ドリブル試行<b>${n(x.dribbleAttempts)}</b></span><span>成功率<b>${pct(x.successRate)}</b></span><span>成功/90分<b>${n(x.successfulPer90)}</b></span><span>フェイント回数<b>${n(x.feintCount)}</b></span><span>出場時間<b>${x.playTimeMin===null?'未取得':x.playTimeMin+'分'}</b></span></div>
+ <p class="note">連絡状況: ${esc(x.negotiationStatus||'未接触')} · サンプル提供: ${esc(x.sampleStatus||'未提供')}${x.homepageStatus&&x.homepageStatus!=='非掲載'?' · ホームページ: '+esc(x.homepageStatus):''} · データ更新: ${x.updatedAt?esc(new Date(x.updatedAt).toLocaleString('ja-JP',{timeZone:'Asia/Tokyo'})):'未記録（旧データ）'}</p>
  <p class="note">出典: ${esc(x.source||'未入力')}${safeUrl(x.sourceUrl)?` <a href="${esc(x.sourceUrl)}" target="_blank" rel="noopener noreferrer">出典を開く ↗</a>`:''}${x.photoCredit?' · 写真: '+esc(x.photoCredit):''}${safeUrl(x.photoSourceUrl)?` <a href="${esc(x.photoSourceUrl)}" target="_blank" rel="noopener noreferrer">写真の出典・利用条件 ↗</a>`:''}${x.dribbleAttempts!==null||x.successRate!==null?'（他選手との単純な総合順位化はしていません。リーグ・年度・集計方法が異なります）':''}</p>
  ${x.brandFitReason?`<p>ブランド適合の理由（仮説）: ${esc(x.brandFitReason)}</p>`:''}
  ${x.confirmItems?`<p class="note">確認事項: ${esc(x.confirmItems)}</p>`:''}
- ${x.negotiationStatus?`<p class="note">交渉状況: ${esc(x.negotiationStatus)}</p>`:''}</article>`;
+ ${x.homepageStatus==='公開済み'?'<p class="note">ホームページへ掲載済みとして記録されています。実際の公開はサイト掲載画面で確定操作が必要です。</p>':x.homepageStatus==='掲載候補'?'<p class="note">ホームページ掲載候補として選択されています（まだ公開されていません）。サイト掲載画面から公開してください。</p>':''}</article>`;
 }
 export function renderPlayers(players,ui,esc){
  const filtered=players.filter(x=>(ui.league==='all'||x.league===ui.league)&&(ui.tier==='all'||x.tier===ui.tier));
