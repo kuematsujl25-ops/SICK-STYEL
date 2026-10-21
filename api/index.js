@@ -1,7 +1,7 @@
 import {readTeam,writeTeam,taskPacket,TeamError} from '../lib/ai-team.js';
 import {runtime} from '../lib/runtime.js';
 import {getStore} from '../lib/runtime.js';
-import {empty,validate} from '../lib/domain.js';
+import {empty,validate,migrate} from '../lib/domain.js';
 import {hash,token,equal} from '../lib/security.js';
 import {hashPassword,verifyPassword} from '../lib/password.js';
 import * as instagram from '../integrations/instagram.js';
@@ -12,7 +12,7 @@ function json(res,status,value){res.writeHead(status,{'Content-Type':'applicatio
 export async function rawBody(req){if(req._sickstyleRaw)return req._sickstyleRaw;let n=0;const chunks=[];for await(const c of req){const b=Buffer.from(c);n+=b.length;if(n>2_000_000)throw Error('データが大きすぎます');chunks.push(b);}return req._sickstyleRaw=Buffer.concat(chunks);}
 async function body(req){return JSON.parse((await rawBody(req)).toString()||'{}');}
 const cookie=(value,seconds)=>`session=${value}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${seconds}${(runtime().CLOUDFLARE&&runtime().CF_LOCAL_DEV!=='true')||runtime().VERCEL||runtime().COOKIE_SECURE==='true'?'; Secure':''}`;
-const revisionOf=async store=>{const r=await store.doc('workspace');return {...(r?JSON.parse(r.body):empty()),revision:r?.revision||0};};
+const revisionOf=async store=>{const r=await store.doc('workspace');return {...migrate(r?JSON.parse(r.body):empty()),revision:r?.revision||0};};
 export default async function handler(req,res){
  res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('Cache-Control','no-store');
  try{
