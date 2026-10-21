@@ -122,10 +122,10 @@ function settings(){return `<div class="settingsgrid"><section class="panel"><h2
  <li>Client ID / Client Secretを確認し、Macのターミナルで <code>npm run integrations:zoom -- --plan</code> を実行して登録内容を確認します。Cloudflareへの反映が別途承認済みの場合に限り、同じコマンドの <code>--apply</code> で非表示入力して登録します。秘密値はチャットやGitに貼らないでください。</li>
  <li>この画面で「Zoomを接続」→ Zoom公式画面で本人認可します。</li></ol></details>
  <div class="actions">${zoomStatus?.configured?`<button class="primary" id="zoomconnect">${zoomStatus.connected?'再認可する':'Zoomを接続'}</button>`:''}${zoomStatus?.connected?'<button id="zoomdisconnect" class="red">接続を解除</button>':''}</div></div>
- <div class="integration"><b>Googleカレンダー</b>${zoomCalendarBadge(calendarStatus)}<p>${calendarStatus?.connected?'接続アカウント: '+esc(calendarStatus.email||'—'):'本人のGoogleアカウントで認可してください（予定の作成・変更・削除のみの最小スコープ）。'}</p>
+ <div class="integration"><b>Googleカレンダー</b>${zoomCalendarBadge(calendarStatus)}<p>${calendarStatus?.connected?'カレンダー認可済み（メール情報の取得は要求していません）':'本人のGoogleアカウントで認可してください（予定の作成・変更・削除のみの最小スコープ）。'}</p>
  <details class="guide" ${!calendarStatus?.configured?'open':''}><summary><b>Google Cloud アプリ登録の手順</b></summary><ol>
  <li><a href="https://console.cloud.google.com/" target="_blank" rel="noopener noreferrer">Google Cloud Console ↗</a>でプロジェクトを作成・選択し、「APIとサービス」→「ライブラリ」で Google Calendar API を有効にします。</li>
- <li>「APIとサービス」→「OAuth同意画面」でアプリ名・サポートメールを設定し、スコープに <code>https://www.googleapis.com/auth/calendar.events</code> を追加します。公開ステータスは「テスト中」のままだとリフレッシュトークンが7日で失効するため、本人のみが使う場合も「本番環境」に公開してください（Googleの審査が必要な「制限付きスコープ」ではないため、本人確認なしで公開できますが、「確認されていないアプリ」の警告画面が出た場合は「詳細」→自社アプリ名を選んで進めてください）。</li>
+ <li>「APIとサービス」→「OAuth同意画面」でアプリ名・サポートメールを設定し、スコープに <code>https://www.googleapis.com/auth/calendar.events</code> を追加します。公開ステータスは「テスト中」のままだとリフレッシュトークンが7日で失効するため、本人のみが使う場合も「本番環境」に公開してください（カレンダー予定の編集権限はセンシティブなスコープに分類される可能性があり、外部向け公開にはGoogleの審査が必要な場合があります。公開・認証の画面に出るGoogleの指示に従い、審査や利用制限を回避しないでください）。</li>
  <li>「認証情報」→「OAuth クライアント ID を作成」→ アプリケーションの種類は「ウェブ アプリケーション」→ 承認済みのリダイレクトURIに <code>https://sickstyle-manager.sickstyle-74h4.workers.dev/api/googlecalendar/callback</code> を登録します。</li>
  <li>クライアントID/シークレットを確認し、Macのターミナルで <code>npm run integrations:googlecalendar -- --plan</code> を実行して登録内容を確認します。Cloudflareへの反映が別途承認済みの場合に限り、同じコマンドの <code>--apply</code> で非表示入力して登録します。</li>
  <li>この画面で「Googleカレンダーを接続」→ Google公式画面で本人認可します（オフラインアクセスの同意が必要です）。</li></ol></details>
