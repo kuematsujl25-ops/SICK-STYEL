@@ -51,6 +51,6 @@ export function renderPlayers(players,ui,esc){
  <div class="recordtop"><span class="badge">${x.league==='Jリーグ'?'Jリーグ':'海外'}・${esc(x.tier)}</span><button data-addresearch="${esc(x.key)}" ${players.some(p=>p.name===x.name&&p.period===x.period)?'disabled':''}>${players.some(p=>p.name===x.name&&p.period===x.period)?'登録済み':'候補に登録'}</button></div>
  <div class="playerprofile"><div class="playerphoto playerplaceholder" aria-hidden="true">⚽</div><div><h3>${esc(x.name)}</h3><p class="note">${esc(x.affiliation)} · ${esc(x.period)}</p></div></div>
  <div class="metricmini"><span>ドリブル試行数<b>${n(x.dribbleAttempts)}</b></span><span>成功ドリブル/90<b>${n(x.successfulPer90)}</b></span><span>成功率<b>未取得</b></span><span>フェイント数<b>未取得</b></span></div>
- <p>${esc(x.brandFitReason)}</p><p class="note">出典: <a href="${esc(x.sourceUrl)}" target="_blank" rel="noopener noreferrer">${esc(x.source)} ↗</a></p>
+ <p>${esc(x.brandFitReason)}</p>${safeUrl(x.profileUrl)?`<p><a href="${esc(x.profileUrl)}" target="_blank" rel="noopener noreferrer">公式選手プロフィール・写真を見る ↗</a></p>`:''}<p class="note">出典: <a href="${esc(x.sourceUrl)}" target="_blank" rel="noopener noreferrer">${esc(x.source)} ↗</a></p>
  </article>`).join('')}</div></section>`;
 }
