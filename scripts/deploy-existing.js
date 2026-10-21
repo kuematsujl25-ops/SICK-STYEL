@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 import {randomUUID} from 'node:crypto';
 import {ensureFree} from './lib/free-check.js';
 import {requireWranglerLogin} from './lib/wrangler-auth.js';
-import {reviewForHead,productionVersions,verifySqlBackup,checkReadiness} from './lib/release-readiness.js';
+import {reviewForHeadOrWaiver,productionVersions,verifySqlBackup,checkReadiness} from './lib/release-readiness.js';
 import {ask} from './lib/prompt.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)),'..');
@@ -40,8 +40,11 @@ function versionConfig(config) {
   return path;
 }
 try {
-  const args = process.argv.slice(2);
-  if (args.length && (args.length !== 1 || !['--apply','--dry-run','--preflight'].includes(args[0]))) throw Error('引数は省略（確認のみ）、または --dry-run / --preflight / --apply のみを指定してください');
+  const rawArgs = process.argv.slice(2);
+  const waiveCodexReview = rawArgs.includes('--waive-codex-review');
+  const args = rawArgs.filter(a=>a!=='--waive-codex-review');
+  if (args.length && (args.length !== 1 || !['--apply','--dry-run','--preflight'].includes(args[0]))) throw Error('引数は省略（確認のみ）、または --dry-run / --preflight / --apply のみを指定してください（--waive-codex-review は --preflight とのみ併用できます）');
+  if (waiveCodexReview && args[0] !== '--preflight') throw Error('--waive-codex-review は --preflight とのみ併用できます');
   const config = JSON.parse(readFileSync('wrangler.jsonc','utf8'));
   if (config.name !== 'sickstyle-manager' || config.account_id!=='0e7f3c8d35e879a843cda721fc0435f0' ||
       config.d1_databases?.[0]?.database_id !== '009fbd34-6b04-4a82-8e33-cfc44c2416ec')
@@ -54,7 +57,7 @@ try {
         throw Error('コード専用Versionのdry-runが失敗しました');
     } finally { rmSync(path,{force:true}); }
   } else if (!args.length) {
-    console.log('確認のみ。対象: '+config.name+'\n手順: 最新SHAの独立レビュー → 本人認証 → Free/追加費用0円確認 → 本番Version記録 → D1バックアップ/ローカル復元確認 → npm test/build → コード専用dry-run → Version反映 → 読み取り検証\nSecrets・Variables・DBマイグレーション・Cron・ルート・プランの変更は行いません。npm run deploy:preflight の成功が --apply の前提です。');
+    console.log('確認のみ。対象: '+config.name+'\n手順: 最新SHAの独立レビュー → 本人認証 → Free/追加費用0円確認 → 本番Version記録 → D1バックアップ/ローカル復元確認 → npm test/build → コード専用dry-run → Version反映 → 読み取り検証\nSecrets・Variables・DBマイグレーション・Cron・ルート・プランの変更は行いません。npm run deploy:preflight の成功が --apply の前提です。\nCodexレビューが利用できない場合のみ、npm run deploy:preflight -- --waive-codex-review と環境変数 CODEX_REVIEW_WAIVER_REASON で理由を明示し、保留を記録した上で進められます（他の安全確認は省略されません）。');
   } else {
     const who = wrangler(['whoami','--json']);
     const account=requireWranglerLogin(who);
@@ -69,9 +72,19 @@ try {
     const receiptPath=resolve(root,'data/deploy-readiness',head+'.json');
     if(args[0]==='--preflight') {
       process.umask(0o077);
-      const review=reviewForHead(root,head,reviewBase);
-      console.log('最新SHA: '+head+'\n独立レビュー: '+resolve(root,review.file));
-      await confirmed('上記レビュー本文を読み、未解決のP0/P1/P2がないことを確認しましたか？');
+      let waiverReason;
+      if (waiveCodexReview) {
+        waiverReason = (env.CODEX_REVIEW_WAIVER_REASON||'').trim();
+        if (!waiverReason) throw Error('--waive-codex-review には環境変数 CODEX_REVIEW_WAIVER_REASON で理由を指定してください');
+      }
+      const review=reviewForHeadOrWaiver(root,head,reviewBase,waiverReason);
+      if (review.waived) {
+        console.log('Codex独立レビューは保留として記録されました（レビューなしを隠す偽装はしていません）。\n理由: '+review.reason+'\n保留の記録: '+resolve(root,review.file));
+        await confirmed('Codex独立レビューを一時的に保留することを明示的に承認しましたか？（npm run ai:review は今後も利用可能なまま維持されます）');
+      } else {
+        console.log('最新SHA: '+head+'\n独立レビュー: '+resolve(root,review.file));
+        await confirmed('上記レビュー本文を読み、未解決のP0/P1/P2がないことを確認しましたか？');
+      }
       await confirmed('上記SHAのGitHub CI成功、Secrets検査、PC/iPhone相当表示を確認しましたか？');
       await confirmed('本人のCloudflare画面でWorkers・D1がFree、追加契約・従量課金が発生しないことを確認しましたか？');
       const previous=currentVersions();
