@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeOrgKPI, renderOrgList, renderOrgKPI, newOrg } from '../public/org-sales.js';
+import { computeOrgKPI, renderOrgList, renderOrgKPI, renderOrgEditor, newOrg } from '../public/org-sales.js';
 
 const esc = String;
 const org = (over = {}) => ({ id: 'o1', name: 'テストFC', category: 'サッカー', size: '', assignee: '竹田', contact: '',
@@ -62,10 +62,38 @@ test('overdue next-action is not flagged for lost/repeat-purchase orgs', () => {
   assert.doesNotMatch(html, /期限超過/);
 });
 
+test('停滞案件は14日以上動きがない進行中の団体だけに表示され、失注・継続購入・連絡不要は対象外', () => {
+  const stalled = org({ id: 's', history: [{ stage: 'DM送信', at: '2026-10-01T00:00:00.000Z', note: '' }] });
+  const fresh = org({ id: 'f', history: [{ stage: 'DM送信', at: '2026-10-15T00:00:00.000Z', note: '' }] });
+  const lostButOld = org({ id: 'l', stage: '失注', history: [{ stage: '失注', at: '2026-09-01T00:00:00.000Z', note: '' }] });
+  const html = renderOrgList([stalled, fresh, lostButOld], { stage: 'all', assignee: 'all' }, esc, '2026-10-21');
+  assert.match(html, /停滞案件（14日以上動きなし）<\/small><strong>1/);
+  assert.match(html, />停滞</);
+});
+
 test('newOrg starts with the first pipeline stage and empty history', () => {
   const o = newOrg();
   assert.equal(o.stage, 'DM送信');
   assert.deepEqual(o.history, []);
+});
+
+test('MTG自動作成ボタンは、Zoom・Googleカレンダーとも接続済みで、かつ団体が保存済みの場合のみ表示される', () => {
+  const saved = org({ id: 'o1', initialZoomAt: '2026-10-28T14:00' });
+  const unconnected = renderOrgEditor(saved, esc, '2026-10-21', { zoomConnected: false, calendarConnected: true });
+  assert.doesNotMatch(unconnected, /data-mtgsync="initial:create"/);
+  const unsaved = renderOrgEditor(null, esc, '2026-10-21', { zoomConnected: true, calendarConnected: true });
+  assert.doesNotMatch(unsaved, /data-mtgsync="initial:create"/);
+  const ready = renderOrgEditor(saved, esc, '2026-10-21', { zoomConnected: true, calendarConnected: true });
+  assert.match(ready, /data-mtgsync="initial:create"/);
+  assert.match(ready, /MTGを作成/);
+});
+
+test('同期済みMTGは「日程を同期し直す」「MTGを取消」を表示し、未作成時は作成ボタンのみ', () => {
+  const synced = org({ id: 'o1', initialZoomAt: '2026-10-28T14:00', initialMeetingSync: { requestId: 'r1', zoomMeetingId: 'z1', calendarEventId: 'e1', status: 'synced', error: null, updatedAt: '2026-10-21T00:00:00.000Z' } });
+  const html = renderOrgEditor(synced, esc, '2026-10-21', { zoomConnected: true, calendarConnected: true });
+  assert.match(html, /data-mtgsync="initial:update"/);
+  assert.match(html, /data-mtgsync="initial:cancel"/);
+  assert.doesNotMatch(html, /data-mtgsync="initial:create"/);
 });
 
 test('cohort table renders a conversion rate with explicit denominator', () => {
