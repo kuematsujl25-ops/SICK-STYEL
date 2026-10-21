@@ -13,9 +13,25 @@ test('掲載データの検証: 危険なURL・不正な価格を拒否',()=>{
  assert.throws(()=>validateSite({...base,products:[product({price:-1})]}));
  assert.throws(()=>validateSite({...base,products:[product(),product()]}),/ID/);
 });
+const sitePlayer=(o={})=>({id:'pl1',name:'テスト選手',league:'Jリーグ',affiliation:'テストFC',position:'FW',note:'',photo:'',photoCredit:'',photoSourceUrl:'',profileUrl:'',sortOrder:1,published:true,...o});
+test('選手掲載: 写真を使う場合は権利者・出典URLが必須。旧リーグ以外は拒否',()=>{
+ const base={...emptySite(),players:[sitePlayer()]};assert.equal(validateSite(base).players[0].name,'テスト選手');
+ assert.throws(()=>validateSite({...base,players:[sitePlayer({league:'海外'}),sitePlayer({league:'海外'})]}),/ID/);
+ assert.throws(()=>validateSite({...base,players:[sitePlayer({league:'アジア'})]}));
+ assert.throws(()=>validateSite({...base,players:[sitePlayer({photo:'https://example.com/p.jpg'})]}),/権利者・出典/);
+ assert.doesNotThrow(()=>validateSite({...base,players:[sitePlayer({photo:'https://example.com/p.jpg',photoCredit:'Author / CC BY 4.0',photoSourceUrl:'https://example.com/license'})]}));
+ assert.throws(()=>validateSite({...base,players:[sitePlayer({photo:'javascript:alert(1)',photoCredit:'x',photoSourceUrl:'https://example.com'})]}));
+});
+test('旧いsite-draft（playersキーなし）はemptySite()で補完され、保存を妨げない',()=>{
+ const legacy={products:[],news:[],philosophy:emptySite().philosophy,links:emptySite().links};
+ const merged={...emptySite(),...legacy};
+ assert.deepEqual(merged.players,[]);
+ assert.doesNotThrow(()=>validateSite(merged));
+});
 test('公開ビュー: 非掲載を除外し管理用項目を出さない',()=>{
- const v=publicView({...emptySite(),products:[product({sortOrder:2}),product({id:'gold',name:'Gold',sortOrder:1}),product({id:'x',name:'非掲載',published:false})],news:[{id:'n1',date:'2026-10-01',title:'古い',published:true},{id:'n2',date:'2026-10-10',title:'新しい',published:true},{id:'n3',date:'2026-10-11',title:'下書き',published:false}]},'2026-10-17T00:00:00Z');
+ const v=publicView({...emptySite(),products:[product({sortOrder:2}),product({id:'gold',name:'Gold',sortOrder:1}),product({id:'x',name:'非掲載',published:false})],news:[{id:'n1',date:'2026-10-01',title:'古い',published:true},{id:'n2',date:'2026-10-10',title:'新しい',published:true},{id:'n3',date:'2026-10-11',title:'下書き',published:false}],players:[sitePlayer({id:'provided',sortOrder:2}),sitePlayer({id:'candidate-hidden',published:false}),sitePlayer({id:'first',sortOrder:1})]},'2026-10-17T00:00:00Z');
  assert.deepEqual(v.products.map(p=>p.id),['gold','black']);assert.equal('published' in v.products[0],false);assert.equal('sortOrder' in v.products[0],false);assert.deepEqual(v.news.map(n=>n.id),['n2','n1']);
+ assert.deepEqual(v.players.map(p=>p.id),['first','provided']);assert.equal('published' in v.players[0],false);assert.equal('sortOrder' in v.players[0],false);
 });
 test('API: 認証必須の編集・公開操作のみ公開APIへ反映・CORS・既存業務データ非干渉',async t=>{
  const dir=await mkdtemp(path.join(tmpdir(),'ss-site-'));let base,cookie='';
