@@ -4,7 +4,7 @@ const states={queued:'実行待ち',in_review:'人間レビュー待ち',complet
 export function renderTeam(model,esc){
  if(!model)return '<section class="panel"><p>AI社員を読み込んでいます。</p></section>';
  const {state,catalog}=model;
- return `<section class="panel"><div class="panelhead"><h2>AI社員チーム</h2><button id="teamtoggle" class="${state.enabled?'secondary':'primary'}">${state.enabled?'手動運用を停止':'手動運用を開始'}</button></div><p>この画面で依頼を登録し、お使いのClaude CodeまたはCodex CLIで分析します。依頼の保存とAIによる分析実行は別操作です。分析結果はJSONで取り込んでから確認してください。</p><p class="note">現在：${state.enabled?'手動運用中':'停止中'} · 外部投稿・価格変更・発注・APIの自動実行は行いません。</p><a href="/api/ai-team/export" download>依頼・成果物・レビュー履歴をバックアップ</a></section>
+ return `<section class="panel"><div class="panelhead"><h2>AI社員チーム</h2><button id="teamtoggle" class="${state.enabled?'secondary':'primary'}">${state.enabled?'手動運用を停止':'手動運用を開始'}</button></div><p>依頼の保存後、Mac上のAIランナーを起動していればClaude Codeが自動で分析し、成果物を管理アプリに取り込みます。ランナー停止中は「実行待ち」のまま残ります。</p><p class="note">現在：${state.enabled?'手動運用中':'停止中'} · 外部投稿・価格変更・発注・APIの自動実行は行いません。</p><p class="note">初回はMacのターミナルで <code>npm run ai:runner</code> を起動し、この管理アプリの本人ログイン情報を入力してください。ランナーはMac起動中のみ動作し、Claude Codeの既存契約を使います。タスクの投稿・DM送信・外部設定変更は行いません。</p><a href="/api/ai-team/export" download>依頼・成果物・レビュー履歴をバックアップ</a></section>
  <div class="records teamroles">${catalog.map(r=>`<article class="record"><span class="badge">${esc(names[r.id]||r.id)}</span><h3>${esc(r.mission)}</h3><p class="note">${esc(r.inputs.join(' / '))}</p><button data-team-role="${esc(r.id)}" class="secondary">この担当に依頼</button></article>`).join('')}</div>
  <section class="panel"><h2>新しい依頼</h2><form id="teamcreate"><label>担当<select name="role">${catalog.map(r=>`<option value="${esc(r.id)}">${esc(names[r.id]||r.id)}</option>`).join('')}</select></label><label>依頼名<input name="title" maxlength="120" required></label><label>目的・確認したいこと<textarea name="objective" maxlength="2000" required></textarea></label><details><summary>根拠となる数値・事実を添える（任意）</summary><label>確認済みの数値・事実<textarea name="fact" maxlength="500"></textarea></label><label>取得元・確認方法<input name="source" maxlength="500"></label><label>データの日付（日本時間）<input name="date" type="date" value="${new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'})}"></label><p class="note">顧客名・メール・パスワード・トークンは入力しないでください。根拠がない内容は事実として扱いません。</p></details><label>BASE・TikTok・Metricoolの根拠CSV（任意）<input name="evidence_csv" type="file" accept="text/csv,.csv"></label><p class="note">指定テンプレートの1〜30行を根拠として保存します。空欄は未取得。サービス別に扱い、Amazon売上へ加算しません。</p><button class="primary">${state.enabled?'依頼を保存':'手動運用を開始して依頼を保存'}</button><p class="note">初回の保存時に手動運用を開始します。AIはまだ自動実行されず、投稿・送信・外部変更も行いません。</p></form></section>
  <section class="panel"><div class="panelhead"><h2>依頼と成果物 <small>${state.jobs.length}件</small></h2><label class="secondary filelabel">成果物JSONを取り込む<input id="teamresult" type="file" accept="application/json,.json" class="sr-only" ${state.enabled?'':'disabled'}></label></div>
@@ -30,7 +30,7 @@ export function bindTeam({model,api,setModel,render,toast}){
  }
  const updated=await api('ai-team','POST',{revision,command:{action:'create',job:{role:f.role,title:f.title,objective:f.objective,facts}}});
  setModel(updated);render();
- toast('依頼を保存しました。分析はまだ実行されていません。下の依頼JSONをClaude Codeで実行してください。');}catch(e){toast(e.message);}};
+ toast('依頼を保存しました。MacのAIランナーが起動中なら自動的に分析されます。停止中は実行待ちです。');}catch(e){toast(e.message);}};
 
  document.querySelectorAll('[data-team-copy]').forEach(b=>b.onclick=async()=>{
   const job=model.state.jobs.find(x=>x.id===b.dataset.teamCopy);

@@ -11,7 +11,7 @@ test('stopped AI team shows actionable first request submission, not a disabled 
  const html=renderTeam({state:emptyTeam(),catalog:TEAM_CATALOG},esc);
  assert.match(html,/手動運用を開始して依頼を保存/);
  assert.doesNotMatch(html,/<button class="primary" disabled>依頼を保存/);
- assert.match(html,/分析実行は別操作/);
+ assert.match(html,/Mac上のAIランナーを起動していればClaude Codeが自動で分析/);
 });
 
 test('first request is stored only after explicit manual-mode activation',()=>{

@@ -31,7 +31,8 @@
     "ai:review": "node scripts/ai-staff/review-code.js",
     "deploy:existing": "node scripts/deploy-existing.js",
     "verify:existing": "node scripts/verify-existing.js",
-    "deploy:preflight": "node scripts/deploy-existing.js --preflight"
+    "deploy:preflight": "node scripts/deploy-existing.js --preflight",
+    "ai:runner": "node scripts/ai-staff/auto-runner.js"
   },
   "engines": {
     "node": "24.x"
