@@ -34,3 +34,24 @@ test('Instagram and Amazon screens include connection setup guides and app JS pa
  const check=spawnSync(process.execPath,['--check','public/app.js'],{encoding:'utf8'});
  assert.equal(check.status,0,check.stderr||check.stdout);
 });
+
+test('menu no longer lists the consolidated/removed sections, and keeps the others',()=>{
+ const navLine=js.match(/^const nav=\[.*\];$/m)?.[0]||'';
+ for(const removed of ['orgSales','collectionTasks','growthExperiments','playerCandidates','finance','reelPosts','competitorAccounts',"['metrics'"])
+  assert.doesNotMatch(navLine,new RegExp("'"+removed.replace(/^\['/,'')+"'"),removed+' should no longer be a top-level menu item');
+ for(const kept of ['overview','goals','tasks','staffTasks','shipments','team','amazon','instagram','site','brand','settings'])
+  assert.match(navLine,new RegExp("'"+kept+"'"),kept+' should remain a top-level menu item');
+});
+
+test('consolidated features are rendered inside Instagram/Amazon instead of their own screens',()=>{
+ assert.match(js,/renderReels\(state\.reelPosts/);
+ assert.match(js,/renderAccounts\(state\.competitorAccounts/);
+ assert.match(js,/renderSnsMetrics\(state\.metrics/);
+ assert.match(js,/広告費用対効果/);
+ assert.match(js,/売上に関わりうる要因の整理（相関ではありません）/);
+ assert.match(js,/因果関係・相関係数を計算・断定したものではありません/);
+});
+
+test('no inline style attributes are used anywhere in app.js (CSP style-src \'self\' blocks them silently)',()=>{
+ assert.doesNotMatch(js,/\sstyle="/,'inline style="..." is silently dropped by the existing Content-Security-Policy (style-src \'self\'); use CSS classes instead');
+});
