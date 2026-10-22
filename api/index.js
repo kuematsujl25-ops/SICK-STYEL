@@ -9,6 +9,7 @@ import * as amazon from '../integrations/amazon.js';
 import * as zoom from '../integrations/zoom.js';
 import * as googlecalendar from '../integrations/googlecalendar.js';
 import {syncMeeting,status as meetingSyncStatus} from '../lib/meeting-sync.js';
+import * as notifications from '../lib/notifications.js';
 import {emptySite,validateSite,publicView,DEFAULT_SITE_ORIGINS} from '../lib/site.js';
 
 function json(res,status,value){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(value));}
@@ -73,8 +74,13 @@ export default async function handler(req,res){
  const redirect=location=>{res.writeHead(303,{Location:location,'Cache-Control':'no-store'});res.end();};
  if(['/api/amazon/login','/api/amazon/callback','/api/instagram/callback','/api/zoom/callback','/api/googlecalendar/callback'].includes(route)&&req.method==='GET'&&!authorized)return redirect('/?auth=required');
  if(!authorized)return json(res,401,{error:'ログインしてください'});
+ if(route==='/api/notifications/status'&&req.method==='GET')return json(res,200,await notifications.status(store));
+ if(route==='/api/notifications'&&req.method==='GET')return json(res,200,{items:await notifications.listNotifications(store)});
+ if(route==='/api/notifications/subscribe'&&req.method==='POST')return json(res,200,await notifications.subscribe(store,(await body(req)).subscription));
+ if(route==='/api/notifications/unsubscribe'&&req.method==='POST')return json(res,200,await notifications.unsubscribe(store,(await body(req)).endpoint));
+ if(route==='/api/notifications/read'&&req.method==='POST')return json(res,200,await notifications.markRead(store,(await body(req)).id));
  if(route==='/api/ai-team'&&req.method==='GET')return json(res,200,await readTeam(store));
- if(route==='/api/ai-team'&&req.method==='POST'){try{return json(res,200,await writeTeam(store,await body(req)));}catch(e){if(e instanceof TeamError)return json(res,e.status,{error:e.message});throw e;}}
+ if(route==='/api/ai-team'&&req.method==='POST'){try{const input=await body(req);const result=await writeTeam(store,input);if(['import','approve'].includes(input.command?.action)){const job=result.state.jobs.find(j=>j.id===input.command.job_id);if(job)try{await notifications.aiUpdated(store,job,job.status);}catch(e){console.error(JSON.stringify({event:'ai_notification_failed',type:e.name||'unknown'}));}}return json(res,200,result);}catch(e){if(e instanceof TeamError)return json(res,e.status,{error:e.message});throw e;}}
  if(route==='/api/ai-team/task'&&req.method==='GET'){
   const t=await readTeam(store);const job=t.state.jobs.find(j=>j.id===url.searchParams.get('job_id'));
   if(!t.state.enabled||!job||!['queued','rejected'].includes(job.status)||job.attempts>=2)return json(res,409,{error:'AI社員の停止状態・依頼状態を確認してください'});
