@@ -13,7 +13,7 @@
   - meeting:write:meeting
   - meeting:update:meeting
   - meeting:delete:meeting
-  - user:read:user:me
+  - user:read:user
 - 必要に応じ、Zoom App MarketplaceのLocal Testで管理者本人がアプリを追加して許可する。開発用と本番用のOAuth認証情報は別物の場合があるため、使う環境とredirect URIを一致させる。
 - Zoom Client ID/Client Secretを本人だけが安全に確認。GitHub、ChatGPT、PRには値を記載しない。
 
