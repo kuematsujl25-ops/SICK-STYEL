@@ -1,8 +1,8 @@
 import {runtime} from '../lib/runtime.js';
 import {encrypt,decrypt,token,hash} from '../lib/security.js';
 // 本人（管理者）のZoomアカウントをOAuth（Authorization Code）で認可する。サーバー間アプリ（Server-to-Server OAuth）は使わない。
-// 必要スコープ（Zoom Marketplaceアプリ作成時に選択）: meeting:write:meeting, meeting:update:meeting, meeting:delete:meeting, user:read:user:me
-export const scopes=['meeting:write:meeting','meeting:update:meeting','meeting:delete:meeting','user:read:user:me'];
+// 必要スコープ（Zoom Marketplaceアプリ作成時に選択）: meeting:write:meeting, meeting:update:meeting, meeting:delete:meeting, user:read:user
+export const scopes=['meeting:write:meeting','meeting:update:meeting','meeting:delete:meeting','user:read:user'];
 export function config(){return !!(runtime().ZOOM_CLIENT_ID&&runtime().ZOOM_CLIENT_SECRET&&runtime().APP_ORIGIN&&runtime().TOKEN_ENCRYPTION_KEY);}
 const callback=()=>new URL('/api/zoom/callback',runtime().APP_ORIGIN).href;
 // code: Zoom自身のエラーコード/HTTPステータス、またはローカル検証で判定した安全な識別子（秘密値は含まない）。
@@ -11,7 +11,7 @@ const callback=()=>new URL('/api/zoom/callback',runtime().APP_ORIGIN).href;
 export class ZoomError extends Error{constructor(code,message,stage){super(message||`Zoom API エラー (${code})。権限・期限を確認してください。`);this.code=code;this.stage=stage||null;}}
 async function remote(stage,url,options={}){let response;try{response=await fetch(url,{...options,signal:AbortSignal.timeout(12000)});}catch{throw new ZoomError('network_error','Zoom APIへの通信に失敗しました（ネットワークまたはタイムアウト）',stage);}
  let b=null;try{b=await response.json();}catch{}
- if(!response.ok){const code=b?.code||response.status;const hint=response.status===401?'認可が失効しています。再接続してください。':response.status===429?'Zoomの呼び出し上限です。しばらくして再試行してください。':'';throw new ZoomError(code,b?.message?`Zoom API エラー (${code}): ${b.message}。${hint}`:undefined,stage);}
+ if(!response.ok){const sourceCode=b?.code;const code=typeof sourceCode==='number'&&Number.isSafeInteger(sourceCode)?sourceCode:typeof sourceCode==='string'&&/^[a-zA-Z0-9_-]{1,40}$/.test(sourceCode)?sourceCode:response.status;const hint=response.status===401?'認可が失効しています。再接続してください。':response.status===429?'Zoomの呼び出し上限です。しばらくして再試行してください。':'';throw new ZoomError(code,`Zoom API エラー (${code}、HTTP ${response.status})。${hint}`,stage);}
  return b;
 }
 async function privateData(store){const r=await store.doc('zoom-private');return r?JSON.parse(r.body):null;}
@@ -23,7 +23,7 @@ export async function begin(store,session){
 export async function connect(store,session,url){
  const rows=await store.query('DELETE FROM ss_oauth WHERE state=$1 AND session=$2 AND expires>$3 RETURNING state',[hash('zoom:'+(url.searchParams.get('state')||'')),session,Date.now()]);
  if(!rows.length)throw new ZoomError('state_mismatch','認可の有効期限が切れたか、stateが一致しません（10分以内に認可を完了してください。同じ認可画面を複数回開いた場合もこのエラーになります）','state_validation');
- if(url.searchParams.has('error'))throw new ZoomError('user_denied','Zoomの認可が完了しませんでした（Zoom側の応答: '+String(url.searchParams.get('error')||'').slice(0,100)+'）。Zoom側で許可するか、対象のZoomアカウントで認可してください','callback_params');
+ if(url.searchParams.has('error'))throw new ZoomError('user_denied','Zoomの認可が完了しませんでした。Zoom側で許可するか、対象のZoomアカウントで認可してください','callback_params');
  const code=url.searchParams.get('code');if(!code)throw new ZoomError('missing_code','認可コードがありません','callback_params');
  const auth='Basic '+Buffer.from(`${runtime().ZOOM_CLIENT_ID}:${runtime().ZOOM_CLIENT_SECRET}`).toString('base64');
  const form=new URLSearchParams({grant_type:'authorization_code',code,redirect_uri:callback()});
