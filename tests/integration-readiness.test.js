@@ -48,6 +48,30 @@ function mockAmazon({salesFail=false,ordersFail=false,malformed=false,currency='
 test('Sales failure across month boundary preserves original sales month and timestamp',async t=>{const {store,env}=await fixture(t);await withRuntime(env,async()=>{mockAmazon();const first=await amazon.sync(store,new Date('2026-10-16T05:00:00Z'));mockAmazon({salesFail:true});const next=await amazon.sync(store,new Date('2026-11-01T05:00:00Z'));assert.equal(next.month,'2026-10');assert.equal(next.monthSales,5000);assert.equal(next.salesSyncedAt,first.salesSyncedAt);assert.equal(next.salesPeriod.start,first.salesPeriod.start);assert.notEqual(next.ordersPeriod.start,first.ordersPeriod.start);assert.equal(next.syncVerified,false);assert.ok(next.salesError);assert.equal(next.syncedAt,first.syncedAt);assert.equal((await amazon.safeStatus(store)).readiness.state,'sync_unverified');});});
 test('Orders failure retains old orders period and marks it stale',async t=>{const {store,env}=await fixture(t);await withRuntime(env,async()=>{mockAmazon();const first=await amazon.sync(store,new Date('2026-10-16T05:00:00Z'));mockAmazon({ordersFail:true});const next=await amazon.sync(store,new Date('2026-10-17T05:00:00Z'));assert.deepEqual(next.orders,first.orders);assert.deepEqual(next.ordersPeriod,first.ordersPeriod);assert.ok(next.ordersError);assert.equal(next.syncVerified,false);assert.equal(next.ordersSyncedAt,first.ordersSyncedAt);});});
 test('malformed Orders response is not false zero orders',async t=>{const {store,env}=await fixture(t);await withRuntime(env,async()=>{mockAmazon({malformed:true});const next=await amazon.sync(store,new Date('2026-10-16T05:00:00Z'));assert.equal(next.orders,null);assert.ok(next.ordersError);assert.equal(next.syncVerified,false);});});
+test('dailyHistory survives across month boundaries even though Sales API only ever returns a rolling 31-day window',async t=>{
+ const {store,env}=await fixture(t);
+ await withRuntime(env,async()=>{
+  // 10月末に同期：Sales APIの31日窓が10月分を返す。
+  global.fetch=async(url,options={})=>{const u=new URL(url);if(u.hostname==='api.amazon.com')return Response.json({access_token:'fixture-access'});
+   if(u.pathname.includes('orderMetrics')){const payload=[];for(let d=1;d<=31;d++){const date='2026-10-'+String(d).padStart(2,'0');if(d<=31)payload.push({interval:date,totalSales:{amount:'1000',currencyCode:'JPY'},orderCount:1,unitCount:1});}return Response.json({payload});}
+   if(u.pathname.includes('/orders'))return Response.json({orders:[]});
+   throw Error('unexpected');};
+  const oct=await amazon.sync(store,new Date('2026-10-31T10:00:00Z'));
+  assert.equal(oct.dailyHistory.length,31);
+  assert.equal(oct.monthSales,31000,'10月が完了（31日分揃っている）ので実額を返す');
+  // 11月第1週に同期：31日窓は10/8〜11/7になり、10月前半はもうAPI応答に含まれない。
+  global.fetch=async(url,options={})=>{const u=new URL(url);if(u.hostname==='api.amazon.com')return Response.json({access_token:'fixture-access'});
+   if(u.pathname.includes('orderMetrics')){const payload=[];for(let d=8;d<=31;d++)payload.push({interval:'2026-10-'+String(d).padStart(2,'0'),totalSales:{amount:'1000',currencyCode:'JPY'},orderCount:1,unitCount:1});for(let d=1;d<=7;d++)payload.push({interval:'2026-11-'+String(d).padStart(2,'0'),totalSales:{amount:'2000',currencyCode:'JPY'},orderCount:1,unitCount:1});return Response.json({payload});}
+   if(u.pathname.includes('/orders'))return Response.json({orders:[]});
+   throw Error('unexpected');};
+  const nov=await amazon.sync(store,new Date('2026-11-07T10:00:00Z'));
+  // 10月前半（1〜7日）は今回のAPI応答に含まれていないが、前回同期で蓄積したhistoryから消えていない。
+  assert.ok(nov.dailyHistory.some(d=>d.date==='2026-10-01'),'10月前半のhistoryが消えていない');
+  assert.ok(nov.dailyHistory.some(d=>d.date==='2026-10-07'));
+  assert.ok(nov.dailyHistory.some(d=>d.date==='2026-11-07'));
+  assert.equal(nov.dailyHistory.filter(d=>d.date.startsWith('2026-10')).length,31,'10月の31日分すべてがhistoryに保持されている');
+ });
+});
 test('successful normal reads record separate Sales and Orders proofs',async t=>{const {store,env}=await fixture(t);await withRuntime(env,async()=>{mockAmazon();const next=await amazon.sync(store,new Date('2026-10-16T05:00:00Z'));assert.equal(next.syncVerified,true);assert.ok(next.salesSyncedAt);assert.ok(next.ordersSyncedAt);assert.equal((await amazon.safeStatus(store)).readiness.state,'connected');});});
 test('foreign currency result stays unverified even when Orders succeeds',async t=>{const {store,env}=await fixture(t);await withRuntime(env,async()=>{mockAmazon({currency:'USD'});const next=await amazon.sync(store,new Date('2026-10-16T05:00:00Z'));assert.equal(next.monthSales,null);assert.equal(next.syncVerified,false);assert.ok(next.warnings.length)});});
 test('Instagram authorization URL has exact origin callback and minimum Insights scopes',async t=>{const {store,env}=await fixture(t);await withRuntime({...env,INSTAGRAM_APP_ID:'123456',INSTAGRAM_APP_SECRET:'fixture-only'},async()=>{const u=new URL(await instagram.begin(store,'fixture-session'));assert.equal(u.origin,'https://www.instagram.com');assert.equal(u.searchParams.get('redirect_uri'),'https://example.workers.dev/api/instagram/callback');assert.deepEqual(u.searchParams.get('scope').split(','),['instagram_business_basic','instagram_business_manage_insights']);assert.ok(u.searchParams.get('state'));});});

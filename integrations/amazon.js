@@ -3,6 +3,7 @@
 // リフレッシュトークンはサーバー側でAES-256-GCM暗号化して保存し、ブラウザーへ返しません。
 import {runtime} from '../lib/runtime.js';
 import {connectionReadiness} from '../public/integration-status.js';
+import {mergeDailyHistory} from '../public/amazon-periods.js';
 import {encrypt,decrypt,token,hash} from '../lib/security.js';
 export const MARKETPLACE_ID='A1VC38T7YXB528'; // Amazon.co.jp
 export const ENDPOINT='https://sellingpartnerapi-fe.amazon.com';
@@ -72,7 +73,8 @@ export async function sync(store,now=new Date()){
   const next={...cache,syncedAt:syncVerified?stamp:cache.syncedAt??null,attemptedAt:stamp,error:null,warnings,syncVerified,salesError,ordersError,
    period:daily&&orders?period:cache.period??null,salesPeriod:daily?period:cache.salesPeriod??null,ordersPeriod:orders?period:cache.ordersPeriod??null,
    salesSyncedAt:daily?stamp:cache.salesSyncedAt??null,ordersSyncedAt:orders?stamp:cache.ordersSyncedAt??null,
-   daily:daily??cache.daily??null,...monthly,month:daily?month:cache.month??null,orders:orders??cache.orders??null,ordersTruncated:orders?truncated:cache.ordersTruncated??false};
+   daily:daily??cache.daily??null,dailyHistory:daily?mergeDailyHistory(cache.dailyHistory,daily):cache.dailyHistory??null,
+   ...monthly,month:daily?month:cache.month??null,orders:orders??cache.orders??null,ordersTruncated:orders?truncated:cache.ordersTruncated??false};
   await store.put('amazon-cache',next);return next;
  }catch(e){await store.put('amazon-cache',{...cache,syncVerified:false,error:e.message,attemptedAt:new Date().toISOString()});throw e;}finally{await release();}
 }
