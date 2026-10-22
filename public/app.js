@@ -120,7 +120,7 @@ function settings(){return `<div class="settingsgrid"><section class="panel"><h2
  <details class="guide" ${!zoomStatus?.configured?'open':''}><summary><b>Zoomアプリ登録の手順</b></summary><ol>
  <li><a href="https://marketplace.zoom.us/" target="_blank" rel="noopener noreferrer">Zoom App Marketplace ↗</a>で本人のZoomアカウントにログインし、「Develop」→「Build App」からOAuthアプリを作成します（Server-to-Server OAuthではなく、ユーザー認可が必要なタイプを選びます）。</li>
  <li>OAuthのRedirect URL（コールバック）に <code>https://sickstyle-manager.sickstyle-74h4.workers.dev/api/zoom/callback</code> を登録します。</li>
- <li>Scopes（権限）タブで、会議の作成・更新・削除とユーザー情報の読み取りに相当する権限だけを追加します（例: meeting:write:meeting、meeting:update:meeting、meeting:delete:meeting、user:read:user:me。Zoom側の表示名は変更されることがあるため、該当する最小権限を選んでください）。</li>
+ <li>Scopes（権限）タブで、会議の作成・更新・削除とユーザー情報の読み取りに相当する権限だけを追加します（例: meeting:write:meeting、meeting:update:meeting、meeting:delete:meeting、user:read:user。Zoom側の表示名は変更されることがあるため、該当する最小権限を選んでください）。</li>
  <li>Client ID / Client Secretを確認し、Macのターミナルで <code>npm run integrations:zoom -- --plan</code> を実行して登録内容を確認します。Cloudflareへの反映が別途承認済みの場合に限り、同じコマンドの <code>--apply</code> で非表示入力して登録します。秘密値はチャットやGitに貼らないでください。</li>
  <li>この画面で「Zoomを接続」→ Zoom公式画面で本人認可します。</li></ol></details>
  <div class="actions">${zoomStatus?.configured?`<button class="primary" id="zoomconnect">${zoomStatus.connected?'再認可する':'Zoomを接続'}</button>`:''}${zoomStatus?.connected?'<button id="zoomdisconnect" class="red">接続を解除</button>':''}</div></div>
