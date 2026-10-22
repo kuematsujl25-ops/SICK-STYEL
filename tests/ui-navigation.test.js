@@ -48,8 +48,8 @@ test('consolidated features are rendered inside Instagram/Amazon instead of thei
  assert.match(js,/renderAccounts\(state\.competitorAccounts/);
  assert.match(js,/renderSnsMetrics\(state\.metrics/);
  assert.match(js,/広告費用対効果/);
- assert.match(js,/売上に関わりうる要因の整理（相関ではありません）/);
- assert.match(js,/因果関係・相関係数を計算・断定したものではありません/);
+ assert.match(js,/売上に関わりうる要因の整理/);
+ assert.match(js,/相関係数の計算や因果関係の断定はしていません/);
 });
 
 test('no inline style attributes are used anywhere in app.js (CSP style-src \'self\' blocks them silently)',()=>{

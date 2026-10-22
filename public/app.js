@@ -18,6 +18,8 @@ let accountUI={platform:'all'};
 import {renderPlayers,playerFields,LEAGUES as PLAYER_LEAGUES,TIERS as PLAYER_TIERS} from './players.js';
 import {RESEARCHED_PLAYERS,toCandidate} from './player-research.js';
 let playerUI={league:'all',tier:'all'};
+import {mergeDailyHistory,daysInMonth,monthlyTotals,recentMonths,addMonths,sourceLabel,dailyRowsForMonth,fullMonthRows,monthSalesInfo,todaySalesInfo,priorPeriodSales,adRoas,adAcos} from './amazon-periods.js';
+let amzUI={chartMode:'daily',month:''},adUI={platform:'all'};
 // SICKSTYLE 管理アプリ（単一管理者）。業務データはサーバーDBに保存し、ブラウザーには保存しません。
 const app=document.querySelector('#app');
 let state=null,section='overview',configured=false,busy=false,setupAllowed=false,storageKind='',hosted=false,ig=null,amz=null,conversations=[],zoomStatus=null,calendarStatus=null;
@@ -101,7 +103,8 @@ function overview(){
 }
 function empty(title,sub,target){return `<div class="empty"><div aria-hidden="true">＋</div><b>${title}</b><p>${sub}</p>${target?`<button class="secondary" data-new="${target}">追加する</button>`:''}</div>`;}
 const configs={goals:{title:'目標',fields:[['title','目標名','text'],['type','種類','select',['monthly','final'],['月間目標','最終目標']],['month','対象月','month'],['target','目標値','number'],['current','現在値','number'],['unit','単位（例: 円・件・人）','text']]},tasks:{title:'タスク',fields:[['title','タスク名','text'],['due','期限','date'],['priority','優先度','select',['高','中','低']],['notes','メモ','textarea']]},shipments:{title:'発送',fields:[['title','商品・注文名','text'],['order','注文番号','text'],['recipient','宛先・お客様名','text'],['due','発送期限','date'],['carrier','配送会社','text'],['tracking','追跡番号','text'],['status','発送状況','select',['未発送','準備中','発送済み','配達完了']],['notes','メモ','textarea']]},metrics:{title:'実績',fields:[['date','記録日','date'],['sales','Amazon売上（円）','number'],['orders','Amazon注文件数','number'],['followers','Instagramフォロワー数','number'],['reach','Instagramリーチ数','number'],['engagement','Instagram反応数（いいね・コメント等）','number'],['notes','メモ','textarea']]},staffTasks:{title:'担当タスク',fields:staffTaskFields},collectionTasks:{title:'収集項目',fields:[['title','項目名','text'],['category','カテゴリ','select',COLLECT_CATEGORIES],['purpose','判断に使う目的','text'],['source','出典・どこから集めるか','text'],['frequency','更新頻度','text'],['assignee','担当','select',['',...COLLECT_STAFF],['未設定',...COLLECT_STAFF]],['due','期限（任意）','date'],['period','対象期間','text'],['status','状態','select',COLLECT_STATUS],['value','収集した値・メモ','textarea'],['notes','メモ','textarea']]},
-reelPosts:{title:'リール投稿',fields:reelFields},growthExperiments:{title:'購入実験',fields:experimentFields},competitorAccounts:{title:'参考アカウント観測',fields:accountFields},playerCandidates:{title:'選手候補',fields:playerFields}};
+reelPosts:{title:'リール投稿',fields:reelFields},growthExperiments:{title:'購入実験',fields:experimentFields},competitorAccounts:{title:'参考アカウント観測',fields:accountFields},playerCandidates:{title:'選手候補',fields:playerFields},
+adMetrics:{title:'広告実績',fields:[['platform','媒体','select',['Amazon','Instagram']],['periodStart','対象期間（開始）','date',undefined,undefined,true],['periodEnd','対象期間（終了）','date',undefined,undefined,true],['attributionWindowDays','アトリビューション期間（日・任意。例: 14）','nnumber'],['adCost','広告費（円・任意）','nnumber'],['attributedSales','広告経由売上（円・任意。未入力ならROAS/ACOSは計算不可）','nnumber'],['source','取得方法','select',['manual','csv'],['手入力','CSV取込']],['campaign','キャンペーン名・メモ','text']]}};
 function orgSalesView(){
  return `<div class="actions" role="tablist"><button class="${orgTab==='list'?'primary':'secondary'}" data-orgtab="list">団体一覧</button><button class="${orgTab==='kpi'?'primary':'secondary'}" data-orgtab="kpi">KPI・転換率</button></div>
  ${orgTab==='list'?renderOrgList(state.orgSales,orgUI,esc,today()):renderOrgKPI(state.orgSales,orgKPIPeriod,esc)}`;
@@ -169,7 +172,14 @@ function bindInstagram(){const connect=document.querySelector('#igconnect');if(c
  document.querySelectorAll('[data-resolve]').forEach(b=>b.onclick=async()=>{try{await api('instagram/resolve','POST',{peer:b.dataset.resolve});ig=await api('instagram/status');conversations=(await api('instagram/conversations')).data;render();}catch(e){toast(e.message);}});}
 // ---------- Amazon ----------
 const statusJa={PENDING:'保留（支払い確認待ち）',UNSHIPPED:'未発送',PARTIALLY_SHIPPED:'一部発送済み',SHIPPED:'発送済み',CANCELLED:'キャンセル',UNFULFILLABLE:'出荷不能',PENDING_AVAILABILITY:'予約注文（入荷待ち）',INVOICE_UNCONFIRMED:'請求書未確認'};
-function amazonView(){const c=amz?.cache;const o=c?.orders;
+// ---------- Amazon: 期間・出典処理（JST、欠損を0で埋めない） ----------
+// 純粋関数（amazonView rendering用）はpublic/amazon-periods.jsに集約し、node:testで直接ユニットテストする。
+function barDiv(dateOrMonth,value,max,extraClass){
+ if(value===null)return `<div class="bar missing ${extraClass||''}" title="${esc(dateOrMonth)}: 未取得"></div>`;
+ const pct=Math.max(2,Math.round(value/max*100));const step=Math.max(0,Math.min(20,Math.round(pct/5)));
+ return `<div class="bar h${step} ${extraClass||''}" title="${esc(dateOrMonth)}: ${yen(value)}"></div>`;
+}
+function amazonView(){const c=amz?.cache;const o=c?.orders;const t=today();const targetMonth=amzUI.month||month();const isCurrent=targetMonth===month();
  return `<section class="panel"><div class="panelhead"><h2>接続状態</h2>${statusBadge(amz)}</div><p>Amazon公式の Selling Partner API（SP-API）で接続します。対象は ${esc(amz?.marketplace||'Amazon.co.jp (A1VC38T7YXB528)')} です。Amazonのパスワードはこのアプリに入力・保存しません。</p>
 
  <details class="guide" ${!amz?.connected?'open':''}><summary><b>Amazon SP-API連携の手順（5ステップ）</b></summary><ol>
@@ -178,49 +188,85 @@ function amazonView(){const c=amz?.cache;const o=c?.orders;
  <li>「Develop Apps」から自社用アプリを作成または再利用し、LWAクライアントID・シークレットを確認します。アプリを自分のAmazon.co.jp出品アカウントに「Self authorize」し、リフレッシュトークンを発行します。公開アプリ・Webサイト認可は不要です。</li>
  <li>Macのターミナルで <code>npm run integrations:amazon -- --plan</code> と <code>npm run integrations:amazon-refresh -- --plan</code> を確認します。Cloudflare Secrets変更が別途承認済みの場合のみ、それぞれ <code>--apply</code> で非表示入力して登録してください。認証情報はチャット・Gitに貼らないでください。</li>
  <li>管理画面を更新 →「Amazon連携」→「今すぐ同期」。売上（Sales API）と注文・発送状況（Orders API）の両方で最終成功時刻とデータを確認します。片方だけ成功しても連携完了とは扱いません。</li>
- </ol><p class="note">審査中・認可前は「売上・SNS実績」で手入力/CSV取込が可能です。追加料金や支払い登録が表示された場合は停止して条件を確認してください。<a href="https://developer-docs.amazon.com/sp-api/docs/register-as-a-private-developer" target="_blank" rel="noopener noreferrer">Amazon公式資料 ↗</a></p></details>
+ </ol><p class="note">審査中・認可前は、この画面の下部から手入力/CSV取込が可能です。追加料金や支払い登録が表示された場合は停止して条件を確認してください。<a href="https://developer-docs.amazon.com/sp-api/docs/register-as-a-private-developer" target="_blank" rel="noopener noreferrer">Amazon公式資料 ↗</a></p></details>
  <div class="actions">${amz?.websiteFlow?`<button class="primary" id="amzconnect">${amz.connected?'再認可する':'Amazonを認可する'}</button>`:''}${amz?.connected?'<button class="secondary" id="amzsync">今すぐ同期</button><button id="amzdisconnect" class="red">接続を解除</button>':''}</div>
- <dl class="facts"><dt>認可方式</dt><dd>${amz?.authorization==='website'?'Webサイト認可（Seller Centralで同意）':amz?.authorization==='self'?'セルフ認可（Seller Centralで発行）':'未認可'}</dd><dt>セラーID</dt><dd>${esc(amz?.sellerId||'—')}</dd><dt>最終同期（成功）</dt><dd>${fmtTime(c?.syncedAt)}</dd><dt>最終試行</dt><dd>${fmtTime(c?.attemptedAt)}</dd><dt>売上の最終取得成功</dt><dd>${fmtTime(c?.salesSyncedAt)}</dd><dt>注文の最終取得成功</dt><dd>${fmtTime(c?.ordersSyncedAt)}</dd><dt>売上の対象期間</dt><dd>${c?.salesPeriod?`${esc(c.salesPeriod.start)} 〜 ${esc(c.salesPeriod.end)}`:'未取得'}</dd><dt>注文の対象期間</dt><dd>${c?.ordersPeriod?`${esc(c.ordersPeriod.start)} 〜 ${esc(c.ordersPeriod.end)}`:'未取得'}</dd><dt>集計期間</dt><dd>${c?.period?`${esc(c.period.start)} 〜 ${esc(c.period.end)}（日本時間・同期時点まで）`:'直近31日（日本時間）'}</dd></dl>
+ <dl class="facts"><dt>認可方式</dt><dd>${amz?.authorization==='website'?'Webサイト認可（Seller Centralで同意）':amz?.authorization==='self'?'セルフ認可（Seller Centralで発行）':'未認可'}</dd><dt>セラーID</dt><dd>${esc(amz?.sellerId||'—')}</dd><dt>最終同期（成功）</dt><dd>${fmtTime(c?.syncedAt)}</dd><dt>最終試行</dt><dd>${fmtTime(c?.attemptedAt)}</dd><dt>売上の最終取得成功</dt><dd>${fmtTime(c?.salesSyncedAt)}</dd><dt>注文の最終取得成功</dt><dd>${fmtTime(c?.ordersSyncedAt)}</dd><dt>直近同期の取得範囲（API窓）</dt><dd>${c?.salesPeriod?`${esc(c.salesPeriod.start)} 〜 ${esc(c.salesPeriod.end)}（Sales APIは常に直近31日のみ。蓄積した履歴は別途保持）`:'未取得'}</dd></dl>
  ${c?.error?`<p class="errorbox" role="alert">取得失敗：${esc(c.error)}<br>表示中の数値は最後に成功した同期時点のものです。</p>`:''}${c?.warnings?.length?`<details open><summary>一部のデータを取得できませんでした（${c.warnings.length}件）</summary><p>${c.warnings.map(esc).join('<br>')}</p></details>`:''}</section>
- <div class="stats igstats"><article><small>今月の売上（${esc(c?.month||month())}）</small><strong>${typeof c?.monthSales==='number'?yen(c.monthSales):'未取得'}</strong><span>Sales API・注文日ベース${c?.salesSyncedAt?' · '+fmtTime(c.salesSyncedAt):''}${c?.salesError?' · 最新取得は失敗':''}</span>${sourceTag(true)}</article><article><small>今月の注文件数</small><strong>${typeof c?.monthOrders==='number'?num(c.monthOrders):'未取得'}</strong><span>Sales API orderCount</span></article><article><small>未発送の注文</small><strong>${o?num((o.counts.UNSHIPPED||0)+(o.counts.PARTIALLY_SHIPPED||0)):'未取得'}</strong><span>${o?`直近31日の注文 ${o.total}件中${c.ordersTruncated?'（500件まで）':''}`:'Orders API'}</span></article></div>
- <section class="panel"><h2>集計の定義</h2><p><b>売上：</b>${esc(amz?.salesDefinition||'')}</p><p><b>注文・発送状況：</b>${esc(amz?.ordersDefinition||'')}</p></section>
- ${o?`<section class="panel"><h2>注文の状況（直近31日）</h2><div class="tablewrap"><table class="data"><thead><tr><th>状況</th><th>件数</th></tr></thead><tbody>${Object.entries(o.counts).map(([k,v])=>`<tr><td>${esc(statusJa[k]||k)}</td><td>${v}</td></tr>`).join('')}</tbody></table></div>${o.open.length?`<h3>未発送の注文（古い順）</h3>${o.open.map(x=>`<div class="listrow"><div class="grow"><b>${esc(x.orderId)}</b><small>${fmtTime(x.createdTime)} · ${esc(statusJa[x.status]||x.status)} · ${x.fulfilledBy==='AMAZON'?'FBA':'自己発送'} · ${x.items}点</small></div></div>`).join('')}`:''}</section>`:''}
- ${c?.daily?.length?`<section class="panel"><h2>日別売上（Sales API）</h2><div class="tablewrap"><table class="data"><thead><tr><th>日付</th><th>売上</th><th>注文</th><th>点数</th></tr></thead><tbody>${[...c.daily].reverse().map(d=>`<tr><td>${esc(d.date)}</td><td>${d.sales===null?'未取得':yen(d.sales)}</td><td>${num(d.orders)}</td><td>${num(d.units)}</td></tr>`).join('')}</tbody></table></div></section>`:''}
- ${renderSalesChart(c,state.metrics)}
+ <section class="panel"><div class="panelhead"><h2>月の売上</h2><label>対象月<input type="month" id="amzmonth" value="${esc(targetMonth)}" max="${esc(month())}"></label></div>
+ ${(()=>{const info=monthSalesInfo(c,state.metrics,targetMonth,t);const todayInfo=isCurrent?todaySalesInfo(c,state.metrics,t):null;const prior=priorPeriodSales(c,state.metrics,targetMonth,isCurrent?Number(t.slice(8,10)):daysInMonth(targetMonth));
+  return `<div class="stats igstats">
+  <article><small>${esc(targetMonth)}の売上${info.incomplete?'（進行中・未完了月）':''}</small><strong>${info.value===null?'未取得':yen(info.value)}</strong><span>${sourceLabel(info.source)}${info.daysCovered?` · ${info.daysCovered}/${info.daysExpected}日分`:''}</span>${info.source==='api'?sourceTag(true):''}</article>
+  ${todayInfo?`<article><small>今日の売上（${esc(t)}）</small><strong>${todayInfo.value===null?'未取得':yen(todayInfo.value)}</strong><span>${sourceLabel(todayInfo.source)}</span></article>`:''}
+  <article><small>前月同期間（${esc(prior.month)}・${prior.daysExpected}日分）</small><strong>${prior.value===null?'未取得':yen(prior.value)}</strong><span>${info.value!==null&&prior.value!==null?(info.value-prior.value>=0?'+':'')+yen(info.value-prior.value)+' の差':'両方のデータが揃うと比較できます'}</span></article>
+  </div>
+  <p class="note">売上の定義: ${esc(amz?.salesDefinition||'Amazon Sales APIの注文日（日本時間）ベース。返品・返金・手数料は控除前。')}「未取得」は0円ではなく、API・手入力のいずれにも記録がないことを示します。「一部のみ取得（未確定）」は月内の一部の日しか記録がない状態で、欠けている日を0円とみなさず、月の合計には採用していません（日別の棒グラフで欠けている日を確認できます）。「Sales API＋手入力（混在）」は日ごとにAPI優先・欠けている日だけ手入力で埋めて月を揃えた合計です。</p>`;})()}
+ </section>
+ <section class="panel"><div class="panelhead"><h2>売上の棒グラフ</h2><div class="actions" role="tablist"><button class="${amzUI.chartMode==='daily'?'primary':'secondary'}" data-amzchart="daily">日別（${esc(targetMonth)}）</button><button class="${amzUI.chartMode==='monthly'?'primary':'secondary'}" data-amzchart="monthly">月別（直近12か月）</button></div></div>
+ ${amzUI.chartMode==='daily'?(()=>{const rows=fullMonthRows(c,state.metrics,targetMonth,t);const max=Math.max(1,...rows.map(r=>r.value||0));
+   return `<div class="barchart" role="img" aria-label="日別売上の棒グラフ">${rows.map(r=>barDiv(r.date,r.value,max,r.date===t?'today':'')).join('')}</div><p class="note">棒の高さは対象月内の最大売上日を100%とした相対表示（5%刻み）です。点線の棒は「未取得」（0円ではありません）。</p>`;})()
+  :(()=>{const months=recentMonths(t,12);const rows=months.map(m=>{const info=monthSalesInfo(c,state.metrics,m,t);return {month:m,...info};});const max=Math.max(1,...rows.map(r=>r.value||0));
+   return `<div class="barchart" role="img" aria-label="月別売上の棒グラフ（直近12か月）">${rows.map(r=>barDiv(r.month,r.value,max,r.month===month()?'today':'')).join('')}</div><p class="note">右端が今月（進行中・未完了月）です。データが揃っていない過去月は「未取得」（点線）で、0円として扱っていません。</p>`;})()}
+ </section>
+ <section class="panel"><h2>注文・発送状況</h2><p>${esc(amz?.ordersDefinition||'')}</p>${o?`<div class="tablewrap"><table class="data"><thead><tr><th>状況</th><th>件数</th></tr></thead><tbody>${Object.entries(o.counts).map(([k,v])=>`<tr><td>${esc(statusJa[k]||k)}</td><td>${v}</td></tr>`).join('')}</tbody></table></div>${o.open.length?`<h3>未発送の注文（古い順）</h3>${o.open.map(x=>`<div class="listrow"><div class="grow"><b>${esc(x.orderId)}</b><small>${fmtTime(x.createdTime)} · ${esc(statusJa[x.status]||x.status)} · ${x.fulfilledBy==='AMAZON'?'FBA':'自己発送'} · ${x.items}点</small></div></div>`).join('')}`:''}`:'<p class="note">未取得（Orders API未同期）</p>'}</section>
  ${renderRoas()}
- ${renderFactorNotes(c)}
- <section class="panel"><h2>認可前・認可待ちの入力方法</h2><p>日次の売上・注文件数を手入力するか、CSV（日付・売上・注文件数の列）を取り込めます。Seller Centralの「レポート」→「ビジネスレポート」の日付別レポート（売上とトラフィック）をCSVでダウンロードし、取り込み時に列を選択してください。</p><div class="actions"><button class="secondary" id="csvopen">CSVから取り込む</button><button class="primary" data-new="metrics">＋ 今日の売上を手入力</button></div></section>`;}
-function dailySalesRows(c,metrics){
- if(c?.daily?.length)return c.daily.map(d=>({date:d.date,value:d.sales,source:'api'}));
- const t=today();const ym=month();
- return metrics.filter(m=>m.date.startsWith(ym)&&m.date<=t).sort((a,b)=>a.date.localeCompare(b.date)).map(m=>({date:m.date,value:m.sales,source:'manual'}));
-}
-function renderSalesChart(c,metrics){
- const rows=dailySalesRows(c,metrics);
- const t=today();const todayRow=rows.find(r=>r.date===t);
- const max=Math.max(1,...rows.map(r=>r.value||0));
- return `<section class="panel"><div class="panelhead"><h2>月の売上（棒グラフ）</h2><span class="badge">${rows[0]?.source==='api'?'Sales API':'手入力・CSV'}</span></div>
- <div class="stats igstats"><article><small>今日の売上（${esc(t)}）</small><strong>${todayRow&&todayRow.value!==null?yen(todayRow.value):'未取得'}</strong><span>${rows.length?'当月の記録から':'記録なし'}</span></article></div>
- ${rows.length?`<div class="barchart" role="img" aria-label="日別売上の棒グラフ">${rows.map(r=>{const pct=r.value===null?2:Math.max(2,Math.round(r.value/max*100));const step=Math.max(0,Math.min(20,Math.round(pct/5)));return `<div class="bar h${step} ${r.date===t?'today':''}" title="${esc(r.date)}: ${r.value===null?'未取得':yen(r.value)}"></div>`;}).join('')}</div><p class="note">棒の高さは当月内の最大売上日を100%とした相対表示（5%刻み）です。「未取得」の日は最小の目印のみです。</p>`:'<p class="note">当月の売上記録がまだありません。</p>'}</section>`;}
+ ${renderFactorNotes(c,targetMonth)}
+ <section class="panel"><h2>認可前・認可待ち・欠損期間の入力方法</h2><p>日次の売上・注文件数を手入力するか、CSV（日付・売上・注文件数の列）を取り込めます。同じ日付の記録は上書き登録（重複追加はされません）。Seller Centralの「レポート」→「ビジネスレポート」の日付別レポート（売上とトラフィック）をCSVでダウンロードし、取り込み時に列を選択してください。</p><div class="actions"><button class="secondary" id="csvopen">CSVから取り込む</button><button class="primary" data-new="metrics">＋ 売上を手入力</button></div></section>`;}
 function renderRoas(){
- const r=financeReport;
- if(!r||r.status!=='analyzed'||!r.totals)return `<section class="panel"><h2>広告費用対効果</h2><p class="note">「利益レポートを読み込む」から、広告費（advertising_jpy）を含むレポートを読み込むと表示します。ブラウザーのメモリ上のみで保持し、送信・保存はしません。</p><label class="secondary filelabel">利益レポートを読み込む<input id="financefile" class="sr-only" type="file" accept="application/json,.json"></label></section>`;
- const ad=r.totals.advertising_jpy,rev=r.totals.revenue_jpy;
- const roas=ad&&ad>0&&rev!==null?Math.round(rev/ad*100)/100:null;
- return `<section class="panel"><div class="panelhead"><h2>広告費用対効果</h2><div class="actions"><label class="secondary filelabel">レポートを読み込み直す<input id="financefile" class="sr-only" type="file" accept="application/json,.json"></label><button id="financeclear" class="secondary">表示を消去</button></div></div>
- <p class="note">対象期間（レポートの集計期間。今月とは限りません）: ${esc(new Date(r.period.start).toLocaleString('ja-JP',{timeZone:'Asia/Tokyo'}))} 〜 ${esc(new Date(r.period.end).toLocaleString('ja-JP',{timeZone:'Asia/Tokyo'}))}</p>
- <div class="stats igstats"><article><small>広告費</small><strong>${ad===null?'未取得':yen(ad)}</strong></article><article><small>売上（同期間）</small><strong>${rev===null?'未取得':yen(rev)}</strong></article><article><small>ROAS（売上 ÷ 広告費）</small><strong>${roas===null?'未取得':roas+'倍'}</strong><span>${roas===null?'広告費が0または未取得のため算出できません':'手数料・原価は考慮していません（粗利ベースではありません）'}</span></article></div></section>`;}
-function renderFactorNotes(c){
- const ig_delta=typeof ig?.cache?.delta==='number'?ig.cache.delta:null;
- const ad=financeReport?.status==='analyzed'?financeReport.totals?.advertising_jpy:null;
- const salesDelta=(()=>{const rows=dailySalesRows(c,state.metrics);const vals=rows.filter(r=>r.value!==null);if(vals.length<2)return null;return vals.at(-1).value-vals[0].value;})();
- return `<section class="panel"><h2>売上に関わりうる要因の整理（相関ではありません）</h2>
- <p class="note">以下は同時期に観測された数値を並べているだけで、因果関係・相関係数を計算・断定したものではありません。Instagramのフォロワー増減と広告費は「売上とは別の指標」として個別に確認してください。</p>
- <div class="metricmini"><span>Instagramフォロワー増減<b>${ig_delta===null?'未取得':(ig_delta>0?'+':'')+ig_delta.toLocaleString('ja-JP')}</b></span><span>広告費（読み込んだ期間）<b>${ad===null||ad===undefined?'未取得':yen(ad)}</b></span><span>当月の売上変化（月初→直近記録）<b>${salesDelta===null?'未取得':(salesDelta>0?'+':'')+yen(salesDelta)}</b></span></div>
- <p class="note">データ数が少ないため統計的な検証はできません。要因を特定するには、広告のオン/オフや投稿テーマを変えたうえでの比較（施策前後の差分測定）が必要です。</p></section>`;}
+ const rows=[...state.adMetrics].sort((a,b)=>b.periodEnd.localeCompare(a.periodEnd));
+ return `<section class="panel"><div class="panelhead"><h2>広告費用対効果</h2><button class="primary" data-new="adMetrics">＋ 広告実績を追加</button></div>
+ <p class="note">ROAS = 広告経由売上 ÷ 広告費。ACOS = 広告費 ÷ 広告経由売上 × 100（%）。<b>総売上を広告費で割った値はROASとして表示していません。</b>広告費のみ入力され広告経由売上が未入力の場合、ROAS/ACOSは「計算不可」です。Amazon広告・Instagram広告は別々に記録し合算しません。Amazon Ads APIとの自動連携は未接続のため、すべて保存・再読込可能な手入力/CSVです。</p>
+ <div class="formfields"><label>媒体<select id="adplatformfilter"><option value="all" ${adUI.platform==='all'?'selected':''}>すべて</option>${['Amazon','Instagram'].map(p=>`<option value="${p}" ${adUI.platform===p?'selected':''}>${p}</option>`).join('')}</select></label>
+ <label class="secondary filelabel">CSVから取り込む<input id="adcsvfile" class="sr-only" type="file" accept=".csv,text/csv"></label><button type="button" class="secondary" id="adcsvtemplate">ひな形をダウンロード</button></div>
+ ${rows.filter(r=>adUI.platform==='all'||r.platform===adUI.platform).length?`<div class="records">${rows.filter(r=>adUI.platform==='all'||r.platform===adUI.platform).map(r=>{const roas=adRoas(r),acos=adAcos(r);
+  return `<article class="record"><div class="recordtop"><span class="badge">${esc(r.platform)}</span><button data-edit="adMetrics:${esc(r.id)}">編集</button></div><h3>${esc(r.periodStart)} 〜 ${esc(r.periodEnd)}</h3><p class="note">通貨: JPY${r.attributionWindowDays!==null?` · アトリビューション期間: ${r.attributionWindowDays}日`:' · アトリビューション期間: 未設定'} · 取得方法: ${r.source==='csv'?'CSV取込':'手入力'}</p>
+  <div class="metricmini"><span>広告費<b>${r.adCost===null?'未取得':yen(r.adCost)}</b></span><span>広告経由売上<b>${r.attributedSales===null?'未取得':yen(r.attributedSales)}</b></span><span>ROAS<b>${roas===null?'計算不可':roas+'倍'}</b></span><span>ACOS<b>${acos===null?'計算不可':acos+'%'}</b></span></div>
+  ${r.campaign?`<p class="note">${esc(r.campaign)}</p>`:''}</article>`;}).join('')}</div>`:'<div class="empty"><div aria-hidden="true">＋</div><b>広告実績はまだ登録されていません。</b><p>手入力またはCSVで広告費・広告経由売上を登録できます。</p></div>'}</section>`;}
+function renderFactorNotes(c,targetMonth){
+ const t=today();
+ const igDelta=typeof ig?.cache?.delta==='number'?ig.cache.delta:null;
+ const igDeltaSince=ig?.cache?.deltaSince||null;
+ const monthAds=state.adMetrics.filter(a=>a.periodStart<=targetMonth+'-31'&&a.periodEnd>=targetMonth+'-01');
+ const dailyRows=dailyRowsForMonth(c,state.metrics,targetMonth);
+ const reels=state.reelPosts.filter(r=>r.postedAt.startsWith(targetMonth));
+ const measuredExperiments=state.growthExperiments.filter(e=>(e.periodStart||'').startsWith(targetMonth)||(e.periodEnd||'').startsWith(targetMonth));
+ const measuredTotal=measuredExperiments.reduce((n,e)=>n+(e.measuredPurchases||0),0);
+ const hasMeasured=measuredExperiments.some(e=>e.measuredPurchases!==null);
+ return `<section class="panel"><h2>売上に関わりうる要因の整理（${esc(targetMonth)}）</h2>
+ <p class="note">以下は同じ期間に観測された数値を並べて仮説を示すだけで、相関係数の計算や因果関係の断定はしていません。<b>追跡リンク・購入計測（購入実験の「実測購入数」）で確認できた分だけを実測として扱い</b>、それ以外は根拠付きの仮説です。</p>
+ <div class="metricmini"><span>Instagramフォロワー増減<b>${igDelta===null?'未取得':(igDelta>0?'+':'')+igDelta.toLocaleString('ja-JP')}</b></span><span>対象広告件数（${esc(targetMonth)}と重なる期間）<b>${monthAds.length}件</b></span><span>当月のリール投稿数<b>${reels.length}件</b></span><span>追跡計測できた購入数（実測）<b>${hasMeasured?num(measuredTotal):'未取得'}</b></span></div>
+ <p class="note">Instagramのフォロワー増減は「前日比」ではなく、前回同期記録（${igDeltaSince?esc(igDeltaSince):'未取得'}）との差です。同期間隔が1日とは限りません。</p>
+ ${reels.length?`<h3>当月のリール投稿（公開日時順）</h3><div class="tablewrap"><table class="data"><thead><tr><th>公開日</th><th>テーマ</th><th>再生数</th><th>保存率</th><th>同日の売上</th></tr></thead><tbody>${reels.sort((a,b)=>a.postedAt.localeCompare(b.postedAt)).map(r=>{const day=dailyRows.find(d=>d.date===r.postedAt);return `<tr><td>${esc(r.postedAt)}</td><td>${esc(r.theme)}</td><td>${r.views===null?'未取得':num(r.views)}</td><td>${r.saves===null||r.views===null||!r.views?'未取得':Math.round(r.saves/r.views*1000)/10+'%'}</td><td>${day&&day.value!==null?yen(day.value):'未取得'}</td></tr>`;}).join('')}</tbody></table></div><p class="note">投稿日の売上と前後の売上を比べる場合も、値引き・在庫切れ・曜日・他の広告など他の要因を先に確認してください。</p>`:'<p class="note">当月のリール投稿記録はありません。</p>'}
+ <h3>他の要因の確認事項（自動判定はしていません・手動で確認してください）</h3>
+ <ul class="note"><li>値引き・セールを実施していないか（「購入実験」「団体営業」等で記録）</li><li>在庫切れで販売機会を逃していないか（在庫・発送管理で確認）</li><li>曜日・連休などの季節性</li><li>他の広告・他社キャンペーンとの重複時期</li></ul>
+ ${!hasMeasured&&!monthAds.length&&!reels.length?'<p class="note">データ不足のため、この期間の要因分析はできません。広告実績・リール投稿・購入実験のいずれかを記録してください。</p>':''}</section>`;}
 function bindAmazon(){const c=document.querySelector('#amzconnect');if(c)c.onclick=async()=>{c.disabled=true;try{location.assign((await api('amazon/connect','POST',{})).url);}catch(e){toast(e.message);c.disabled=false;}};
  const s=document.querySelector('#amzsync');if(s)s.onclick=async()=>{s.disabled=true;s.textContent='同期しています…';try{amz=await api('amazon/sync','POST',{});render();toast(syncMessage(amz));}catch(e){if(e.body?.status)amz=e.body.status;render();toast(e.message);}};
- const d=document.querySelector('#amzdisconnect');if(d)d.onclick=async()=>{if(!confirm('Amazon接続を解除し、保存した認可トークンと取得データを削除しますか？手入力データは残ります。'))return;try{const r=await api('amazon/disconnect','POST',{});amz=await api('amazon/status');render();toast(r.warning||'接続を解除しました');}catch(e){toast(e.message);}};}
+ const d=document.querySelector('#amzdisconnect');if(d)d.onclick=async()=>{if(!confirm('Amazon接続を解除し、保存した認可トークンと取得データを削除しますか？手入力データは残ります。'))return;try{const r=await api('amazon/disconnect','POST',{});amz=await api('amazon/status');render();toast(r.warning||'接続を解除しました');}catch(e){toast(e.message);}};
+ const m=document.querySelector('#amzmonth');if(m)m.onchange=()=>{if(m.value)amzUI={...amzUI,month:m.value};render();};
+ document.querySelectorAll('[data-amzchart]').forEach(b=>b.onclick=()=>{amzUI={...amzUI,chartMode:b.dataset.amzchart};render();});
+ const apf=document.querySelector('#adplatformfilter');if(apf)apf.onchange=()=>{adUI={...adUI,platform:apf.value};render();};
+ const act=document.querySelector('#adcsvtemplate');if(act)act.onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['﻿媒体,開始日,終了日,広告費,広告経由売上,アトリビューション日数,メモ\nAmazon,'+today()+','+today()+',0,,14,\n'],{type:'text/csv'}));a.download='sickstyle-admetrics-template.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);};
+ const acf=document.querySelector('#adcsvfile');if(acf)acf.onchange=()=>adCsvImport(acf);}
+function adCsvImport(input){const f=input.files[0];if(!f)return;(async()=>{try{if(f.size>2_000_000)throw Error('ファイルが大きすぎます（2MBまで）');const rows=parseCSV(await f.text());if(rows.length<2)throw Error('データ行がありません');const h=rows[0].map(x=>x.trim());
+  const idx=words=>h.findIndex(x=>words.some(w=>x.includes(w)));
+  const ci={platform:idx(['媒体','platform']),start:idx(['開始','start']),end:idx(['終了','end']),cost:idx(['広告費','cost']),sales:idx(['広告経由売上','attributed','経由売上']),window:idx(['アトリビューション','window']),campaign:idx(['メモ','キャンペーン','campaign'])};
+  if(ci.platform<0||ci.start<0||ci.end<0)throw Error('媒体・開始日・終了日の列が見つかりません。ひな形を確認してください。');
+  const next=structuredClone(state);const byKey=new Map(next.adMetrics.map(x=>[x.platform+'|'+x.periodStart+'|'+x.periodEnd,x]));let added=0,updated=0;const bad=[];
+  rows.slice(1).forEach((r,i)=>{
+   const platformRaw=(r[ci.platform]||'').trim();const platform=/instagram/i.test(platformRaw)||platformRaw.includes('インスタ')?'Instagram':/amazon/i.test(platformRaw)||platformRaw.includes('アマゾン')?'Amazon':null;
+   const start=toDate(r[ci.start]);const end=ci.end>=0?toDate(r[ci.end]):start;
+   const cost=ci.cost>=0&&r[ci.cost]!==''?toNumber(r[ci.cost]):null;
+   const sales=ci.sales>=0&&r[ci.sales]!==''?toNumber(r[ci.sales]):null;
+   const win=ci.window>=0&&String(r[ci.window]||'').trim()!==''?Number(r[ci.window]):null;
+   if(!platform||!start||!end||end<start||(win!==null&&(!Number.isInteger(win)||win<0||win>365))){bad.push(i+2);return;}
+   const key=platform+'|'+start+'|'+end;const campaign=ci.campaign>=0?String(r[ci.campaign]||'').slice(0,200):'';const cur=byKey.get(key);
+   if(cur){cur.adCost=cost;cur.attributedSales=sales;cur.attributionWindowDays=win;cur.campaign=campaign;cur.source='csv';cur.updatedAt=new Date().toISOString();updated++;}
+   else{const row={id:crypto.randomUUID(),platform,periodStart:start,periodEnd:end,attributionWindowDays:win,adCost:cost,attributedSales:sales,source:'csv',campaign,updatedAt:new Date().toISOString()};next.adMetrics.push(row);byKey.set(key,row);added++;}
+  });
+  if(!added&&!updated)throw Error('取り込める行がありませんでした（媒体・日付・数値の形式を確認してください）');
+  if(bad.length&&!confirm(`${bad.length}行（例: ${bad.slice(0,5).join(', ')}行目）は形式が正しくないため除外します。残り ${added+updated} 行を取り込みますか？`)){input.value='';return;}
+  await persist(next);toast(`広告実績を取り込みました（追加 ${added} 件・更新 ${updated} 件）`);
+ }catch(e){toast(e.message);}finally{input.value='';}})();}
 function bindZoomCalendar(){
  const zc=document.querySelector('#zoomconnect');if(zc)zc.onclick=async()=>{zc.disabled=true;try{location.assign((await api('zoom/connect','POST',{})).url);}catch(e){toast(e.message);zc.disabled=false;}};
  const zd=document.querySelector('#zoomdisconnect');if(zd)zd.onclick=async()=>{if(!confirm('Zoom接続を解除しますか？既存のMTGの同期状態には影響しません。'))return;try{await api('zoom/disconnect','POST',{});zoomStatus=await api('zoom/status');render();toast('Zoomの接続を解除しました');}catch(e){toast(e.message);}};
@@ -291,10 +337,10 @@ function bind(){if(section==='team')bindTeam({model:team,api,setModel:v=>team=v,
  const ptf=document.querySelector('#playertierfilter');if(ptf)ptf.onchange=()=>{playerUI={...playerUI,tier:ptf.value};render();};
  const f=document.querySelector('#brand');if(f)f.onsubmit=async e=>{e.preventDefault();try{await persist({...state,brand:Object.fromEntries(new FormData(f))});}catch(x){toast(x.message);}};
  const r=document.querySelector('#restore');if(r)r.onchange=async()=>{if(!r.files[0])return;if(!confirm('現在の業務データをバックアップの内容に置き換えます。復元しますか？')){r.value='';return;}try{await api('restore','POST',{...JSON.parse(await r.files[0].text()),revision:state.revision});state=await api('data');render();toast('復元しました');}catch(e){toast(e.message);r.value='';}};}
-function editor(key,record){const c=configs[key];const r=record||{due:key==='collectionTasks'?'':today(),date:today(),month:month(),current:0,target:100,...(key==='metrics'?{sales:0,orders:0,followers:0,reach:0,engagement:0}:{}),priority:'中',status:key==='staffTasks'?'未着手':key==='collectionTasks'?'未収集':'未発送',type:'monthly',assignee:'',category:COLLECT_CATEGORIES[0]};const d=document.querySelector('#editor');
+function editor(key,record){const c=configs[key];const r=record||{due:key==='collectionTasks'?'':today(),date:today(),month:month(),current:0,target:100,...(key==='metrics'?{sales:0,orders:0,followers:0,reach:0,engagement:0}:{}),...(key==='adMetrics'?{platform:'Amazon',periodStart:today(),periodEnd:today(),attributionWindowDays:null,adCost:null,attributedSales:null,source:'manual',campaign:''}:{}),priority:'中',status:key==='staffTasks'?'未着手':key==='collectionTasks'?'未収集':'未発送',type:'monthly',assignee:'',category:COLLECT_CATEGORIES[0]};const d=document.querySelector('#editor');
  d.innerHTML=`<form id="editform"><div class="panelhead"><h2>${c.title}${record?'を編集':'を追加'}</h2><button type="button" id="close" aria-label="閉じる">✕</button></div><div class="formfields">${c.fields.map(([name,label,type,options,labels,required])=>`<label>${label}${type==='textarea'?`<textarea name="${name}" maxlength="10000">${esc(r[name])}</textarea>`:type==='select'?`<select name="${name}">${options.map((v,i)=>`<option value="${v}" ${r[name]===v?'selected':''}>${labels?.[i]||v}</option>`).join('')}</select>`:`<input name="${name}" type="${type==='nnumber'?'number':type}" value="${esc(r[name])}" ${required===true||(required===undefined&&(['title','date','target'].includes(name)||(name==='due'&&key!=='collectionTasks')))?'required':''} ${(type==='number'||type==='nnumber')?`inputmode="decimal" min="${name==='target'?0.01:0}" max="1000000000000" step="${['target','current','sales'].includes(name)?'0.01':type==='nnumber'?'any':'1'}"`:'maxlength="500"'}>`}</label>`).join('')}</div><div id="editerror" role="alert"></div><div class="dialogactions">${record?'<button type="button" id="delete" class="red">削除</button>':''}<button type="button" id="cancel">キャンセル</button><button class="primary" id="save">保存する</button></div></form>`;d.showModal();
  document.querySelector('#close').onclick=document.querySelector('#cancel').onclick=()=>d.close();
- document.querySelector('#editform').onsubmit=async e=>{e.preventDefault();const b=document.querySelector('#save');b.disabled=true;try{const vals=Object.fromEntries(new FormData(e.target));for(const [n,,type]of c.fields){if(type==='number')vals[n]=Number(vals[n]||0);if(type==='nnumber')vals[n]=vals[n]===''?null:Number(vals[n]);}if(key==='metrics'&&state.metrics.some(m=>m.date===vals.date&&m.id!==record?.id))throw Error('この日付の実績は登録済みです。既存の記録を編集してください。');const next=structuredClone(state);const row={...record,...vals,id:record?.id||crypto.randomUUID()};if(key==='metrics')row.instagramEntered=true;if(key==='tasks')row.done=record?.done||false;if(['staffTasks','collectionTasks','growthExperiments','playerCandidates'].includes(key))row.updatedAt=new Date().toISOString();if(key==='reelPosts')row.observedAt=new Date().toISOString();next[key]=record?next[key].map(x=>x.id===record.id?row:x):[...next[key],row];await persist(next);}catch(err){const t=document.querySelector('#editerror');if(t)t.textContent=err.message;else toast(err.message);b.disabled=false;}};
+ document.querySelector('#editform').onsubmit=async e=>{e.preventDefault();const b=document.querySelector('#save');b.disabled=true;try{const vals=Object.fromEntries(new FormData(e.target));for(const [n,,type]of c.fields){if(type==='number')vals[n]=Number(vals[n]||0);if(type==='nnumber')vals[n]=vals[n]===''?null:Number(vals[n]);}if(key==='metrics'&&state.metrics.some(m=>m.date===vals.date&&m.id!==record?.id))throw Error('この日付の実績は登録済みです。既存の記録を編集してください。');if(key==='adMetrics'&&vals.periodEnd<vals.periodStart)throw Error('対象期間の終了日は開始日以降にしてください。');const next=structuredClone(state);const row={...record,...vals,id:record?.id||crypto.randomUUID()};if(key==='metrics')row.instagramEntered=true;if(key==='tasks')row.done=record?.done||false;if(['staffTasks','collectionTasks','growthExperiments','playerCandidates','adMetrics'].includes(key))row.updatedAt=new Date().toISOString();if(key==='reelPosts')row.observedAt=new Date().toISOString();next[key]=record?next[key].map(x=>x.id===record.id?row:x):[...next[key],row];await persist(next);}catch(err){const t=document.querySelector('#editerror');if(t)t.textContent=err.message;else toast(err.message);b.disabled=false;}};
  const del=document.querySelector('#delete');if(del)del.onclick=async()=>{if(!confirm('この記録を削除しますか？'+(key==='staffTasks'?'（ゴミ箱から復元できます）':'')))return;try{if(key==='staffTasks'){await persist({...state,staffTasks:state.staffTasks.map(x=>x.id===record.id?{...x,deletedAt:new Date().toISOString()}:x)});}else{await persist({...state,[key]:state[key].filter(x=>x.id!==record.id)});}}catch(e){toast(e.message);}};}
 // ---------- 団体営業（専用エディタ。段階変更は履歴に追記する） ----------
 function orgEditor(record){const d=document.querySelector('#editor');
