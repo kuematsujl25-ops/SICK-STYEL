@@ -89,7 +89,7 @@ export default async function handler(req,res){
  if(route==='/api/amazon/disconnect'&&req.method==='POST')return json(res,200,await amazon.disconnect(store));
  if(route==='/api/zoom/status'&&req.method==='GET')return json(res,200,await zoom.safeStatus(store));
  if(route==='/api/zoom/connect'&&req.method==='POST')return json(res,200,{url:await zoom.begin(store,sessionHash)});
- if(route==='/api/zoom/callback'&&req.method==='GET'){try{await zoom.connect(store,sessionHash,url);return redirect('/?zoom=connected');}catch(e){console.error(JSON.stringify({event:'zoom_callback',error:e instanceof zoom.ZoomError?String(e.code):'authorization_failed'}));return redirect('/?zoom=error');}}
+ if(route==='/api/zoom/callback'&&req.method==='GET'){try{await zoom.connect(store,sessionHash,url);return redirect('/?zoom=connected');}catch(e){console.error(JSON.stringify({event:'zoom_callback',code:e instanceof zoom.ZoomError?String(e.code):'authorization_failed',stage:e instanceof zoom.ZoomError?e.stage:'unknown',message:e instanceof zoom.ZoomError?e.message:undefined}));return redirect('/?zoom=error');}}
  if(route==='/api/zoom/disconnect'&&req.method==='POST')return json(res,200,await zoom.disconnect(store));
  if(route==='/api/googlecalendar/status'&&req.method==='GET')return json(res,200,await googlecalendar.safeStatus(store));
  if(route==='/api/googlecalendar/connect'&&req.method==='POST')return json(res,200,{url:await googlecalendar.begin(store,sessionHash)});
