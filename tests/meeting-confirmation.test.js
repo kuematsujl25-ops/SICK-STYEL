@@ -93,3 +93,28 @@ test('削除済み団体を記録保持で復元した後、元の会議IDを確
  assert.equal(result.org.initialMeetingSync,null);
  assert.equal(calls.filter(c=>c.method==='DELETE'&&c.path==='/v2/meetings/'+created.org.initialMeetingSync.zoomMeetingId).length,1);
 });
+
+
+test('片側だけ残る取消は対象サービスだけ認可確認し、切断済み側へ接続しない',async t=>{
+ const {store,calls,revision}=await setup(t);
+ let input={orgId:'example',kind:'initial',action:'prepare',revision};
+ let plan=await previewMeeting(store,input,policy);
+ const created=await confirmMeeting(store,{...input,confirmation:plan.confirmation},policy);
+ await store.query('DELETE FROM ss_documents WHERE name=$1',['googlecalendar-private']);
+ const start=calls.length;input={...input,action:'cancel',revision:created.revision};
+ plan=await previewMeeting(store,input,policy);
+ const canceled=await confirmMeeting(store,{...input,confirmation:plan.confirmation},policy);
+ assert.equal(canceled.org.initialMeetingSync,null);
+ assert.equal(calls.slice(start).some(c=>c.path.startsWith('/calendar/')),false);
+ // Partial cancellation: Zoom is already removed, only the calendar event remains.
+ const data=JSON.parse((await store.doc('workspace')).body);
+ data.orgSales[0].initialMeetingSync={...created.org.initialMeetingSync,zoomMeetingId:null,calendarEventId:'remaining',calendarId:policy.organizer,cancelPending:true,status:'error'};
+ const [row]=await store.put('workspace',data);
+ await store.query('DELETE FROM ss_documents WHERE name=$1',['zoom-private']);
+ await store.put('googlecalendar-private',{scope:identityScope,encrypted:encrypt({refresh:'test'})});
+ const secondStart=calls.length;input={...input,revision:row.revision};plan=await previewMeeting(store,input,policy);
+ const done=await confirmMeeting(store,{...input,confirmation:plan.confirmation},policy);
+ assert.equal(done.org.initialMeetingSync,null);
+ assert.equal(calls.slice(secondStart).some(c=>c.path.startsWith('/v2/')),false);
+ assert.equal(calls.slice(secondStart).filter(c=>c.method==='DELETE'&&c.path.endsWith('/events/remaining')).length,1);
+});
