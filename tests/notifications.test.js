@@ -77,6 +77,22 @@ test('daily notifications are idempotent on repeated Cron retries and remain in 
  assert.equal(items.filter(x=>x.kind==='ai_review').length,1);
  assert.equal(items.filter(x=>x.kind==='ai_completed').length,1);
 });
+test('差し戻し後に再取込された（attemptsが進んだ）成果物の確認待ち通知は、1回目の通知と重複排除されず別に届く（Codex独立レビュー指摘の回帰）',async t=>{
+ const dir=await mkdtemp(path.join(tmpdir(),'sickstyle-notify-ai-retry-'));
+ const store=await createStore({DATA_DIR:dir});
+ t.after(async()=>{store.close();await rm(dir,{recursive:true,force:true});});
+ const job={id:'1a111111-52f0-4af3-803e-8d85a439e326',title:'選手候補を探す',attempts:1};
+ await aiUpdated(store,job,'in_review');
+ // 差し戻し→再取込でattemptsが進んだ場合（同じjob.idのまま）。
+ const retried={...job,attempts:2};
+ await aiUpdated(store,retried,'in_review');
+ const items=await listNotifications(store);
+ assert.equal(items.filter(x=>x.kind==='ai_review').length,2,'試行ごとに別の通知として届く（1回目の通知で重複排除されない）');
+ // 同じ試行回数での再呼び出し（例: 何らかの理由で同じ処理が2回走った場合）は、引き続き1件に重複排除される。
+ await aiUpdated(store,retried,'in_review');
+ const itemsAfterSameAttempt=await listNotifications(store);
+ assert.equal(itemsAfterSameAttempt.filter(x=>x.kind==='ai_review').length,2,'同じ試行回数内では重複排除され続ける');
+});
 test('listNotifications orders by actual creation time, not by the document name string, so an older kind cannot crowd out a more recent one once history grows large (Codex独立レビュー指摘の回帰)',async t=>{
  const dir=await mkdtemp(path.join(tmpdir(),'sickstyle-notify-order-'));
  const store=await createStore({DATA_DIR:dir});
