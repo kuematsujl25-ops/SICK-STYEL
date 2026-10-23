@@ -14,8 +14,8 @@ export const accountFields=[
  ['ownIdea','SICK STYLE向けの独自企画案','textarea'],
 ];
 const n=v=>v===null||v===undefined?'未取得':v.toLocaleString('ja-JP');
-function growthFor(name,all){
- const obs=all.filter(x=>x.accountName===name&&x.followers!==null).sort((a,b)=>a.observedAt.localeCompare(b.observedAt));
+function growthFor(name,platform,all){
+ const obs=all.filter(x=>x.accountName===name&&x.platform===platform&&x.followers!==null).sort((a,b)=>a.observedAt.localeCompare(b.observedAt));
  if(obs.length<2)return {label:'増加率未確認（観測1回のみ）',pct:null};
  const first=obs[0],last=obs[obs.length-1];
  if(first.followers===0)return {label:'増加率未確認（起点が0）',pct:null};
@@ -37,5 +37,5 @@ export function renderAccounts(accounts,ui,esc){
  return `<section class="panel"><div class="panelhead"><h2>参考アカウント・投稿 <small>${sorted.length} / ${accounts.length} 件</small></h2><button class="primary" data-new="competitorAccounts">＋ 観測記録を追加</button></div>
  <p class="note">規模が違うアカウントを再生数だけで順位付けしていません（アカウント名順に表示）。増加率は同じアカウントの複数回の観測があるときだけ計算します。規約違反のスクレイピングは行っていません。手入力・URL登録のみです。</p>
  <div class="formfields"><label>媒体<select id="accountplatformfilter"><option value="all" ${ui.platform==='all'?'selected':''}>すべて</option>${PLATFORMS.map(p=>`<option value="${p}" ${ui.platform===p?'selected':''}>${p}</option>`).join('')}</select></label></div>
- ${sorted.length?`<div class="records">${sorted.map(x=>row(x,esc,growthFor(x.accountName,accounts))).join('')}</div>`:'<div class="empty"><div aria-hidden="true">＋</div><b>まだ登録されていません。</b><p>本人URLと直近投稿を確認してから登録してください（初期調査候補: REGATEドリブル塾・LISEM・ジャイアントカズキなど）。</p></div>'}</section>`;
+ ${sorted.length?`<div class="records">${sorted.map(x=>row(x,esc,growthFor(x.accountName,x.platform,accounts))).join('')}</div>`:'<div class="empty"><div aria-hidden="true">＋</div><b>まだ登録されていません。</b><p>本人URLと直近投稿を確認してから登録してください（初期調査候補: REGATEドリブル塾・LISEM・ジャイアントカズキなど）。</p></div>'}</section>`;
 }

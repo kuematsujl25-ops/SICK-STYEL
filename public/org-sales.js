@@ -1,3 +1,4 @@
+import {hasOutstandingMeetings} from './org-meeting-lifecycle.js';
 // 団体営業管理。DM→ZOOM(省略可)→サンプル→試用→提案ZOOM(省略可)→有償導入→継続購入。
 // 段階は履歴（history）に追記するだけで、スキップ・後戻りも消さずに残す。
 export const ORG_STAGES=['DM送信','初回ZOOM予約','初回ZOOM実施','サンプル発送','到着確認','試用確認','活用法提案ZOOM予約','活用法提案ZOOM実施','有償導入','継続購入'];
@@ -45,6 +46,7 @@ function orgRow(o,esc,today){
 }
 
 export function renderOrgList(orgs,ui,esc,today){
+ const recovery=orgs.filter(x=>x.deletedAt&&hasOutstandingMeetings(x));
  const active=orgs.filter(x=>!x.deletedAt);
  // 検索欄（#orgsearch）はこれまで入力時のDOM直接操作（行の表示/非表示）だけで絞り込んでおり、ui.qは
  // レンダリングでは使われていなかった。段階・担当の切替や保存など、検索と無関係な操作でrender()が
@@ -56,7 +58,7 @@ export function renderOrgList(orgs,ui,esc,today){
  const sorted=[...filtered].sort((a,b)=>(b.updatedAt||'').localeCompare(a.updatedAt||''));
  const stalledCount=active.filter(o=>isStalled(o,today)).length;
  const lateCount=active.filter(o=>o.nextDue&&o.nextDue<today&&!['失注','継続購入'].includes(o.stage)).length;
- return `<section class="panel"><h2>団体営業の進行フロー</h2><div class="orgpipeline" aria-label="DMから有償導入まで">${ORG_PHASES.map(([name],i)=>`<span class="orgphase">${i+1}. ${name}</span>`).join('<span class="orgarrow" aria-hidden="true">→</span>')}</div><details><summary>使い方・詳細</summary><p class="note">DM → 初回ZOOM → サンプル → 試してもらう → 活用法提案ZOOM → 有償導入。各段階の予約・実施・到着確認の詳細履歴は維持します。ZOOMはオンラインMTG、導入は有償購入のみを指します。</p></details>
+ return `${recovery.length?`<section class="panel"><h2>削除済み団体の会議確認</h2><p role="alert">連携記録が残っています。団体を復元してから、会議の状態・所有者を確認してください。復元だけでは会議作成・招待・取消は行いません。</p>${recovery.map(o=>`<p>${esc(o.name)} <button data-restoreorg="${esc(o.id)}">団体を復元して会議を確認</button></p>`).join('')}</section>`:''}<section class="panel"><h2>団体営業の進行フロー</h2><div class="orgpipeline" aria-label="DMから有償導入まで">${ORG_PHASES.map(([name],i)=>`<span class="orgphase">${i+1}. ${name}</span>`).join('<span class="orgarrow" aria-hidden="true">→</span>')}</div><details><summary>使い方・詳細</summary><p class="note">DM → 初回ZOOM → サンプル → 試してもらう → 活用法提案ZOOM → 有償導入。各段階の予約・実施・到着確認の詳細履歴は維持します。ZOOMはオンラインMTG、導入は有償購入のみを指します。</p></details>
  ${stalledCount||lateCount?`<div class="stats"><article><small>停滞案件（${STALLED_DAYS}日以上動きなし）</small><strong>${stalledCount}<em> 件</em></strong></article><article><small>次の行動が期限超過</small><strong>${lateCount}<em> 件</em></strong></article></div>`:''}</section><section class="panel"><div class="panelhead"><h2>団体一覧 <small id="orgcount">${sorted.length} / ${active.length} 件</small></h2><button class="primary" data-neworg>＋ 団体を追加</button></div>
  <div class="formfields"><label>段階<select id="orgstagefilter"><option value="all" ${ui.stage==='all'?'selected':''}>すべて</option>${ORG_ALL_STAGES.map(s=>`<option value="${s}" ${ui.stage===s?'selected':''}>${s}</option>`).join('')}</select></label><label>担当<select id="orgassigneefilter"><option value="all" ${ui.assignee==='all'?'selected':''}>全員</option>${ORG_STAFF.map(s=>`<option value="${s}" ${ui.assignee===s?'selected':''}>${s}</option>`).join('')}</select></label><label>検索<input id="orgsearch" value="${esc(ui.q||'')}" placeholder="団体名・次の行動など"></label></div>
  ${sorted.length?`<div class="records">${sorted.map(o=>orgRow(o,esc,today)).join('')}</div>`:'<div class="empty"><div aria-hidden="true">＋</div><b>団体はまだ登録されていません。</b><p>団体を追加できます。</p></div>'}</section>`;

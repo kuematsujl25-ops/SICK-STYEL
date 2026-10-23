@@ -74,3 +74,22 @@ test('Calendar失敗後もZoom IDを保持し、再確認してCalendarだけ復
  setFail(false);input={...input,revision:r.revision};plan=await previewMeeting(store,input,policy);r=await confirmMeeting(store,{...input,confirmation:plan.confirmation},policy);
  assert.equal(r.org.initialMeetingSync.status,'synced');assert.equal(calls.filter(c=>c.path==='/v2/users/me/meetings'&&c.method==='POST').length,1);
 });
+
+test('削除済み団体を記録保持で復元した後、元の会議IDを確認して取消できる',async t=>{
+ const {store,calls,revision}=await setup(t);
+ let input={orgId:'example',kind:'initial',action:'prepare',revision};
+ const plan=await previewMeeting(store,input,policy);
+ const created=await confirmMeeting(store,{...input,confirmation:plan.confirmation},policy);
+ const data=JSON.parse((await store.doc('workspace')).body);
+ data.orgSales[0].deletedAt='2026-10-23T00:00:00Z';
+ const [deleted]=await store.put('workspace',data);input={...input,action:'cancel',revision:deleted.revision};
+ await assert.rejects(previewMeeting(store,input,policy),/対象の団体/);
+ const before=calls.length;const restored=structuredClone(data);restored.orgSales[0].deletedAt=null;
+ const {assertMeetingRecordsRetained}=await import('../public/org-meeting-lifecycle.js');
+ assertMeetingRecordsRetained(data,restored);
+ const [row]=await store.put('workspace',restored);assert.equal(calls.length,before);
+ input={...input,revision:row.revision};const approval=await previewMeeting(store,input,policy);
+ const result=await confirmMeeting(store,{...input,confirmation:approval.confirmation},policy);
+ assert.equal(result.org.initialMeetingSync,null);
+ assert.equal(calls.filter(c=>c.method==='DELETE'&&c.path==='/v2/meetings/'+created.org.initialMeetingSync.zoomMeetingId).length,1);
+});
