@@ -164,15 +164,17 @@ function instagramView(){const c=ig?.cache;const expired=ig?.expiresAt&&ig.expir
  <h2 class="sectiondivider">リール分析（自己記録・テーマ別のレート分析）</h2>${renderReels(state.reelPosts,reelUI,esc,today())}
  <h2 class="sectiondivider">参考アカウント</h2>${renderAccounts(state.competitorAccounts,accountUI,esc)}
  <h2 class="sectiondivider">SNS・売上の日次記録（手入力・CSV取込）</h2>${renderSnsMetrics(state.metrics,esc)}`;}
+let metricsPage=0;
 function renderSnsMetrics(metrics,esc){
  // instagramEntered===falseの行（CSV取込等でAmazon売上だけが登録された記録）も編集・削除できる一覧に含める。
  // 以前は除外していたため、CSV取込した売上記録を直す・消す手段がどの画面にも無くなっていた
  // （Codex独立レビュー指摘：この一覧がmetrics唯一の編集入口であるため）。
  const rows=[...metrics].sort((a,b)=>b.date.localeCompare(a.date));
- const SHOWN=90;
+ const SHOWN=90,pages=Math.max(1,Math.ceil(rows.length/SHOWN));
+ metricsPage=Math.max(0,Math.min(metricsPage,pages-1));
  return `<section class="panel"><div class="panelhead"><h2>日次記録（SNS・売上の手入力/CSV取込） <small>${rows.length} 件</small></h2><button class="primary" data-new="metrics">＋ 記録を追加</button></div>
  <p class="note">Amazon売上・注文件数のグラフはAmazon連携画面に表示します。日付ごとに1件の記録です。CSV取込等でInstagram指標が未入力の記録もここから編集・削除できます。</p>
- ${rows.length?`<div class="records">${rows.slice(0,SHOWN).map(r=>`<article class="record"><div class="recordtop"><span class="badge">${esc(r.date)}</span><button data-edit="metrics:${esc(r.id)}">編集</button></div><p class="note">売上 ${yen(r.sales)} ・ 注文 ${esc(r.orders)} 件${r.source==='csv'?' · CSV取込':''}</p>${r.instagramEntered===false?'<p class="note">Instagram指標は未入力</p>':`<div class="metricmini"><span>フォロワー<b>${esc(r.followers)}</b></span><span>リーチ<b>${esc(r.reach)}</b></span><span>反応<b>${esc(r.engagement)}</b></span></div>`}${r.notes?`<p class="note">${esc(r.notes)}</p>`:''}</article>`).join('')}</div>${rows.length>SHOWN?`<p class="note">最新${SHOWN}件を表示しています（他${rows.length-SHOWN}件）。古い記録はAPIからエクスポート（バックアップ）で確認してください。</p>`:''}`:empty('日次記録はまだありません。','日次の売上・Instagram指標を記録できます。','metrics')}</section>`;}
+ ${rows.length?`<div class="records">${rows.slice(metricsPage*SHOWN,(metricsPage+1)*SHOWN).map(r=>`<article class="record"><div class="recordtop"><span class="badge">${esc(r.date)}</span><button data-edit="metrics:${esc(r.id)}">編集</button></div><p class="note">売上 ${yen(r.sales)} ・ 注文 ${esc(r.orders)} 件${r.source==='csv'?' · CSV取込':''}</p>${r.instagramEntered===false?'<p class="note">Instagram指標は未入力</p>':`<div class="metricmini"><span>フォロワー<b>${esc(r.followers)}</b></span><span>リーチ<b>${esc(r.reach)}</b></span><span>反応<b>${esc(r.engagement)}</b></span></div>`}${r.notes?`<p class="note">${esc(r.notes)}</p>`:''}</article>`).join('')}</div>${rows.length>SHOWN?`<div class="actions" aria-label="日次記録のページ送り"><button data-metricspage="${metricsPage-1}" ${metricsPage===0?'disabled':''}>前へ</button><span role="status">${metricsPage+1} / ${pages} ページ</span><button data-metricspage="${metricsPage+1}" ${metricsPage===pages-1?'disabled':''}>次へ</button></div>`:''}`:empty('日次記録はまだありません。','日次の売上・Instagram指標を記録できます。','metrics')}</section>`;}
 function bindInstagram(){const connect=document.querySelector('#igconnect');if(connect)connect.onclick=async()=>{connect.disabled=true;try{location.assign((await api('instagram/connect','POST',{})).url);}catch(e){toast(e.message);connect.disabled=false;}};
  const sync=document.querySelector('#igsync');if(sync)sync.onclick=async()=>{sync.disabled=true;sync.textContent='同期しています…';try{ig=await api('instagram/sync','POST',{});conversations=(await api('instagram/conversations')).data;render();toast(syncMessage(ig));}catch(e){try{ig=await api('instagram/status');render();}catch{}toast(e.message);}};
  const dis=document.querySelector('#igdisconnect');if(dis)dis.onclick=async()=>{if(!confirm('Instagram接続を解除し、取得データとDM観測履歴を削除しますか？手入力データは残ります。'))return;try{const r=await api('instagram/disconnect','POST',{});ig=await api('instagram/status');conversations=[];render();toast(r.warning||'接続を解除しました');}catch(e){toast(e.message);}};
@@ -316,7 +318,8 @@ function csvDialog(){const d=document.querySelector('#editor');d.innerHTML=`<for
 async function persist(next){if(busy)return;busy=true;try{const saved=await api('data','PUT',next);state={...next,revision:saved.revision};render();toast('保存しました');}finally{busy=false;}}
 async function logout(){try{await api('logout','POST',{});}catch(e){toast(e.message);return;}state=null;ig=null;amz=null;configured=true;auth();}
 async function refresh(){if(confirm('保存していない入力内容は破棄されます。最新データを読み込みますか？'))try{await load();toast('最新データを読み込みました');}catch(e){toast(e.message);}}
-function bind(){if(section==='team')bindTeam({model:team,api,setModel:v=>team=v,render,toast});bindFinance();bindInstagram();bindAmazon();bindZoomCalendar();bindSite();if(section==='settings')mountNotifications();
+function bindMetricsPages(){document.querySelectorAll('[data-metricspage]').forEach(b=>b.onclick=()=>{metricsPage=Number(b.dataset.metricspage);render();});}
+function bind(){bindMetricsPages();if(section==='team')bindTeam({model:team,api,setModel:v=>team=v,render,toast});bindFinance();bindInstagram();bindAmazon();bindZoomCalendar();bindSite();if(section==='settings')mountNotifications();
  for(const id of ['#refresh','#mrefresh'])document.querySelector(id).onclick=refresh;for(const id of ['#logout','#mlogout'])document.querySelector(id).onclick=logout;
  document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=async e=>{e.preventDefault();section=b.dataset.nav;if(section==='team')try{team=await api('ai-team');}catch(x){toast(x.message);}if(section==='site'&&!site)try{site=await api('site');}catch(x){toast(x.message);}render();window.scrollTo(0,0);});
  document.querySelectorAll('[data-new]').forEach(b=>b.onclick=()=>editor(b.dataset.new));
@@ -331,7 +334,7 @@ function bind(){if(section==='team')bindTeam({model:team,api,setModel:v=>team=v,
  const csv=document.querySelector('#csvopen');if(csv)csv.onclick=csvDialog;
  document.querySelectorAll('[data-stafftab]').forEach(b=>b.onclick=()=>{staffUI={...staffUI,assignee:b.dataset.stafftab};render();});
  const staffSort=document.querySelector('#stafftasksort');if(staffSort)staffSort.onchange=()=>{staffUI={...staffUI,sort:staffSort.value};render();};
- const staffQ=document.querySelector('#stafftaskq');if(staffQ)staffQ.oninput=()=>{staffUI={...staffUI,q:staffQ.value};const v=staffQ.value.trim().toLowerCase();let shown=0;document.querySelectorAll('[data-search]').forEach(row=>{const hit=!v||row.dataset.search.includes(v);row.hidden=!hit;if(hit)shown++;});const c=document.querySelector('#stafftaskcount');if(c)c.textContent=shown+' / '+state.staffTasks.length+' 件';};
+ const staffQ=document.querySelector('#stafftaskq');if(staffQ){const search=e=>{if(e.isComposing)return;const start=staffQ.selectionStart,end=staffQ.selectionEnd;staffUI={...staffUI,q:staffQ.value};render();const next=document.querySelector('#stafftaskq');next?.focus();next?.setSelectionRange(start,end);};staffQ.oninput=search;staffQ.oncompositionend=search;}
  document.querySelectorAll('[data-staffstatus]').forEach(b=>b.onchange=async()=>{const n=structuredClone(state);const rec=n.staffTasks.find(x=>x.id===b.dataset.staffstatus);rec.status=b.value;rec.updatedAt=new Date().toISOString();try{await persist(n);}catch(e){toast(e.message);render();}});
  document.querySelectorAll('[data-restore-stafftask]').forEach(b=>b.onclick=async()=>{const n=structuredClone(state);const rec=n.staffTasks.find(x=>x.id===b.dataset.restoreStafftask);rec.deletedAt=null;rec.updatedAt=new Date().toISOString();try{await persist(n);toast('復元しました');}catch(e){toast(e.message);render();}});
  document.querySelectorAll('[data-orgtab]').forEach(b=>b.onclick=()=>{orgTab=b.dataset.orgtab;render();});
