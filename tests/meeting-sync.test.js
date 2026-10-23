@@ -95,6 +95,9 @@ test('日程変更はZoom・Googleカレンダー双方へ同期し、取消は�
  assert.equal(cancelled.org.proposalMeetingSync,null);
  assert.equal(cancelled.org.proposalZoomUrl,'');
  assert.equal(cancelled.warnings.length,0);
+ // 開始予定の日時も消す：残したままだと朝の通知が取消済みのMTGを「今日の予定」として表示してしまい、
+ // 編集画面の入力欄にも取消済みの古い日時が残ったまま「MTGを作成」を押せてしまう（Codex独立レビュー指摘）。
+ assert.equal(cancelled.org.proposalZoomAt,'','取消が完全に成功した場合は開始予定の日時も消える');
  // 一部でも失敗した場合、未取消の外部IDを保持し、誤った「取消済み」表示を防ぐ。
  const org2={...newOrg(),id:'org-2',name:'FC Two',updatedAt:new Date().toISOString(),deletedAt:null,history:[{stage:'DM送信',at:new Date().toISOString(),note:''}],initialZoomAt:'2026-10-28T14:00'};
  const data2=validate({...empty(),orgSales:[org2]});const put2=(await store.query('UPDATE ss_documents SET body=$1,revision=revision+1 WHERE name=$2 RETURNING revision',[JSON.stringify(data2),'workspace']))[0];
@@ -106,12 +109,15 @@ test('日程変更はZoom・Googleカレンダー双方へ同期し、取消は�
  assert.equal(cancelled2.org.initialMeetingSync.zoomMeetingId,created2.org.initialMeetingSync.zoomMeetingId);
  assert.equal(cancelled2.org.initialMeetingSync.calendarEventId,created2.org.initialMeetingSync.calendarEventId);
  assert.equal(cancelled2.warnings.length,2);
+ // 取消が未完了（cancelPending）の間は、再試行に日時を使わないため開始予定の日時は消さずに残す。
+ assert.equal(cancelled2.org.initialZoomAt,created2.org.initialZoomAt,'取消未完了の間は開始予定の日時を保持する');
  // 復旧時は残っている会議・イベントだけを再取消する。
  global.fetch=fakeFetch({});
  const recovered=await syncMeeting(store,{orgId:'org-2',kind:'initial',action:'cancel',revision:cancelled2.revision});
  assert.equal(recovered.org.initialMeetingSync,null);
  assert.equal(recovered.org.initialZoomUrl,'');
  assert.equal(recovered.warnings.length,0);
+ assert.equal(recovered.org.initialZoomAt,'','取消が完全に成功した時点で開始予定の日時も消える（Codex独立レビュー指摘の回帰）');
 });
 
 test('更新バージョン不一致（他端末の同時更新）は競合として拒否する',async t=>{
@@ -391,10 +397,13 @@ test('取消処理で両方の外部削除が成功しても、最後の保存�
  assert.notEqual(afterFailure.initialMeetingSync?.status,'creating','creating状態のまま固着していない（以前は以後のcreate/update/cancelが全てブロックされていた）');
  assert.equal(afterFailure.initialMeetingSync,null,'両方の外部削除は成功済みのため、再試行の保存で正しく取消済み（null）として記録される');
  assert.equal(afterFailure.initialZoomUrl,'');
- // 固着していないことを実際に確認：次の操作（再作成）がブロックされずに進む。
+ assert.equal(afterFailure.initialZoomAt,'','取消が完全に成功した時点で開始予定の日時も消える（Codex独立レビュー指摘の回帰：朝の通知に取消済みのMTGが残らないようにする）');
+ // 固着していないことを実際に確認：次の操作（新しい日時での再作成）がブロックされずに進む。
  global.fetch=fakeFetch({});
  const latest=await store.doc('workspace');
- const recreated=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision:latest.revision});
+ const data=JSON.parse(latest.body);data.orgSales[0].initialZoomAt='2026-11-10T10:00';
+ const put=(await store.query('UPDATE ss_documents SET body=$1,revision=revision+1 WHERE name=$2 AND revision=$3 RETURNING revision',[JSON.stringify(data),'workspace',latest.revision]))[0];
+ const recreated=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision:put.revision});
  assert.equal(recreated.org.initialMeetingSync.status,'synced','固着していれば「会議を作成処理中です」で拒否されるはずの再作成が正常に完了する');
 });
 

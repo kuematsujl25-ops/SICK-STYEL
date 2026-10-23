@@ -35,6 +35,16 @@ test('morning briefing only counts saved real schedule, distinguishes disconnect
  assert.match(r.body,/担当タスク1件/);
  assert.match(r.body,/団体商談1件/);
 });
+test('取消済みのMTGは朝の通知に表示されない（取消が完全に成功するとlib/meeting-sync.jsが開始予定の日時も消すため、Codex独立レビュー指摘の回帰）',()=>{
+ const d=empty();
+ // initialMeetingSyncがnull（取消済み）でも、initialZoomAtが消されていなければ今日の予定として誤って
+ // 数えてしまう。lib/meeting-sync.jsの取消処理は完全成功時に日時も消すため、ここではその結果（''）を
+ // 直接検証する。
+ d.orgSales=[{name:'FC',initialZoomAt:'',initialMeetingSync:null,deletedAt:null}];
+ const r=reportFor('morning',jst,d,null,[],false);
+ assert.match(r.body,/団体商談0件/);
+ assert.equal(r.detail.meetings.length,0);
+});
 test('20h and 22h do not fabricate zero for unknown sales and never infer causes',()=>{
  const d=empty(),api={dailyHistory:[{date:'2026-10-22',sales:3000}]};
  let report=reportFor('sales',jst,d,api);
