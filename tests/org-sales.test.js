@@ -65,6 +65,18 @@ test('stage filter narrows the list', () => {
   assert.match(html, /1 \/ 2 件/);
 });
 
+test('検索語（ui.q）はレンダリング自体で絞り込みに反映される（Codex独立レビュー指摘の回帰：以前は入力時のDOM直接操作だけで絞り込んでおり、段階・担当切替等での再描画で検索結果が失われていた）', () => {
+  const a = org({ id: 'a', name: 'FC渋谷' });
+  const b = org({ id: 'b', name: 'FC横浜' });
+  const all = renderOrgList([a, b], { stage: 'all', assignee: 'all', q: '' }, esc, '2026-10-21');
+  const searched = renderOrgList([a, b], { stage: 'all', assignee: 'all', q: '渋谷' }, esc, '2026-10-21');
+  assert.match(all, /2 \/ 2 件/);
+  assert.match(searched, /1 \/ 2 件/, '検索語に一致する1件だけに絞り込まれる');
+  assert.match(searched, /FC渋谷/);
+  assert.doesNotMatch(searched, /FC横浜/);
+  assert.match(searched, /value="渋谷"/);
+});
+
 test('overdue next-action is not flagged for lost/repeat-purchase orgs', () => {
   const lost = org({ stage: '失注', nextAction: 'フォロー', nextDue: '2026-10-01' });
   const html = renderOrgList([lost], { stage: 'all', assignee: 'all' }, esc, '2026-10-21');
