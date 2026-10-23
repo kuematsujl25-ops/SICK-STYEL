@@ -254,7 +254,9 @@ function adCsvImport(input){const f=input.files[0];if(!f)return;(async()=>{try{i
   const idx=words=>h.findIndex(x=>words.some(w=>x.includes(w)));
   const ci={platform:idx(['媒体','platform']),start:idx(['開始','start']),end:idx(['終了','end']),cost:idx(['広告費','cost']),sales:idx(['広告経由売上','attributed','経由売上']),window:idx(['アトリビューション','window']),campaign:idx(['メモ','キャンペーン','campaign'])};
   if(ci.platform<0||ci.start<0||ci.end<0)throw Error('媒体・開始日・終了日の列が見つかりません。ひな形を確認してください。');
-  const next=structuredClone(state);const byKey=new Map(next.adMetrics.map(x=>[x.platform+'|'+x.periodStart+'|'+x.periodEnd,x]));let added=0,updated=0;const bad=[];
+  // キーに媒体・期間に加えてキャンペーン名も含める。同じ媒体・同じ期間でもキャンペーンが異なれば別広告実績として
+  // 扱わないと、CSVの後の行が前の行の広告費・広告経由売上を無言で上書きしてしまう（Codex独立レビュー指摘）。
+  const next=structuredClone(state);const byKey=new Map(next.adMetrics.map(x=>[x.platform+'|'+x.periodStart+'|'+x.periodEnd+'|'+(x.campaign||''),x]));let added=0,updated=0;const bad=[];
   rows.slice(1).forEach((r,i)=>{
    const platformRaw=(r[ci.platform]||'').trim();const platform=/instagram/i.test(platformRaw)||platformRaw.includes('インスタ')?'Instagram':/amazon/i.test(platformRaw)||platformRaw.includes('アマゾン')?'Amazon':null;
    const start=toDate(r[ci.start]);const end=ci.end>=0?toDate(r[ci.end]):start;
@@ -262,7 +264,7 @@ function adCsvImport(input){const f=input.files[0];if(!f)return;(async()=>{try{i
    const sales=ci.sales>=0&&r[ci.sales]!==''?toNumber(r[ci.sales]):null;
    const win=ci.window>=0&&String(r[ci.window]||'').trim()!==''?Number(r[ci.window]):null;
    if(!platform||!start||!end||end<start||(win!==null&&(!Number.isInteger(win)||win<0||win>365))){bad.push(i+2);return;}
-   const key=platform+'|'+start+'|'+end;const campaign=ci.campaign>=0?String(r[ci.campaign]||'').slice(0,200):'';const cur=byKey.get(key);
+   const campaign=ci.campaign>=0?String(r[ci.campaign]||'').slice(0,200):'';const key=platform+'|'+start+'|'+end+'|'+campaign;const cur=byKey.get(key);
    if(cur){cur.adCost=cost;cur.attributedSales=sales;cur.attributionWindowDays=win;cur.campaign=campaign;cur.source='csv';cur.updatedAt=new Date().toISOString();updated++;}
    else{const row={id:crypto.randomUUID(),platform,periodStart:start,periodEnd:end,attributionWindowDays:win,adCost:cost,attributedSales:sales,source:'csv',campaign,updatedAt:new Date().toISOString()};next.adMetrics.push(row);byKey.set(key,row);added++;}
   });
