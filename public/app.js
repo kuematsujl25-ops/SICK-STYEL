@@ -382,11 +382,11 @@ function editor(key,record){const c=configs[key];const r=record||{due:key==='col
 // フォームを編集中（まだ「保存する」していない）のままMTG連携ボタンを押すと、古い（保存済みの）日時・名称を
 // そのまま同期してしまい、しかも同期後にstateを再取得してエディタを再描画するため未保存の入力が無言で
 // 失われる（Codex独立レビュー指摘）。未保存の変更がある場合は先に保存するよう案内し、同期を実行しない。
-function meetingEditor(record,kind='initial'){
+function meetingEditor(record,kind='initial',noteDraft=null){
  if(!record||record.deletedAt)return;
  const d=document.querySelector('#editor');
- d.innerHTML=renderMeetingEditor(record,kind,esc,{zoomConnected:!!zoomStatus?.connected,calendarConnected:!!calendarStatus?.connected,calendarIdentityReady:calendarStatus?.identityReady});d.showModal();
- const noteAction=async(input,btn)=>{if(btn.disabled)return;btn.disabled=true;try{await api('meeting-notes','POST',{...input,orgId:record.id,kind,revision:state.revision});state=await api('data');render();meetingEditor(state.orgSales.find(o=>o.id===record.id),kind);}catch(e){d.querySelector('#editerror').textContent=e.message;btn.disabled=false;}};
+ d.innerHTML=renderMeetingEditor(record,kind,esc,{zoomConnected:!!zoomStatus?.connected,calendarConnected:!!calendarStatus?.connected,calendarIdentityReady:calendarStatus?.identityReady});d.showModal();if(noteDraft)for(const [id,value] of Object.entries(noteDraft)){const el=d.querySelector('#'+id);if(el){if(el.type==='checkbox')el.checked=value;else el.value=value;}}
+ const noteAction=async(input,btn)=>{if(btn.disabled)return;if(meetingFormChanged(record,kind,Object.fromEntries(new FormData(d.querySelector('#meetingform'))))){d.querySelector('#editerror').textContent='未保存の会議変更があります。議事録を保存・反映する前に内容・日時を保存してください';return;}btn.disabled=true;try{await api('meeting-notes','POST',{...input,orgId:record.id,kind,revision:state.revision});state=await api('data');render();meetingEditor(state.orgSales.find(o=>o.id===record.id),kind);}catch(e){d.querySelector('#editerror').textContent=e.message;btn.disabled=false;}};
  const noteImport=d.querySelector('#note-import');noteImport.onclick=()=>noteAction({action:'import',source:d.querySelector('#note-source').value,meetingAt:d.querySelector('#note-at').value,body:d.querySelector('#note-body').value,summary:d.querySelector('#note-summary').value,consentConfirmed:d.querySelector('#note-consent').checked},noteImport);
  d.querySelectorAll('[data-note-undo],[data-note-approve]').forEach(b=>b.onclick=()=>{const action=b.dataset.noteUndo?'undo':'approve',[noteId,index]=(b.dataset.noteUndo||b.dataset.noteApprove).split(':');const raw=action==='approve'?d.querySelector('#fact-'+noteId+'-'+index).value:null;if(action==='approve'&&raw===''){d.querySelector('#editerror').textContent='確認した数値を入力してください';return;}if(confirm(action==='undo'?'反映前の値へ戻しますか？後から変更された値は上書きしません。':'根拠と現在の値を確認しましたか？この項目を指定値で更新します。'))noteAction({action,noteId,index:Number(index),value:raw===null?undefined:Number(raw)},b);});
  d.querySelectorAll('[data-mtgsync]').forEach(btn=>btn.onclick=async()=>{
@@ -419,9 +419,9 @@ function meetingEditor(record,kind='initial'){
  document.querySelector('#close').onclick=document.querySelector('#cancel').onclick=()=>d.close();
  d.querySelector('#meetingform').onsubmit=async e=>{
   e.preventDefault();const button=d.querySelector('#save');if(button.disabled||busy)return;button.disabled=true;
-  try{const row=saveMeetingFields(record,kind,Object.fromEntries(new FormData(e.target)));
+  try{const draft=Object.fromEntries(['note-source','note-at','note-summary','note-body','note-consent'].map(id=>{const el=d.querySelector('#'+id);return [id,el.type==='checkbox'?el.checked:el.value];}));const row=saveMeetingFields(record,kind,Object.fromEntries(new FormData(e.target)));
    await persist({...state,orgSales:state.orgSales.map(o=>o.id===record.id?row:o)});
-   meetingEditor(state.orgSales.find(o=>o.id===record.id),kind);
+   meetingEditor(state.orgSales.find(o=>o.id===record.id),kind,draft);
   }catch(error){d.querySelector('#editerror').textContent=error.message;button.disabled=false;}
  };
 }

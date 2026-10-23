@@ -1,5 +1,5 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import {mkdtemp,rm} from 'node:fs/promises';import {tmpdir} from 'node:os';
-import {createStore} from '../lib/store.js';import {empty,validate} from '../lib/domain.js';import {newOrg} from '../public/org-sales.js';import {previewMeeting} from '../lib/meeting-confirmation.js';import {syncMeeting} from '../lib/meeting-sync.js';import {saveMeetingFields,renderMeetingEditor} from '../public/meetings.js';import {assertMeetingRecordsRetained} from '../public/org-meeting-lifecycle.js';import {importNote,resolveFact,extractFacts} from '../lib/meeting-notes.js';import {writeMeetingNote} from '../lib/meeting-notes-store.js';
+import {createStore} from '../lib/store.js';import {empty,validate} from '../lib/domain.js';import {newOrg} from '../public/org-sales.js';import {previewMeeting} from '../lib/meeting-confirmation.js';import {syncMeeting} from '../lib/meeting-sync.js';import {saveMeetingFields,renderMeetingEditor,meetingFormChanged} from '../public/meetings.js';import {assertMeetingRecordsRetained} from '../public/org-meeting-lifecycle.js';import {importNote,resolveFact,extractFacts} from '../lib/meeting-notes.js';import {writeMeetingNote} from '../lib/meeting-notes-store.js';
 const org=()=>({...newOrg(),id:'oem-example',partyType:'oem',name:'Example Manufacturer',updatedAt:new Date().toISOString(),initialZoomAt:'2026-12-01T10:00'});
 const input={kind:'initial',source:'https://app.notta.ai/example/note',body:'試用人数は12人で確定です。\n希望数は50個で確定です。\n提案数は30個で確定です。\n確定導入数は20個で確定です。',summary:'Example summary',meetingAt:'2026-12-01T10:00',consentConfirmed:true};
 async function setup(t,o=org()){const dir=await mkdtemp(tmpdir()+'/ss-notes-');const store=await createStore({DATA_DIR:dir});t.after(async()=>{store.close();await rm(dir,{recursive:true,force:true});});const [r]=await store.put('workspace',validate({...empty(),orgSales:[o]}));return {store,revision:r.revision};}
@@ -26,4 +26,15 @@ test('議事録保存はrevision競合で二重反映せず、専用操作以外
  const {store,revision}=await setup(t);const first=await writeMeetingNote(store,{...input,orgId:org().id,revision,action:'import'});await assert.rejects(writeMeetingNote(store,{...input,orgId:org().id,revision,action:'import'}),/再読み込み/);
  const saved=JSON.parse((await store.doc('workspace')).body);assert.equal(saved.orgSales[0].meetingNotes.length,1);assert.equal((await writeMeetingNote(store,{...input,orgId:org().id,revision:first.revision,action:'import'})).duplicate,true);
  assert.throws(()=>assertMeetingRecordsRetained(saved,{...saved,orgSales:[{...saved.orgSales[0],meetingNotes:[]}]}),/専用/);assert.throws(()=>assertMeetingRecordsRetained(saved,{...saved,orgSales:[{...saved.orgSales[0],deletedAt:new Date().toISOString()}]}),/議事録/);
+});
+
+test('議事録前の未保存判定は種別・日時・内容・所要時間を検知する',()=>{
+ const o=org(),values={initialMeetingType:'initial_zoom',initialMeetingContent:'初回ZOOM',initialZoomAt:o.initialZoomAt,initialMeetingDurationMin:45};
+ assert.equal(meetingFormChanged(o,'initial',values),false);
+ for(const [key,value] of Object.entries({initialMeetingType:'other',initialMeetingContent:'変更',initialZoomAt:'2026-12-02T10:00',initialMeetingDurationMin:60}))assert.equal(meetingFormChanged(o,'initial',{...values,[key]:value}),true);
+});
+test('多数の小さな議事録で全体の編集容量を超えない',async t=>{
+ const {store}=await setup(t);let rejected=false;
+ for(let i=0;i<40;i++){const before=await store.doc('workspace');try{await writeMeetingNote(store,{...input,source:'https://app.notta.ai/example/'+i,body:'架'.repeat(20000),orgId:org().id,revision:before.revision,action:'import'});}catch(e){assert.match(e.message,/保存容量/);const after=await store.doc('workspace');assert.equal(after.revision,before.revision);assert.equal(after.body,before.body);assert.ok(Buffer.byteLength(after.body)<1_800_000);rejected=true;break;}}
+ assert.equal(rejected,true);
 });
