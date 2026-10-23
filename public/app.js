@@ -375,7 +375,7 @@ function editor(key,record){const c=configs[key];const r=record||{due:key==='col
 function orgFormHasUnsavedChanges(record){
  const form=document.querySelector('#orgform');if(!form||!record)return false;
  const vals=Object.fromEntries(new FormData(form));
- for(const k in vals){if(k==='stageNote')continue;if(k in record&&String(record[k]??'')!==String(vals[k]))return true;}
+ for(const k in vals){if(k==='stageNote')continue;const meetingDefault=k==='initialMeetingContent'?'初回ZOOM':k==='proposalMeetingContent'?'活用法提案ZOOM':undefined;const saved=meetingDefault!==undefined?(record[k]||meetingDefault):record[k];if((k in record||meetingDefault!==undefined)&&String(saved??'')!==String(vals[k]))return true;}
  return false;
 }
 function orgEditor(record){const d=document.querySelector('#editor');

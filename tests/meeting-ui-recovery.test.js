@@ -18,3 +18,11 @@ test('会議内容はフォーム保存後も初回・提案それぞれ維持�
  assert.equal(persisted.orgSales[0].initialMeetingContent,'初回の説明');
  assert.equal(persisted.orgSales[0].proposalMeetingContent,'次回の提案');
 });
+
+test('旧団体の会議内容も未保存変更として検出し、既定表示だけなら変更扱いしない',()=>{
+ const code=src.slice(src.indexOf('function orgFormHasUnsavedChanges'),src.indexOf('function orgEditor'));
+ for(const [initial,proposal,expected] of [['初回ZOOM','活用法提案ZOOM',false],['変更','活用法提案ZOOM',true],['初回ZOOM','変更',true]]){
+  const c=vm.createContext({document:{querySelector:()=>({})},FormData:class{constructor(){return [['initialMeetingContent',initial],['proposalMeetingContent',proposal]];}}});
+  vm.runInContext(code,c);assert.equal(c.orgFormHasUnsavedChanges({id:'old'}),expected);
+ }
+});
