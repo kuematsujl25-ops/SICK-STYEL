@@ -14,7 +14,7 @@ async function remote(stage,url,options={}){let response;try{response=await fetc
  if(!response.ok){const sourceCode=b?.code;const code=typeof sourceCode==='number'&&Number.isSafeInteger(sourceCode)?sourceCode:typeof sourceCode==='string'&&/^[a-zA-Z0-9_-]{1,40}$/.test(sourceCode)?sourceCode:response.status;const hint=response.status===401?'認可が失効しています。再接続してください。':response.status===429?'Zoomの呼び出し上限です。しばらくして再試行してください。':'';throw new ZoomError(code,`Zoom API エラー (${code}、HTTP ${response.status})。${hint}`,stage);}
  return b;
 }
-async function privateData(store){const r=await store.doc('zoom-private');return r?JSON.parse(r.body):null;}
+async function privateData(store){const r=await store.doc('zoom-private');return r?{...JSON.parse(r.body),revision:r.revision}:null;}
 export async function begin(store,session){
  if(!config())throw Error('Zoomアプリの環境変数が未設定です');
  const s=token();await store.query('DELETE FROM ss_oauth WHERE expires<$1',[Date.now()]);await store.query('INSERT INTO ss_oauth(state,session,expires) VALUES ($1,$2,$3)',[hash('zoom:'+s),session,Date.now()+600000]);
@@ -47,7 +47,19 @@ async function accessToken(store,p){
  const form=new URLSearchParams({grant_type:'refresh_token',refresh_token:refresh});
  const fresh=await remote('token_refresh','https://zoom.us/oauth/token',{method:'POST',headers:{Authorization:auth,'Content-Type':'application/x-www-form-urlencoded'},body:form});
  if(!fresh.access_token||!fresh.refresh_token)throw new ZoomError('token_response_incomplete','Zoomトークンの更新に失敗しました。再接続してください','token_refresh');
- await store.put('zoom-private',{...p,encrypted:encrypt({refresh:fresh.refresh_token}),issuedAt:Date.now()});
+ // Zoomはrefresh_tokenをローテーションする（1回使うと無効になる）。2つの会議同期が同時に動くと、両方とも
+ // 同じ古いrefresh_tokenを読んで交換してしまい、後から保存した側だけが有効なトークンを残し、先に保存した
+ // 側（または交換自体に失敗した側）の接続が次回から壊れる恐れがある（Codex独立レビュー指摘）。読み取り時の
+ // revisionと一致する場合だけ保存するCASにし、既に他の同時呼び出しが保存済みなら自分では上書きしない
+ // （自分がこの呼び出しで得たaccess_tokenは、保存の成否に関わらずこの1回の呼び出しには引き続き使える）。
+ const {revision,...rest}=p;
+ const next={...rest,encrypted:encrypt({refresh:fresh.refresh_token}),issuedAt:Date.now()};
+ if(Number.isSafeInteger(revision)){
+  const rows=await store.query('UPDATE ss_documents SET body=$1,revision=revision+1 WHERE name=$2 AND revision=$3 RETURNING revision',[JSON.stringify(next),'zoom-private',revision]);
+  if(!rows.length)console.error(JSON.stringify({event:'zoom_token_refresh_race',note:'concurrent refresh already saved; not overwriting'}));
+ }else{
+  await store.put('zoom-private',next);
+ }
  return fresh.access_token;
 }
 export async function safeStatus(store){const p=await privateData(store);return {configured:config(),connected:!!p,email:p?.email||null,connectedAt:p?.connectedAt||null,scopes:p?.scopes||[]};}
