@@ -24,3 +24,15 @@ test('Adsの明示的429拒否は待機後に再試行でき、通信結果不�
  const fetcher=async url=>{if(String(url).includes('/auth/'))return Response.json({access_token:'mock'});if(String(url).endsWith('/v2/profiles'))return Response.json([{profileId:1,countryCode:'JP',currencyCode:'JPY',timezone:'Asia/Tokyo',accountInfo:{type:'seller'}}]);requests++;return requests===1?new Response(null,{status:429}):Response.json({reportId:'retry-example'});};
  await withRuntime(env,async()=>{await assert.rejects(sync(store,{fetcher,now}),/HTTP 429/);assert.equal((await status(store)).job,null);await assert.rejects(sync(store,{fetcher,now}),/再試行待ち/);assert.equal(requests,1);await sync(store,{fetcher,now:new Date(now.getTime()+61000)});assert.equal((await status(store)).job.status,'pending');assert.equal(requests,2);});
 });
+
+test('Ads終端FAILEDは既存実績を保持し待機後に次の要求を許可する',async t=>{
+ const store=await setup(t);let requests=0;
+ const fetcher=async url=>{if(String(url).includes('/auth/'))return Response.json({access_token:'mock'});if(String(url).endsWith('/v2/profiles'))return Response.json([{profileId:1,countryCode:'JP',currencyCode:'JPY',timezone:'Asia/Tokyo',accountInfo:{type:'seller'}}]);if(String(url).endsWith('/reporting/reports')){requests++;return Response.json({reportId:'example-'+requests});}return Response.json({status:'FAILED'});};
+ await withRuntime(env,async()=>{await sync(store,{fetcher,now});await assert.rejects(sync(store,{fetcher,now}),/生成失敗/);assert.equal((await status(store)).job,null);assert.equal((await status(store)).lastSuccess,null);await assert.rejects(sync(store,{fetcher,now}),/再試行待ち/);assert.equal(requests,1);await sync(store,{fetcher,now:new Date(now.getTime()+61000)});assert.equal(requests,2);assert.equal((await status(store)).job.status,'pending');});
+});
+test('Ads425は既存レポートIDで進捗を確認し、不正なID応答は再要求しない',async t=>{
+ const store=await setup(t),id='00000000-0000-4000-8000-000000000001';let requests=0,polls=0;
+ const fetcher=async url=>{if(String(url).includes('/auth/'))return Response.json({access_token:'mock'});if(String(url).endsWith('/v2/profiles'))return Response.json([{profileId:1,countryCode:'JP',currencyCode:'JPY',timezone:'Asia/Tokyo',accountInfo:{type:'seller'}}]);if(String(url).endsWith('/reporting/reports')){requests++;return Response.json({detail:'The request is a duplicate of : '+id},{status:425});}assert.ok(String(url).endsWith('/'+id));polls++;return Response.json({status:'PENDING'});};
+ await withRuntime(env,async()=>{await sync(store,{fetcher,now});await sync(store,{fetcher,now});assert.equal(requests,1);assert.equal(polls,1);assert.equal((await status(store)).job.status,'pending');});
+ const other=await setup(t);await withRuntime(env,async()=>{const invalid=async(url,opt)=>String(url).endsWith('/reporting/reports')?Response.json({detail:'unknown result'},{status:425}):fetcher(url,opt);await assert.rejects(sync(other,{fetcher:invalid,now}),/結果が不明/);await assert.rejects(sync(other,{fetcher:invalid,now}),/結果確認/);});
+});
