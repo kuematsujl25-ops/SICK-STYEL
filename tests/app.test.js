@@ -43,6 +43,14 @@ test('管理者登録・認証・業務データ保存・復元・永続化', as
  const invalid=structuredClone(d);invalid.metrics[0].sales=-1;assert.equal((await req('data','PUT',invalid)).status,400);
  const malformed=structuredClone(d);malformed.tasks[0].due='2026-02-31';assert.equal((await req('data','PUT',malformed)).status,400);
  const duplicate=structuredClone(d);duplicate.metrics.push({...duplicate.metrics[0],id:'m2'});assert.equal((await req('data','PUT',duplicate)).status,400);
+ // Codex独立レビュー指摘(P1)の回帰: 正しい revision だけを持つ、壊れた/不完全なPUT本体（元の必須項目が
+ // 欠落）が「新しい空のワークスペース」として受理され、本番データを無言で空に上書きしてしまわないこと。
+ for(const wiped of [{revision:d.revision},{revision:d.revision,tasks:[]},{}])
+  assert.equal((await req('data','PUT',wiped)).status,400,'malformed PUT body must be rejected: '+JSON.stringify(wiped));
+ assert.deepEqual((await req('data')).data,d,'拒否されたPUTの後も、既存の業務データは一切変化していない');
+ const badRestore=(await req('restore','POST',{version:1,revision:d.revision})).status;
+ assert.equal(badRestore,400,'/api/restore も data フィールド欠落のPUTと同様に、不完全な本体を拒否する');
+ assert.deepEqual((await req('data')).data,d,'拒否されたrestoreの後も、既存の業務データは一切変化していない');
  const backup=(await req('backup')).data;assert.equal(backup.version,1);assert.equal(backup.data.brand.Mission,'スタイルを届ける');assert.equal(JSON.stringify(backup).includes('Test-password'),false);
  assert.equal(backup.data.staffTasks.length,1);assert.equal(backup.data.orgSales.length,1);assert.equal(backup.data.collectionTasks.length,1);
  assert.equal(backup.data.reelPosts.length,1);assert.equal(backup.data.growthExperiments.length,1);assert.equal(backup.data.competitorAccounts.length,1);assert.equal(backup.data.playerCandidates.length,1);
