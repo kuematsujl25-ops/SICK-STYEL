@@ -7,3 +7,14 @@ test('会議API失敗後は最新revisionとuncertain状態を再取得し、失
  vm.runInContext(block,c);await btn.onclick();assert.deepEqual(calls,['orgsales/meeting-preview','orgsales/meeting','data']);if(failRead)assert.ok(closed);else{assert.equal(c.state.revision,3);assert.equal(shown.initialMeetingSync.status,'uncertain');}
  }
 });
+
+test('会議内容はフォーム保存後も初回・提案それぞれ維持される',async()=>{
+ const start=src.indexOf(" document.querySelector('#orgform').onsubmit");
+ const save=src.slice(start,src.indexOf(" const del=document.querySelector('#delete')",start));
+ const form={},button={},record={id:'qa',stage:'DM送信',history:[]};
+ let persisted;
+ const c=vm.createContext({document:{querySelector:s=>s==='#orgform'?form:button},record,state:{orgSales:[record]},FormData:class{constructor(){return Object.entries({stage:'DM送信',initialMeetingContent:'初回の説明',proposalMeetingContent:'次回の提案'});}},persist:async x=>persisted=JSON.parse(JSON.stringify(x)),toast:()=>{}});
+ vm.runInContext(save,c);await form.onsubmit({preventDefault(){},target:{}});
+ assert.equal(persisted.orgSales[0].initialMeetingContent,'初回の説明');
+ assert.equal(persisted.orgSales[0].proposalMeetingContent,'次回の提案');
+});

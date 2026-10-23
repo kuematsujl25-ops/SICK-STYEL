@@ -415,7 +415,7 @@ function orgEditor(record){const d=document.querySelector('#editor');
   const stageChanged=!record||record.stage!==vals.stage;
   const history=stageChanged?[...base.history,{stage:vals.stage,at:now,note:vals.stageNote||''}]:base.history;
   const row={...base,name:vals.name,category:vals.category,size:vals.size,assignee:vals.assignee,contact:vals.contact,
-   stage:vals.stage,initialZoomAt:vals.initialZoomAt,initialZoomUrl:vals.initialZoomUrl,proposalZoomAt:vals.proposalZoomAt,proposalZoomUrl:vals.proposalZoomUrl,sampleQty:vals.sampleQty,sampleCost:vals.sampleCost,shippingCost:vals.shippingCost,trialUsers:vals.trialUsers,
+   stage:vals.stage,initialMeetingContent:vals.initialMeetingContent,proposalMeetingContent:vals.proposalMeetingContent,initialZoomAt:vals.initialZoomAt,initialZoomUrl:vals.initialZoomUrl,proposalZoomAt:vals.proposalZoomAt,proposalZoomUrl:vals.proposalZoomUrl,sampleQty:vals.sampleQty,sampleCost:vals.sampleCost,shippingCost:vals.shippingCost,trialUsers:vals.trialUsers,
    feedback:vals.feedback,proposal:vals.proposal,paidQty:vals.paidQty,paidRevenue:vals.paidRevenue,paidCost:vals.paidCost,
    lostReason:vals.lostReason,nextAction:vals.nextAction,nextDue:vals.nextDue,notes:vals.notes,updatedAt:now,history,deletedAt:base.deletedAt??null};
   const next={...state,orgSales:record?state.orgSales.map(x=>x.id===record.id?row:x):[...state.orgSales,row]};
