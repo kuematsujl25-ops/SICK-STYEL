@@ -122,10 +122,10 @@ function meetingBlock(o,kind,label,autoSync,esc){
  const draftUrl=o.id?googleCalendarDraft(o,draftKind):null;
  return `<label>${label}開始予定（日本時間）<input name="${atName}" type="datetime-local" value="${esc(atVal)}"></label>
  <label>${label}参加URL${ready?'（自動連携で設定されます）':'（任意・発行済みのみ）'}<input name="${urlName}" type="url" maxlength="2000" placeholder="https://..." value="${esc(urlVal)}" ${ready?'readonly':''}></label>
- ${ready?`<div class="meetingsync"><span class="badge ${sync?.status==='synced'?'ok':sync?.status==='error'?'warn':sync?'warn':''}">${sync?SYNC_LABEL[sync.status]:'未作成'}</span>
+ ${(ready||sync)?`<div class="meetingsync"><span class="badge ${sync?.status==='synced'?'ok':sync?.status==='error'?'warn':sync?'warn':''}">${sync?SYNC_LABEL[sync.status]:'未作成'}</span>
  ${sync?.error?`<p class="note red">${esc(sync.error)}</p>`:''}
- <div class="actions">${!sync||(['error','zoom_only'].includes(sync.status)&&!sync.cancelPending)?`<button type="button" class="secondary" data-mtgsync="${kind}:create">${sync?'再試行する':'MTGを作成'}</button>`:''}
- ${sync?.status==='synced'?`<button type="button" class="secondary" data-mtgsync="${kind}:update">日程を同期し直す</button>`:''}
+ <div class="actions">${ready&&(!sync||(['error','zoom_only'].includes(sync.status)&&!sync.cancelPending))?`<button type="button" class="secondary" data-mtgsync="${kind}:create">${sync?'再試行する':'MTGを作成'}</button>`:''}
+ ${ready&&sync?.status==='synced'?`<button type="button" class="secondary" data-mtgsync="${kind}:update">日程を同期し直す</button>`:''}
  ${sync&&sync.status!=='creating'?`<button type="button" class="red" data-mtgsync="${kind}:cancel">${sync.cancelPending?'取消を再試行':'MTGを取消'}</button>`:''}</div></div>`
  :draftUrl?`<a class="secondary" href="${esc(draftUrl)}" target="_blank" rel="noopener noreferrer">${label}の予定をGoogleカレンダーへ追加（手動で保存） ↗</a>`:''}`;
 }
