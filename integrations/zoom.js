@@ -41,46 +41,62 @@ export async function connect(store,session,url){
   await store.put('zoom-private',data);return data;
  }catch(err){throw new ZoomError('storage_failed','認可情報の保存に失敗しました（暗号化鍵またはデータベース接続を確認してください）','storage');}
 }
-async function accessToken(store,p){
- const auth='Basic '+Buffer.from(`${runtime().ZOOM_CLIENT_ID}:${runtime().ZOOM_CLIENT_SECRET}`).toString('base64');
- const {refresh}=decrypt(p.encrypted);
- const form=new URLSearchParams({grant_type:'refresh_token',refresh_token:refresh});
- const fresh=await remote('token_refresh','https://zoom.us/oauth/token',{method:'POST',headers:{Authorization:auth,'Content-Type':'application/x-www-form-urlencoded'},body:form});
- if(!fresh.access_token||!fresh.refresh_token)throw new ZoomError('token_response_incomplete','Zoomトークンの更新に失敗しました。再接続してください','token_refresh');
- // Zoomはrefresh_tokenをローテーションする（1回使うと無効になる）。2つの会議同期が同時に動くと、両方とも
- // 同じ古いrefresh_tokenを読んで交換してしまい、後から保存した側だけが有効なトークンを残し、先に保存した
- // 側（または交換自体に失敗した側）の接続が次回から壊れる恐れがある（Codex独立レビュー指摘）。読み取り時の
- // revisionと一致する場合だけ保存するCASにし、既に他の同時呼び出しが保存済みなら自分では上書きしない
- // （自分がこの呼び出しで得たaccess_tokenは、保存の成否に関わらずこの1回の呼び出しには引き続き使える）。
- const {revision,...rest}=p;
- const next={...rest,encrypted:encrypt({refresh:fresh.refresh_token}),issuedAt:Date.now()};
- if(Number.isSafeInteger(revision)){
-  const rows=await store.query('UPDATE ss_documents SET body=$1,revision=revision+1 WHERE name=$2 AND revision=$3 RETURNING revision',[JSON.stringify(next),'zoom-private',revision]);
-  if(!rows.length)console.error(JSON.stringify({event:'zoom_token_refresh_race',note:'concurrent refresh already saved; not overwriting'}));
- }else{
-  await store.put('zoom-private',next);
+// Zoomはrefresh_tokenをローテーションする（1回使うと無効になる）。保存だけをCAS（revision一致）にしても、
+// 「交換そのもの」は排他制御されない：2つの会議同期が同時に同じ古いrefresh_tokenを読んで両方とも
+// 交換してしまうと、Zoom側のローテーション仕様次第では、先にDBへ保存できた側のトークンを、後から行われた
+// もう一方の交換が無効化してしまう恐れがある（Codex独立レビュー指摘：DB書き込み順を守るだけでは不十分）。
+// そこでリース（refreshing）をCASで取得してから交換する。他の呼び出しが既にリース保持中なら、自分では
+// 交換せず少し待って再試行する（長すぎるリースは異常終了とみなし20秒で放棄）。
+async function acquireRefreshLease(store){
+ for(let attempt=0;attempt<4;attempt++){
+  const current=await privateData(store);
+  if(!current)throw Error('Zoomを接続してください');
+  const {revision,refreshing,...rest}=current;
+  if(refreshing&&Date.now()-refreshing<20000){await new Promise(r=>setTimeout(r,250));continue;}
+  const rows=await store.query('UPDATE ss_documents SET body=$1,revision=revision+1 WHERE name=$2 AND revision=$3 RETURNING revision',
+   [JSON.stringify({...rest,refreshing:Date.now()}),'zoom-private',revision]);
+  if(rows.length)return {...rest,revision:rows[0].revision};
  }
+ throw new ZoomError('token_refresh_busy','Zoom接続の更新が他の処理と混み合っています。少し待って再試行してください','token_refresh');
+}
+async function releaseLease(store,leased,extra){
+ // store.query()はバックエンド（ローカルSQLiteは同期・本番Postgresは非同期）によって返り値の形が異なるため、
+ // 必ずawaitしてからtry/catchで囲む（.catch()を直接チェーンしない）。
+ try{await store.query('UPDATE ss_documents SET body=$1,revision=revision+1 WHERE name=$2 AND revision=$3',
+  [JSON.stringify({...leased,revision:undefined,refreshing:null,...extra}),'zoom-private',leased.revision]);}
+ catch{/* リース解放に失敗しても20秒後の期限切れで自動的に回収される */}
+}
+async function accessToken(store){
+ const auth='Basic '+Buffer.from(`${runtime().ZOOM_CLIENT_ID}:${runtime().ZOOM_CLIENT_SECRET}`).toString('base64');
+ const leased=await acquireRefreshLease(store);
+ const {refresh}=decrypt(leased.encrypted);
+ const form=new URLSearchParams({grant_type:'refresh_token',refresh_token:refresh});
+ let fresh;
+ try{fresh=await remote('token_refresh','https://zoom.us/oauth/token',{method:'POST',headers:{Authorization:auth,'Content-Type':'application/x-www-form-urlencoded'},body:form});}
+ catch(e){await releaseLease(store,leased,{});throw e;}
+ if(!fresh.access_token||!fresh.refresh_token){await releaseLease(store,leased,{});throw new ZoomError('token_response_incomplete','Zoomトークンの更新に失敗しました。再接続してください','token_refresh');}
+ await releaseLease(store,leased,{encrypted:encrypt({refresh:fresh.refresh_token}),issuedAt:Date.now()});
  return fresh.access_token;
 }
 export async function safeStatus(store){const p=await privateData(store);return {configured:config(),connected:!!p,email:p?.email||null,connectedAt:p?.connectedAt||null,scopes:p?.scopes||[]};}
 // Zoomのjoin_urlのみを返す。ホスト専用start_urlは呼び出し元へ渡さない（外部共有の禁止）。
 export async function createMeeting(store,{topic,startIso,durationMin}){
  const p=await privateData(store);if(!p)throw Error('Zoomを接続してください');
- const access=await accessToken(store,p);
+ const access=await accessToken(store);
  const r=await remote('create_meeting','https://api.zoom.us/v2/users/me/meetings',{method:'POST',headers:{Authorization:`Bearer ${access}`,'Content-Type':'application/json'},
   body:JSON.stringify({topic,type:2,start_time:startIso,duration:durationMin,timezone:'Asia/Tokyo',settings:{join_before_host:true,waiting_room:true,mute_upon_entry:true,approval_type:2}})});
  return {meetingId:String(r.id),joinUrl:r.join_url};
 }
 export async function updateMeeting(store,meetingId,{topic,startIso,durationMin}){
  const p=await privateData(store);if(!p)throw Error('Zoomを接続してください');
- const access=await accessToken(store,p);
+ const access=await accessToken(store);
  await remote('update_meeting',`https://api.zoom.us/v2/meetings/${encodeURIComponent(meetingId)}`,{method:'PATCH',headers:{Authorization:`Bearer ${access}`,'Content-Type':'application/json'},
   body:JSON.stringify({topic,start_time:startIso,duration:durationMin,timezone:'Asia/Tokyo'})});
  return {ok:true};
 }
 export async function deleteMeeting(store,meetingId){
  const p=await privateData(store);if(!p)throw Error('Zoomを接続してください');
- const access=await accessToken(store,p);
+ const access=await accessToken(store);
  try{await remote('delete_meeting',`https://api.zoom.us/v2/meetings/${encodeURIComponent(meetingId)}`,{method:'DELETE',headers:{Authorization:`Bearer ${access}`}});}
  catch(e){if(e instanceof ZoomError&&e.code===3001)return {ok:true,alreadyGone:true};throw e;}
  return {ok:true};

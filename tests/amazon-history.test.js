@@ -179,6 +179,15 @@ test('priorPeriodSales returns null when the prior period itself has gaps (never
  assert.equal(prior.value,null);
 });
 
+test('priorPeriodSales clamps the comparison to the prior month\'s own length when the current month has more days (Codex独立レビュー指摘の回帰: 3/31 vs 2月の28日)', () => {
+ const feb=Array.from({length:28},(_,i)=>d('2026-02-'+String(i+1).padStart(2,'0'),1000)); // 2026年は平年・28日分すべて揃っている
+ const c={dailyHistory:feb};
+ const prior=priorPeriodSales(c,[],'2026-03',31); // 3月31日時点（throughDay=31）。2月には31日が存在しない。
+ assert.equal(prior.month,'2026-02');
+ assert.equal(prior.daysExpected,28,'前月の実際の日数(28)に揃える。throughDay(31)をそのまま要求しない');
+ assert.equal(prior.value,28000,'前月データが揃っていれば、月の長さが違っても「未取得」にしない');
+});
+
 test('adRoas/adAcos use ad-attributed sales, never total revenue, and return null ("計算不可") for a zero/missing denominator', () => {
  assert.equal(adRoas({adCost:10000,attributedSales:50000}),5,'ROAS = 広告経由売上 ÷ 広告費');
  assert.equal(adAcos({adCost:10000,attributedSales:50000}),20,'ACOS = 広告費 ÷ 広告経由売上 × 100（%）');
