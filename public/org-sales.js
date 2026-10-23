@@ -13,13 +13,19 @@ export const newOrg=()=>({category:'',size:'',assignee:'',contact:'',stage:'DM�
  paidQty:null,paidRevenue:null,paidCost:null,lostReason:'',nextAction:'',nextDue:'',notes:'',history:[]});
 
 function fmtN(v){return v===null||v===undefined?'未入力':Number(v).toLocaleString('ja-JP');}
-function stageDate(history,stage){const h=[...history].reverse().find(x=>x.stage===stage);return h?h.at.slice(0,10):null;}
+// historyのatはnew Date().toISOString()（UTC）で保存されている。アプリの他の箇所は一貫して日本時間の
+// 日付・月で期間を扱っているため、ここでUTCのまま先頭10/7文字を切り出すと、日本時間の深夜〜朝（UTCでは
+// 前日）に発生したイベントが1日前の日付・前月の月として扱われ、期間フィルタやコホート集計から
+// 取りこぼされる（Codex独立レビュー指摘）。必ず日本時間に変換してから日付・月を取り出す。
+const jstDate=at=>new Date(at).toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'});
+const jstMonth=at=>jstDate(at).slice(0,7);
+function stageDate(history,stage){const h=[...history].reverse().find(x=>x.stage===stage);return h?jstDate(h.at):null;}
 
 const STALLED_DAYS=14;
 // 「停滞」= 失注・連絡不要・継続購入（最終段階）以外で、直近の段階変化から14日以上動きがない案件。
 function isStalled(o,today){
  if(['失注','連絡不要','継続購入'].includes(o.stage))return false;
- const last=o.history.length?o.history[o.history.length-1].at.slice(0,10):null;
+ const last=o.history.length?jstDate(o.history[o.history.length-1].at):null;
  if(!last)return false;
  const days=(new Date(today)-new Date(last))/86400000;
  return days>=STALLED_DAYS;
@@ -47,7 +53,7 @@ export function renderOrgList(orgs,ui,esc,today){
 // 対象期間（ISO日付文字列）内のhistory発生イベントから集計する。分子・分母・期間を明示する設計。
 export function computeOrgKPI(orgs,start,end){
  const active=orgs.filter(x=>!x.deletedAt);
- const within=at=>{const d=at.slice(0,10);return (!start||d>=start)&&(!end||d<=end);};
+ const within=at=>{const d=jstDate(at);return (!start||d>=start)&&(!end||d<=end);};
  const uniq={};for(const s of ORG_ALL_STAGES)uniq[s]=new Set();
  let dmCount=0,zoomSchedCount=0,zoomDoneCount=0,sampleSentCount=0,arrivedCount=0,trialCount=0,proposalCount=0;
  for(const o of active)for(const h of o.history){
@@ -81,7 +87,7 @@ export function renderOrgKPI(orgs,period,esc){
   ['活用法提案ZOOM実施',k.proposalCount,k.trialCount],['有償導入団体',k.paidOrgs,k.dmUniqueOrgs],['継続購入団体',k.repeatOrgs,k.paidOrgs]];
  const active=orgs.filter(x=>!x.deletedAt);
  const cohorts={};
- for(const o of active){const first=o.history[0]?.at?.slice(0,7);if(!first)continue;(cohorts[first]??=[]).push(o);}
+ for(const o of active){if(!o.history[0])continue;const month=jstMonth(o.history[0].at);(cohorts[month]??=[]).push(o);}
  const cohortRows=Object.entries(cohorts).sort((a,b)=>b[0].localeCompare(a[0])).map(([month,list])=>{
   const paid=list.filter(o=>o.history.some(h=>h.stage==='有償導入')).length;
   return `<tr><td>${esc(month)}</td><td>${list.length}</td><td>${paid}</td><td>${rate(paid,list.length)===null?'—':rate(paid,list.length)+'%'}</td></tr>`;

@@ -34,6 +34,15 @@ test('period filter narrows by event date, not record update time', () => {
   assert.equal(sept.dmCount, 1);
 });
 
+test('period filter converts history timestamps to JST before comparing dates, so an early-morning JST event is not misattributed to the previous UTC day (Codex独立レビュー指摘の回帰)', () => {
+  // 2026-10-23 08:00 JST = 2026-10-22 23:00 UTC として保存されている。
+  const o = org({ history: [{ stage: 'DM送信', at: '2026-10-22T23:00:00.000Z', note: '' }] });
+  const onThatJstDay = computeOrgKPI([o], '2026-10-23', '2026-10-23');
+  assert.equal(onThatJstDay.dmCount, 1, '日本時間の10/23に発生したイベントは、10/23を対象期間とした集計に含まれる');
+  const onPriorUtcDay = computeOrgKPI([o], '2026-10-22', '2026-10-22');
+  assert.equal(onPriorUtcDay.dmCount, 0, 'UTC上の日付(10/22)ではなく、日本時間の日付で判定される');
+});
+
 test('sample-only orgs (no 有償導入) are not counted as revenue', () => {
   const sampleOnly = org({ history: [{ stage: 'DM送信', at: '2026-10-01T00:00:00.000Z', note: '' }, { stage: 'サンプル発送', at: '2026-10-02T00:00:00.000Z', note: '' }] });
   const k = computeOrgKPI([sampleOnly], '', '');
@@ -94,6 +103,14 @@ test('同期済みMTGは「日程を同期し直す」「MTGを取消」を表�
   assert.match(html, /data-mtgsync="initial:update"/);
   assert.match(html, /data-mtgsync="initial:cancel"/);
   assert.doesNotMatch(html, /data-mtgsync="initial:create"/);
+});
+
+test('cohort month uses JST, not UTC, for grouping the first history entry (Codex独立レビュー指摘の回帰)', () => {
+  // 2026-11-01 08:00 JST = 2026-10-31 23:00 UTC。UTCのまま月を切り出すと「2026-10」に誤分類される。
+  const o = org({ history: [{ stage: 'DM送信', at: '2026-10-31T23:00:00.000Z', note: '' }] });
+  const html = renderOrgKPI([o], { start: '', end: '' }, esc);
+  assert.match(html, /2026-11/, '日本時間の開始月（2026-11）でコホートに分類される');
+  assert.doesNotMatch(html, /<td>2026-10<\/td>/, 'UTCの日付(2026-10)では分類されない');
 });
 
 test('cohort table renders a conversion rate with explicit denominator', () => {
