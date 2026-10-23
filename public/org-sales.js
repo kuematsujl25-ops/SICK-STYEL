@@ -35,17 +35,24 @@ function isStalled(o,today){
  const days=(new Date(today)-new Date(last))/86400000;
  return days>=STALLED_DAYS;
 }
+const orgSearchHay=o=>[o.name,o.category,o.assignee,o.stage,o.nextAction].join(' ').toLowerCase();
 function orgRow(o,esc,today){
  const late=o.nextDue&&o.nextDue<today&&!['失注','継続購入'].includes(o.stage);
  const stalled=isStalled(o,today);
  const stageIndex=ORG_PHASES.findIndex(([, ...stages])=>stages.includes(o.stage));
  const step=stageIndex<0?o.stage:ORG_PHASES[stageIndex][0];
- return `<div class="listrow" data-search="${esc([o.name,o.category,o.assignee,o.stage,o.nextAction].join(' ').toLowerCase())}"><div class="grow"><b>${esc(o.name)}</b><small>${esc(o.category||'未入力')} · 担当${esc(o.assignee||'未設定')}${o.nextAction?' · 次: '+esc(o.nextAction)+(o.nextDue?'（'+esc(o.nextDue)+'）':''):''}${late?' · 期限超過':''}${stalled?' · 停滞中（'+STALLED_DAYS+'日以上動きなし）':''}</small><small>営業フェーズ: ${esc(step)}</small></div><span class="badge ${ORG_SIDE_STAGES.includes(o.stage)?'warn':'ok'}">${esc(o.stage)}</span>${stalled?'<span class="badge warn">停滞</span>':''}<button data-editorg="${esc(o.id)}">編集</button></div>`;
+ return `<div class="listrow" data-search="${esc(orgSearchHay(o))}"><div class="grow"><b>${esc(o.name)}</b><small>${esc(o.category||'未入力')} · 担当${esc(o.assignee||'未設定')}${o.nextAction?' · 次: '+esc(o.nextAction)+(o.nextDue?'（'+esc(o.nextDue)+'）':''):''}${late?' · 期限超過':''}${stalled?' · 停滞中（'+STALLED_DAYS+'日以上動きなし）':''}</small><small>営業フェーズ: ${esc(step)}</small></div><span class="badge ${ORG_SIDE_STAGES.includes(o.stage)?'warn':'ok'}">${esc(o.stage)}</span>${stalled?'<span class="badge warn">停滞</span>':''}<button data-editorg="${esc(o.id)}">編集</button></div>`;
 }
 
 export function renderOrgList(orgs,ui,esc,today){
  const active=orgs.filter(x=>!x.deletedAt);
- const filtered=active.filter(x=>(ui.stage==='all'||x.stage===ui.stage)&&(ui.assignee==='all'||x.assignee===ui.assignee));
+ // 検索欄（#orgsearch）はこれまで入力時のDOM直接操作（行の表示/非表示）だけで絞り込んでおり、ui.qは
+ // レンダリングでは使われていなかった。段階・担当の切替や保存など、検索と無関係な操作でrender()が
+ // 呼ばれるたびに一覧が再構築され、検索語は入力欄に残ったまま絞り込みだけが失われていた
+ // （Codex独立レビュー指摘）。レンダリング自体もui.qで絞り込むことで、どの操作後でも一覧と件数が
+ // 検索結果と一致するようにする。
+ const q=(ui.q||'').trim().toLowerCase();
+ const filtered=active.filter(x=>(ui.stage==='all'||x.stage===ui.stage)&&(ui.assignee==='all'||x.assignee===ui.assignee)&&(!q||orgSearchHay(x).includes(q)));
  const sorted=[...filtered].sort((a,b)=>(b.updatedAt||'').localeCompare(a.updatedAt||''));
  const stalledCount=active.filter(o=>isStalled(o,today)).length;
  const lateCount=active.filter(o=>o.nextDue&&o.nextDue<today&&!['失注','継続購入'].includes(o.stage)).length;
