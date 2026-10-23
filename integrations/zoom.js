@@ -36,10 +36,13 @@ export async function connect(store,session,url){
  if(missing.length)throw new ZoomError('scope_missing','Zoomから許可された権限に次が含まれていません: '+missing.join('、')+'。Zoom MarketplaceアプリのScopesタブで必要な権限（'+scopes.join('、')+'）を選び直し、一度「接続を解除」してから再接続してください（Zoom側の表示名が変更されている場合は同等の最小権限を選んでください）。','scope_check');
  const me=await remote('profile','https://api.zoom.us/v2/users/me',{headers:{Authorization:`Bearer ${raw.access_token}`}});
  if(!me?.id||!me?.email)throw new ZoomError('profile_incomplete','Zoomのユーザー情報（id/email）を取得できませんでした','profile');
- try{
-  const data={userId:me.id,email:me.email,encrypted:encrypt({refresh:raw.refresh_token}),issuedAt:Date.now(),connectedAt:new Date().toISOString(),scopes:granted};
-  await store.put('zoom-private',data);return data;
- }catch(err){throw new ZoomError('storage_failed','認可情報の保存に失敗しました（暗号化鍵またはデータベース接続を確認してください）','storage');}
+ let encrypted;
+ try{encrypted=encrypt({refresh:raw.refresh_token});}
+ catch(e){console.error(JSON.stringify({event:'zoom_storage_failure',stage:'encryption',type:e?.name||'unknown'}));throw new ZoomError('encryption_failed','保存用の暗号化処理で失敗しました。暗号化鍵の形式とWorker実行環境を確認してください。','encryption');}
+ const data={userId:me.id,email:me.email,encrypted,issuedAt:Date.now(),connectedAt:new Date().toISOString(),scopes:granted};
+ try{await store.put('zoom-private',data);}
+ catch(e){console.error(JSON.stringify({event:'zoom_storage_failure',stage:'database_write',type:e?.name||'unknown'}));throw new ZoomError('database_write_failed','Zoom認可情報をD1へ保存できませんでした。D1接続とDB書き込み権限を確認してください。','database_write');}
+ return data;
 }
 // Zoomはrefresh_tokenをローテーションする（1回使うと無効になる）。保存だけをCAS（revision一致）にしても、
 // 「交換そのもの」は排他制御されない：2つの会議同期が同時に同じ古いrefresh_tokenを読んで両方とも
@@ -77,6 +80,22 @@ async function accessToken(store){
  if(!fresh.access_token||!fresh.refresh_token){await releaseLease(store,leased,{});throw new ZoomError('token_response_incomplete','Zoomトークンの更新に失敗しました。再接続してください','token_refresh');}
  await releaseLease(store,leased,{encrypted:encrypt({refresh:fresh.refresh_token}),issuedAt:Date.now()});
  return fresh.access_token;
+}
+// 管理者が明示的に実行する非破壊診断。認証コード/Zoomトークンは不要。
+export async function storageDiagnostics(store){
+ let ciphertext;
+ try{ciphertext=encrypt({refresh:'local-diagnostic-only'});const v=decrypt(ciphertext);if(v.refresh!=='local-diagnostic-only')throw Error('cipher round-trip failed');}
+ catch(e){console.error(JSON.stringify({event:'zoom_diagnostic',stage:'encryption',type:e?.name||'unknown'}));return {ok:false,stage:'encryption',code:'encryption_failed'};}
+ // 一意の検証キーをトランザクション内で挿入→削除。業務データも既存トークンも変更しない。
+ const key='zoom-storage-check:'+token();
+ try{
+  const result=await store.transaction([
+   ['INSERT INTO ss_documents(name,body) VALUES ($1,$2) RETURNING name',[key,JSON.stringify({encrypted:ciphertext})]],
+   ['DELETE FROM ss_documents WHERE name=$1 RETURNING name',[key]]
+  ]);
+  if(result?.[0]?.[0]?.name!==key||result?.[1]?.[0]?.name!==key)throw Error('transaction verification failed');
+ }catch(e){console.error(JSON.stringify({event:'zoom_diagnostic',stage:'database_write',type:e?.name||'unknown'}));return {ok:false,stage:'database_write',code:'database_write_failed'};}
+ return {ok:true,stage:'ready',code:'ready'};
 }
 export async function safeStatus(store){const p=await privateData(store);return {configured:config(),connected:!!p,email:p?.email||null,connectedAt:p?.connectedAt||null,scopes:p?.scopes||[]};}
 // Zoomのjoin_urlのみを返す。ホスト専用start_urlは呼び出し元へ渡さない（外部共有の禁止）。

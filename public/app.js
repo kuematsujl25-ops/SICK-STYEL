@@ -129,7 +129,7 @@ function settings(){return `<div class="settingsgrid"><section class="panel"><h2
  <li>Scopes（権限）タブで、会議の作成・更新・削除とユーザー情報の読み取りに相当する権限だけを追加します（例: meeting:write:meeting、meeting:update:meeting、meeting:delete:meeting、user:read:user。Zoom側の表示名は変更されることがあるため、該当する最小権限を選んでください）。</li>
  <li>Client ID / Client Secretを確認し、Macのターミナルで <code>npm run integrations:zoom -- --plan</code> を実行して登録内容を確認します。Cloudflareへの反映が別途承認済みの場合に限り、同じコマンドの <code>--apply</code> で非表示入力して登録します。秘密値はチャットやGitに貼らないでください。</li>
  <li>この画面で「Zoomを接続」→ Zoom公式画面で本人認可します。</li></ol></details>
- <div class="actions">${zoomStatus?.configured?`<button class="primary" id="zoomconnect">${zoomStatus.connected?'再認可する':'Zoomを接続'}</button>`:''}${zoomStatus?.connected?'<button id="zoomdisconnect" class="red">接続を解除</button>':''}</div></div>
+ <div class="actions">${zoomStatus?.configured?`<button class="primary" id="zoomconnect">${zoomStatus.connected?'再認可する':'Zoomを接続'}</button><button class="secondary" id="zoom-storage-check">Zoom保存先を診断</button>`:''}${zoomStatus?.connected?'<button id="zoomdisconnect" class="red">接続を解除</button>':''}</div><p id="zoom-storage-result" class="note" role="status"></p></div>
  <div class="integration"><b>Googleカレンダー</b>${zoomCalendarBadge(calendarStatus)}<p>${calendarStatus?.connected?'カレンダー認可済み（メール情報の取得は要求していません）':'本人のGoogleアカウントで認可してください（予定の作成・変更・削除のみの最小スコープ）。'}</p>
  <details class="guide" ${!calendarStatus?.configured?'open':''}><summary><b>Google Cloud アプリ登録の手順</b></summary><ol>
  <li><a href="https://console.cloud.google.com/" target="_blank" rel="noopener noreferrer">Google Cloud Console ↗</a>でプロジェクトを作成・選択し、「APIとサービス」→「ライブラリ」で Google Calendar API を有効にします。</li>
@@ -273,6 +273,15 @@ function adCsvImport(input){const f=input.files[0];if(!f)return;(async()=>{try{i
   await persist(next);toast(`広告実績を取り込みました（追加 ${added} 件・更新 ${updated} 件）`);
  }catch(e){toast(e.message);}finally{input.value='';}})();}
 function bindZoomCalendar(){
+ const zdiag=document.querySelector('#zoom-storage-check');if(zdiag)zdiag.onclick=async()=>{
+  zdiag.disabled=true;const target=document.querySelector('#zoom-storage-result');
+  try{const d=await api('zoom/storage-diagnostics','POST',{});
+   const msg=d.ok?'暗号化・D1書き込みの検証成功。Zoom本人認可を試してください。':d.stage==='encryption'?'暗号化に失敗（encryption_failed）。CloudflareのTOKEN_ENCRYPTION_KEYを管理者が確認してください。':'D1保存に失敗（database_write_failed）。WorkersのD1バインディングを管理者が確認してください。';
+   if(target)target.textContent=msg;toast(msg);
+  }catch(e){if(target)target.textContent='診断を実行できませんでした：'+e.message;toast(e.message);}
+  finally{zdiag.disabled=false;}
+ };
+
  const zc=document.querySelector('#zoomconnect');if(zc)zc.onclick=async()=>{zc.disabled=true;try{location.assign((await api('zoom/connect','POST',{})).url);}catch(e){toast(e.message);zc.disabled=false;}};
  const zd=document.querySelector('#zoomdisconnect');if(zd)zd.onclick=async()=>{if(!confirm('Zoom接続を解除しますか？既存のMTGの同期状態には影響しません。'))return;try{await api('zoom/disconnect','POST',{});zoomStatus=await api('zoom/status');render();toast('Zoomの接続を解除しました');}catch(e){toast(e.message);}};
  const cc=document.querySelector('#calconnect');if(cc)cc.onclick=async()=>{cc.disabled=true;try{location.assign((await api('googlecalendar/connect','POST',{})).url);}catch(e){toast(e.message);cc.disabled=false;}};
