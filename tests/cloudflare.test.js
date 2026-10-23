@@ -19,6 +19,17 @@ test('Workers実行環境 + D1: 認証・保存・独立セッション共有・
  assert.equal((await req(a,'data')).status,401);assert.equal((await req(a,'session')).data.storage,'d1');
  const credentials={email:'qa@example.com',password:'qa-safe-password-2026',setupToken:'qa-setup-only'};
  assert.equal((await req(a,'setup','POST',{...credentials,setupToken:'wrong'})).status,403);assert.equal((await req(a,'setup','POST',credentials)).status,200);assert.equal((await req(b,'setup','POST',credentials)).status,409);assert.equal((await req(b,'login','POST',credentials)).status,200);
+ // Exercise notification encryption and persistence in Workers, not only Node.
+ const subscription={endpoint:'https://web.push.apple.com/test-device',keys:{p256dh:'B'+'A'.repeat(86),auth:'A'.repeat(22)}};
+ const registered=await req(a,'notifications/subscribe','POST',{subscription});
+ assert.equal(registered.status,200,JSON.stringify(registered.data));
+ assert.equal((await req(b,'notifications/status')).data.devices,1);
+ const deviceRow=await db.prepare("SELECT body FROM ss_documents WHERE name LIKE 'notify-device-v1:%'").first();
+ assert.equal(deviceRow.body.includes(subscription.endpoint),false);
+ const diagnostics=await req(a,'zoom/storage-diagnostics','POST',{});
+ assert.equal(diagnostics.status,200);
+ assert.equal(diagnostics.data.ok,true,JSON.stringify(diagnostics.data));
+ assert.equal((await req(a,'notifications/unsubscribe','POST',{endpoint:subscription.endpoint})).status,200);
  const snapshot=(await req(a,'data')).data;snapshot.tasks.push({id:'shared-task',title:'D1端末共有テスト',due:'2026-10-16',priority:'中',done:false});const saved=await req(a,'data','PUT',snapshot);assert.equal(saved.status,200);assert.equal((await req(b,'data')).data.tasks[0].title,'D1端末共有テスト');assert.equal((await req(b,'data','PUT',snapshot)).status,409);assert.equal((await req(a,'data','PUT',{...snapshot,revision:saved.data.revision},{Origin:'https://bad.example'})).status,403);
  const backup=(await req(a,'backup')).data;const before=(await req(a,'data')).data;before.tasks[0].done=true;const edit=await req(a,'data','PUT',before);assert.equal((await req(a,'restore','POST',{...backup,revision:edit.data.revision})).status,200);assert.equal((await req(b,'data')).data.tasks[0].done,false);
  const ig=(await req(a,'instagram/status')).data;assert.equal(ig.connected,false);assert.equal(ig.cache,null);assert.equal(ig.dmPending,null);const amzStatus=(await req(a,'amazon/status')).data;assert.equal(amzStatus.connected,false);assert.equal(amzStatus.configured,false);assert.equal((await req(a,'session')).data.setupAllowed,false);

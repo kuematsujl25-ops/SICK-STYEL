@@ -1,7 +1,7 @@
 import {renderTeam,bindTeam} from './ai-team.js';
 import {mountNotifications} from './notifications.js';
 let team=null;
-import {connectionReadiness,selectAmazonSales,syncMessage} from './integration-status.js';
+import {connectionReadiness,selectAmazonSales,syncMessage,amazonOpenOrders} from './integration-status.js';
 import {validateFinanceReport,renderFinance} from './finance.js';
 let financeReport=null;
 import {renderStaffTasks,staffTaskFields} from './staff-tasks.js';
@@ -92,11 +92,11 @@ function overview(){
  const pending=state.shipments.filter(s=>!['発送済み','配達完了'].includes(s.status));const done=state.tasks.filter(x=>x.done).length;
  const latest=[...state.metrics].filter(m=>m.instagramEntered!==false).sort((a,b)=>b.date.localeCompare(a.date))[0];
  const igApi=ig?.connected&&typeof ig.cache?.followers==='number';
- const amzOpen=amz?.connected&&amz.cache?.orders?(amz.cache.orders.counts.UNSHIPPED||0)+(amz.cache.orders.counts.PARTIALLY_SHIPPED||0):null;
+ const amzOpen=amazonOpenOrders(amz);
  return `<div class="stats">
  <article><small>今月のAmazon売上</small><strong>${selectedSales.value===null?'未取得':yen(selectedSales.value)}</strong><span>${amzMonth?'売上の最終成功 '+fmtTime(selectedSales.syncedAt)+(selectedSales.stale?'（最新取得は失敗）':''):selectedSales.source==='manual'?'手入力・CSVのみ（API値と合算しません）':'売上の記録は未取得'}</span>${sourceTag(amzMonth)}</article>
  <article><small>タスク完了</small><strong>${done}<em> / ${state.tasks.length}</em></strong><span>${overdue?'期限超過 '+overdue+' 件':'期限超過なし'}</span></article>
- <article><small>発送待ち（アプリ登録分）</small><strong>${pending.length}<em> 件</em></strong><span>${pending.filter(s=>s.due<t).length} 件が期限超過${amzOpen!==null?` · Amazon未発送 ${amzOpen} 件`:''}</span></article>
+ <article><small>発送待ち（アプリ登録分）</small><strong>${pending.length}<em> 件</em></strong><span>${pending.filter(s=>s.due<t).length} 件が期限超過${amzOpen!==null?` · Amazon未発送 ${amzOpen} 件`:amz?.connected?' · Amazon未発送 未取得':''}</span></article>
  <article><small>Instagramフォロワー</small><strong>${igApi?num(ig.cache.followers):latest?Number(latest.followers).toLocaleString('ja-JP'):'—'}</strong><span>${igApi?(typeof ig.cache.delta==='number'?`前回記録比 ${ig.cache.delta>0?'+':''}${ig.cache.delta.toLocaleString('ja-JP')}`:'増減は次回以降の同期で表示'):latest?latest.date+' の記録':'未記録'}</span>${sourceTag(igApi)}</article></div>
  <div class="dashboardgrid"><section class="panel"><div class="panelhead"><h2>目標 <small>GOALS</small></h2><button data-nav="goals">すべて見る</button></div>${state.goals.length?state.goals.slice(0,3).map(g=>`<div class="goal"><div><span class="badge">${esc(g.type==='final'?'最終目標':g.month||'月間目標')}</span><b>${esc(g.title)}</b><strong>${rate(g)}%</strong></div><progress max="100" value="${rate(g)}" aria-label="達成率"></progress><small>${Number(g.current).toLocaleString('ja-JP')} / ${Number(g.target).toLocaleString('ja-JP')} ${esc(g.unit)}</small></div>`).join(''):empty('目標は未登録です。','月間目標・最終目標を登録できます。','goals')}</section>
  <section class="identity">${LOGO}<h2>ブランドの Mission</h2>${state.brand.Mission?`<p class="statement">${esc(state.brand.Mission)}</p>`:'<p class="placeholder">未入力です。「ブランド」画面で、ご自身の言葉で登録できます。</p>'}<button data-nav="brand">ブランド画面へ</button></section>
