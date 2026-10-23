@@ -343,7 +343,7 @@ function bind(){bindMetricsPages();if(section==='team')bindTeam({model:team,api,
  const oks=document.querySelector('#orgkpistart');if(oks)oks.onchange=()=>{orgKPIPeriod={...orgKPIPeriod,start:oks.value};render();};
  const oke=document.querySelector('#orgkpiend');if(oke)oke.onchange=()=>{orgKPIPeriod={...orgKPIPeriod,end:oke.value};render();};
  const newOrgBtn=document.querySelector('[data-neworg]');if(newOrgBtn)newOrgBtn.onclick=()=>orgEditor(null);
- const orgQ=document.querySelector('#orgsearch');if(orgQ)orgQ.oninput=()=>{orgUI={...orgUI,q:orgQ.value};const v=orgQ.value.trim().toLowerCase();let shown=0;document.querySelectorAll('[data-search]').forEach(row=>{const hit=!v||row.dataset.search.includes(v);row.hidden=!hit;if(hit)shown++;});const c=document.querySelector('#orgcount');if(c)c.textContent=shown+' / '+state.orgSales.filter(x=>!x.deletedAt).length+' 件';};
+ const orgQ=document.querySelector('#orgsearch');if(orgQ){const search=e=>{if(e.isComposing)return;const start=orgQ.selectionStart,end=orgQ.selectionEnd;orgUI={...orgUI,q:orgQ.value};render();const next=document.querySelector('#orgsearch');next?.focus();next?.setSelectionRange(start,end);};orgQ.oninput=search;orgQ.oncompositionend=search;}
  document.querySelectorAll('[data-editorg]').forEach(b=>b.onclick=()=>orgEditor(state.orgSales.find(x=>x.id===b.dataset.editorg)));
  const ccf=document.querySelector('#collectcategoryfilter');if(ccf)ccf.onchange=()=>{collectUI={...collectUI,category:ccf.value};render();};
  const csf=document.querySelector('#collectstatusfilter');if(csf)csf.onchange=()=>{collectUI={...collectUI,status:csf.value};render();};
@@ -395,7 +395,11 @@ function orgEditor(record){const d=document.querySelector('#editor');
    state=await api('data');
    toast(r.warnings?.length?r.warnings.join(' / '):'MTGを更新しました');
    render();orgEditor(state.orgSales.find(x=>x.id===record.id));
-  }catch(e){toast(e.message);btn.disabled=false;}
+  }catch(e){
+   toast(e.message);
+   try{state=await api('data');render();const current=state.orgSales.find(x=>x.id===record.id);if(current)orgEditor(current);else d.close();}
+   catch{d.close();toast('最新の状態を取得できません。更新してから再度操作してください');}
+  }
  });
  document.querySelector('#close').onclick=document.querySelector('#cancel').onclick=()=>d.close();
  document.querySelector('#orgform').onsubmit=async e=>{e.preventDefault();const b=document.querySelector('#save');b.disabled=true;try{
