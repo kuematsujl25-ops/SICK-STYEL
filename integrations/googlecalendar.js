@@ -78,8 +78,16 @@ export async function listToday(store,day){
  const timeMin=new Date(day+'T00:00:00+09:00').toISOString();
  const next=new Date(Date.parse(timeMin)+86400000).toISOString();
  const u=new URL('https://www.googleapis.com/calendar/v3/calendars/primary/events');
- u.search=new URLSearchParams({timeMin,timeMax:next,singleEvents:'true',orderBy:'startTime',maxResults:'50'});
- const r=await remote('list_events',u.href,{headers:{Authorization:'Bearer '+access}});
- return {connected:true,events:Array.isArray(r.items)?r.items:[]};
+ u.search=new URLSearchParams({timeMin,timeMax:next,singleEvents:'true',orderBy:'startTime',maxResults:'2500'});
+ const events=[],seen=new Set();
+ for(let page=0;page<5;page++){
+  const r=await remote('list_events',u.href,{headers:{Authorization:'Bearer '+access}});
+  if(r.items!==undefined&&!Array.isArray(r.items))throw new GoogleCalendarError('invalid_response',null,'list_events');
+  events.push(...(r.items||[]));
+  if(!r.nextPageToken)return {connected:true,events};
+  if(typeof r.nextPageToken!=='string'||seen.has(r.nextPageToken))break;
+  seen.add(r.nextPageToken);u.searchParams.set('pageToken',r.nextPageToken);
+ }
+ throw new GoogleCalendarError('incomplete','Googleカレンダーの予定を全件取得できませんでした。','list_events');
 }
 export async function disconnect(store){await store.query('DELETE FROM ss_documents WHERE name=$1',['googlecalendar-private']);return {ok:true};}
