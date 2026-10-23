@@ -95,6 +95,7 @@ export default async function handler(req,res){
  if(route==='/api/amazon/sync'&&req.method==='POST'){try{await amazon.sync(store);}catch(e){return json(res,502,{error:e.message,status:await amazon.safeStatus(store)});}return json(res,200,await amazon.safeStatus(store));}
  if(route==='/api/amazon/disconnect'&&req.method==='POST')return json(res,200,await amazon.disconnect(store));
  if(route==='/api/zoom/status'&&req.method==='GET')return json(res,200,await zoom.safeStatus(store));
+ if(route==='/api/zoom/storage-diagnostics'&&req.method==='POST')return json(res,200,await zoom.storageDiagnostics(store));
  if(route==='/api/zoom/connect'&&req.method==='POST')return json(res,200,{url:await zoom.begin(store,sessionHash)});
  if(route==='/api/zoom/callback'&&req.method==='GET'){try{await zoom.connect(store,sessionHash,url);return redirect('/?zoom=connected');}catch(e){const stage=e instanceof zoom.ZoomError&&/^[a-z_]{1,30}$/.test(String(e.stage||''))?e.stage:'unknown';const code=e instanceof zoom.ZoomError&&/^[a-zA-Z0-9_-]{1,40}$/.test(String(e.code))?String(e.code):'authorization_failed';console.error(JSON.stringify({event:'zoom_callback',code,stage,message:e instanceof zoom.ZoomError?e.message:undefined}));return redirect('/?zoom=error&zoom_stage='+encodeURIComponent(stage)+'&zoom_code='+encodeURIComponent(code));}}
  if(route==='/api/zoom/disconnect'&&req.method==='POST')return json(res,200,await zoom.disconnect(store));
