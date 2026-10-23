@@ -431,12 +431,38 @@ test('Zoom会議の作成自体が失敗し、そのエラー記録の保存も�
  assert.equal(failRemaining,0,'想定した2回の保存失敗が実際に発生した');
  const afterFailure=JSON.parse((await store.doc('workspace')).body).orgSales[0];
  assert.notEqual(afterFailure.initialMeetingSync?.status,'creating','creating状態のまま固着していない（以前は以後のcreate/update/cancelが全てブロックされていた）');
- assert.equal(afterFailure.initialMeetingSync.status,'error');
+ // zoomFails（fetch自体の失敗）はintegrations/zoom.jsのnetwork_errorに分類され、Zoomが実際に会議を
+ // 作成したかどうか不明なため、通常の'error'ではなく'uncertain'として記録される（別のCodex独立レビュー
+ // 指摘の回帰：不明な場合を確定失敗と同じに扱うと、再試行で重複作成が起きうる）。
+ assert.equal(afterFailure.initialMeetingSync.status,'uncertain');
  // 固着していないことを実際に確認：次の作成リトライがブロックされずに進む。
  global.fetch=fakeFetch({});
  const latest=await store.doc('workspace');
  const retried=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision:latest.revision});
  assert.equal(retried.org.initialMeetingSync.status,'synced','固着していれば「会議を作成処理中です」で拒否されるはずの再作成が正常に完了する');
+});
+
+test('Zoom会議作成がタイムアウト等の通信失敗で終わった場合、会議が実際に作成されたか不明なため「確定失敗」とは別の状態（uncertain）として記録し、管理者への確認を促す（Codex独立レビュー指摘の回帰）',async t=>{
+ const env={...process.env};process.env.ZOOM_CLIENT_ID='c';process.env.ZOOM_CLIENT_SECRET='s';process.env.GOOGLE_CLIENT_ID='c';process.env.GOOGLE_CLIENT_SECRET='s';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-meeting-create-uncertain-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
+ t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
+ const org={...newOrg(),id:'org-1',name:'FC Example',updatedAt:new Date().toISOString(),deletedAt:null,history:[{stage:'DM送信',at:new Date().toISOString(),note:''}],initialZoomAt:'2026-10-28T14:00'};
+ const revision=await seed(store,org);
+ global.fetch=fakeFetch({zoomFails:true});
+ await assert.rejects(syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision}),/Zoom API/);
+ const afterFailure=JSON.parse((await store.doc('workspace')).body).orgSales[0];
+ assert.equal(afterFailure.initialMeetingSync.status,'uncertain');
+ assert.equal(afterFailure.initialMeetingSync.zoomMeetingId,null);
+ assert.match(afterFailure.initialMeetingSync.error,/会議が実際に作成されたか不明/);
+ assert.match(afterFailure.initialMeetingSync.error,/Zoom管理画面/);
+ // uncertain状態は、確定したエラー（'error'）とは違い通常の「再試行する」ボタン対象には含めない
+ // （public/org-sales.jsのSYNC_LABEL／ボタン表示ロジック）。管理者がZoom側を確認してから
+ // 「MTGを取消」でこの記録をクリアできることだけを保証する（zoomMeetingIdがnullなのでZoomへの
+ // 削除呼び出しは発生せず、ローカルの記録だけが安全にクリアされる）。
+ global.fetch=fakeFetch({});
+ const latest=await store.doc('workspace');
+ const cancelled=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'cancel',revision:latest.revision});
+ assert.equal(cancelled.org.initialMeetingSync,null,'uncertain状態は取消でローカルの記録を安全にクリアできる（Zoomへの削除呼び出しは発生しない）');
 });
 
 test('カレンダー予定の新規作成自体は成功しても、その保存が2回続けて失敗した場合、creating状態のまま固着させず最終的に保存できる（round16・17と同じ固着パターンの自己点検での発見）',async t=>{

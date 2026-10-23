@@ -112,6 +112,15 @@ test('zoom_only（Zoom作成済み・カレンダー未登録）の会議は「�
   assert.match(html, /data-mtgsync="initial:cancel"/);
 });
 
+test('uncertain（Zoom会議が実際に作成されたか不明）の会議は、無言の重複作成を防ぐため通常の「再試行する」ボタンを出さず、取消（ローカルの記録クリア）だけを提示する（Codex独立レビュー指摘の回帰）', () => {
+  const uncertain = org({ id: 'o1', initialZoomAt: '2026-10-28T14:00', initialMeetingSync: { requestId: 'r1', zoomMeetingId: null, calendarEventId: null, status: 'uncertain', error: 'Zoomへの通信がタイムアウトし、会議が実際に作成されたか不明です。', updatedAt: '2026-10-21T00:00:00.000Z' } });
+  const html = renderOrgEditor(uncertain, esc, '2026-10-21', { zoomConnected: true, calendarConnected: true });
+  assert.doesNotMatch(html, /data-mtgsync="initial:create"/, 'uncertainでは確認前の自動的な再試行を促さない（重複作成の回避）');
+  assert.match(html, /data-mtgsync="initial:cancel"/, '確認後にローカルの記録をクリアする手段は残す');
+  assert.match(html, /作成結果が不明（要確認）/);
+  assert.match(html, /会議が実際に作成されたか不明です/);
+});
+
 test('cohort month uses JST, not UTC, for grouping the first history entry (Codex独立レビュー指摘の回帰)', () => {
   // 2026-11-01 08:00 JST = 2026-10-31 23:00 UTC。UTCのまま月を切り出すと「2026-10」に誤分類される。
   const o = org({ history: [{ stage: 'DM送信', at: '2026-10-31T23:00:00.000Z', note: '' }] });
