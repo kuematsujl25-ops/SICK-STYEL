@@ -7,7 +7,7 @@ import {randomBytes} from 'node:crypto';
 import {createStore} from '../lib/store.js';
 import {withRuntime} from '../lib/runtime.js';
 import {scheduledKind,reportFor,runReport,listNotifications,emit,aiUpdated,subscribe,unsubscribe,status,markRead} from '../lib/notifications.js';
-import {validateSubscription} from '../lib/web-push.js';
+import {validateSubscription,pushRequest,base64url,unbase64url} from '../lib/web-push.js';
 import {empty} from '../lib/domain.js';
 
 const jst='2026-10-23T00:00:00.000Z';
@@ -73,4 +73,38 @@ test('push subscriptions are encrypted in D1 and can be removed per device',asyn
  await unsubscribe(store,sub.endpoint);
  assert.equal((await status(store)).devices,0);
  assert.throws(()=>validateSubscription({...sub,endpoint:'https://evil.invalid/push'}),/未承認/);
+});
+
+test('Web Push payload is signed, encrypted and decryptable with the subscriber ECDH key',async()=>{
+ const serverKeys=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']);
+ const jwk=await crypto.subtle.exportKey('jwk',serverKeys.privateKey);
+ const pub=new Uint8Array([4,...unbase64url(jwk.x),...unbase64url(jwk.y)]);
+ const browserKeys=await crypto.subtle.generateKey({name:'ECDH',namedCurve:'P-256'},true,['deriveBits']);
+ const browserPub=new Uint8Array(await crypto.subtle.exportKey('raw',browserKeys.publicKey));
+ const auth=crypto.getRandomValues(new Uint8Array(16));
+ const env={VAPID_PUBLIC_KEY:base64url(pub),VAPID_PRIVATE_KEY:jwk.d,VAPID_SUBJECT:'https://sickstyle-manager.sickstyle-74h4.workers.dev'};
+ const sub={endpoint:'https://fcm.googleapis.com/fcm/send/abcdef',keys:{p256dh:base64url(browserPub),auth:base64url(auth)}};
+ const req=await pushRequest(sub,env,{title:'配信テスト',body:'保存データのみ',url:'/'});
+ assert.equal(req.endpoint,sub.endpoint);
+ assert.match(req.init.headers.Authorization,/^vapid t=/);
+ assert.equal(req.init.headers['Content-Encoding'],'aes128gcm');
+ assert.equal(req.init.headers['TTL'],'3600');
+ assert.ok(req.init.body instanceof Uint8Array);
+ const bytes=req.init.body,salt=bytes.slice(0,16),serverPublic=bytes.slice(21,86);
+ assert.equal(bytes[20],65);
+ const serverECDH=await crypto.subtle.importKey('raw',serverPublic,{name:'ECDH',namedCurve:'P-256'},false,[]);
+ const secret=new Uint8Array(await crypto.subtle.deriveBits({name:'ECDH',public:serverECDH},browserKeys.privateKey,256));
+ const join=(...parts)=>{const a=new Uint8Array(parts.reduce((n,p)=>n+p.length,0));let i=0;for(const p of parts){a.set(p,i);i+=p.length;}return a;};
+ const utf8=s=>new TextEncoder().encode(s);
+ const hkdf=async(input,salt,info,len)=>{
+  const key=await crypto.subtle.importKey('raw',input,'HKDF',false,['deriveBits']);
+  return new Uint8Array(await crypto.subtle.deriveBits({name:'HKDF',hash:'SHA-256',salt,info},key,len*8));
+ };
+ const ikm=await hkdf(secret,auth,join(utf8('WebPush: info'),new Uint8Array([0]),browserPub,serverPublic),32);
+ const cek=await hkdf(ikm,salt,join(utf8('Content-Encoding: aes128gcm'),new Uint8Array([0])),16);
+ const nonce=await hkdf(ikm,salt,join(utf8('Content-Encoding: nonce'),new Uint8Array([0])),12);
+ const key=await crypto.subtle.importKey('raw',cek,'AES-GCM',false,['decrypt']);
+ const clear=new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:nonce},key,bytes.slice(86)));
+ assert.equal(clear.at(-1),2);
+ assert.equal(JSON.parse(new TextDecoder().decode(clear.slice(0,-1))).title,'配信テスト');
 });
