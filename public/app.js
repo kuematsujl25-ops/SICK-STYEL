@@ -72,7 +72,7 @@ function auth(){
 // 団体営業・集める数字・購入実験・選手候補・利益在庫はメニューから削除（データ・コードは保持、いつでも復元可能）。
 // リール分析・参考アカウント・売上SNS実績（SNS側）はInstagram画面へ、売上SNS実績（Amazon側）・利益在庫の広告費のみAmazon画面へ統合。
 const nav=[['overview','◈','ダッシュボード'],['goals','◎','目標'],['tasks','☑','タスク'],['staffTasks','▤','担当タスク'],['shipments','▣','発送管理'],['team','♙','AI社員'],['amazon','◆','Amazon連携'],['instagram','◉','Instagram連携'],['site','◇','サイト掲載'],['brand','✳','ブランド'],['settings','⚙','設定・バックアップ']];
-const names=Object.fromEntries(nav.map(([id,,name])=>[id,name]));
+const names={...Object.fromEntries(nav.map(([id,,name])=>[id,name])),orgSales:'団体営業・会議'};
 const rate=g=>Math.min(100,Math.max(0,Math.round(Number(g.current||0)/Number(g.target||1)*100)));
 function render(){
  const previousNav=document.querySelector('#app aside nav');
@@ -123,7 +123,7 @@ function zoomCalendarBadge(s){if(!s)return '<span class="badge">確認中</span>
 function settings(){return `<div class="settingsgrid"><section class="panel"><h2>バックアップ</h2><p>保存済みの業務データをJSONファイルでダウンロードします。パスワード・連携トークンは含まれません。</p><a class="primary" href="/api/backup" download>バックアップをダウンロード</a><hr><h2>バックアップから復元</h2><p>現在の業務データを置き換えます。復元前にバックアップをダウンロードしてください。</p><label class="filelabel">JSONファイルを選択<input type="file" id="restore" accept="application/json,.json"></label></section>
  <section class="panel"><h2>外部サービス連携</h2><p>どちらも認可前から手入力（AmazonはCSVも可）で利用できます。</p><div class="integration"><b>Amazon Selling Partner API</b>${statusBadge(amz)}<p>${amz?.connected?'最終同期: '+fmtTime(amz.cache?.syncedAt):'公式の認可が完了するまでは手入力・CSVの値を使います。'}</p><button data-nav="amazon" class="secondary">Amazon連携を開く</button></div><div class="integration"><b>Instagram API</b>${statusBadge(ig)}<p>${ig?.connected?'最終同期: '+fmtTime(ig.cache?.syncedAt):'公式の認可が完了するまでは手入力の値を使います。'}</p><button data-nav="instagram" class="secondary">Instagram連携を開く</button></div><hr><h2>スマートフォンのホーム画面に追加</h2><p>iPhone: Safariの共有ボタン →「ホーム画面に追加」。Android: Chromeのメニュー →「ホーム画面に追加」。オフラインでは業務データを表示しません。</p></section>
  <section class="panel"><h2>通知センター（PC・iPhone）</h2><div id="notification-panel"><p>通知を読み込み中…</p></div></section>
- <section class="panel"><h2>Zoom × Googleカレンダー連携（団体営業のMTG自動作成）</h2><p>団体営業画面で「MTGを作成」を押すと、Zoom会議の発行とGoogleカレンダーへの予定登録を自動で行います。どちらも未接続の間は、手動でZoom URLを入力し、Googleカレンダーの予定作成画面を開くリンクが使えます（自動化はされません）。ChatGPTに接続されたZoom/Googleカレンダーとは別の認可です。</p>
+ <section class="panel"><h2>Zoom × Googleカレンダー連携（団体営業のMTG自動作成）</h2><button class="primary" data-nav="orgSales">団体営業・会議を開く</button><details><summary>使い方・詳細</summary><p>団体営業で内容・日時を保存し、Zoomを作成します。発行されたURL・主催者・ゲストを確認してからカレンダー登録・招待を実行します。ChatGPT側の接続とは別の認可です。</p></details>
  <div class="integration"><b>Zoom</b>${zoomCalendarBadge(zoomStatus)}<p>${zoomStatus?.connected?'接続アカウント: '+esc(zoomStatus.email||'—'):'本人のZoomアカウントで認可してください（ミーティング作成・変更・削除の最小権限のみ）。'}</p>${zoomStatus?.connected?`<p class="note">許可された権限: ${esc((zoomStatus.scopes||[]).join(', ')||'（スコープ情報なし）')}</p>`:''}
  <details class="guide" ${!zoomStatus?.configured?'open':''}><summary><b>Zoomアプリ登録の手順</b></summary><ol>
  <li><a href="https://marketplace.zoom.us/" target="_blank" rel="noopener noreferrer">Zoom App Marketplace ↗</a>で本人のZoomアカウントにログインし、「Develop」→「Build App」からOAuthアプリを作成します（Server-to-Server OAuthではなく、ユーザー認可が必要なタイプを選びます）。</li>
