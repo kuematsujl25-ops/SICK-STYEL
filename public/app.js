@@ -357,11 +357,22 @@ function editor(key,record){const c=configs[key];const r=record||{due:key==='col
  document.querySelector('#editform').onsubmit=async e=>{e.preventDefault();const b=document.querySelector('#save');b.disabled=true;try{const vals=Object.fromEntries(new FormData(e.target));for(const [n,,type]of c.fields){if(type==='number')vals[n]=Number(vals[n]||0);if(type==='nnumber')vals[n]=vals[n]===''?null:Number(vals[n]);}if(key==='metrics'&&state.metrics.some(m=>m.date===vals.date&&m.id!==record?.id))throw Error('この日付の実績は登録済みです。既存の記録を編集してください。');if(key==='adMetrics'&&vals.periodEnd<vals.periodStart)throw Error('対象期間の終了日は開始日以降にしてください。');const next=structuredClone(state);const row={...record,...vals,id:record?.id||crypto.randomUUID()};if(key==='metrics')row.instagramEntered=true;if(key==='tasks')row.done=record?.done||false;if(['staffTasks','collectionTasks','growthExperiments','playerCandidates','adMetrics'].includes(key))row.updatedAt=new Date().toISOString();if(key==='reelPosts')row.observedAt=new Date().toISOString();next[key]=record?next[key].map(x=>x.id===record.id?row:x):[...next[key],row];await persist(next);}catch(err){const t=document.querySelector('#editerror');if(t)t.textContent=err.message;else toast(err.message);b.disabled=false;}};
  const del=document.querySelector('#delete');if(del)del.onclick=async()=>{if(!confirm('この記録を削除しますか？'+(key==='staffTasks'?'（ゴミ箱から復元できます）':'')))return;try{if(key==='staffTasks'){await persist({...state,staffTasks:state.staffTasks.map(x=>x.id===record.id?{...x,deletedAt:new Date().toISOString()}:x)});}else{await persist({...state,[key]:state[key].filter(x=>x.id!==record.id)});}}catch(e){toast(e.message);}};}
 // ---------- 団体営業（専用エディタ。段階変更は履歴に追記する） ----------
+// MTG連携APIはフォームの入力値を見ず、保存済みのorgId+revisionだけを使ってZoom/カレンダーへ同期する。
+// フォームを編集中（まだ「保存する」していない）のままMTG連携ボタンを押すと、古い（保存済みの）日時・名称を
+// そのまま同期してしまい、しかも同期後にstateを再取得してエディタを再描画するため未保存の入力が無言で
+// 失われる（Codex独立レビュー指摘）。未保存の変更がある場合は先に保存するよう案内し、同期を実行しない。
+function orgFormHasUnsavedChanges(record){
+ const form=document.querySelector('#orgform');if(!form||!record)return false;
+ const vals=Object.fromEntries(new FormData(form));
+ for(const k in vals){if(k==='stageNote')continue;if(k in record&&String(record[k]??'')!==String(vals[k]))return true;}
+ return false;
+}
 function orgEditor(record){const d=document.querySelector('#editor');
  d.innerHTML=renderOrgEditor(record,esc,today(),{zoomConnected:!!zoomStatus?.connected,calendarConnected:!!calendarStatus?.connected});d.showModal();
  d.querySelectorAll('[data-mtgsync]').forEach(btn=>btn.onclick=async()=>{
   const [kind,action]=btn.dataset.mtgsync.split(':');
   if(action==='cancel'&&!confirm('MTGを取消しますか？Zoom会議・Googleカレンダーの予定も削除を試みます。'))return;
+  if(orgFormHasUnsavedChanges(record)){toast('未保存の変更があります。先に「保存する」で保存してからMTG連携を実行してください');return;}
   btn.disabled=true;
   try{
    const r=await api('orgsales/meeting','POST',{orgId:record.id,kind,action,revision:state.revision});
