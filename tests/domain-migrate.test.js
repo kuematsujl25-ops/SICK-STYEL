@@ -27,6 +27,21 @@ test('validate still rejects a genuinely malformed staffTasks array (not just mi
   assert.throws(() => validate(d));
 });
 
+// Codex独立レビュー指摘(P1): migrate()がempty()を無条件に下敷きにしていたため、null・{}・{revision:N}だけの
+// 壊れた/不完全な入力までもが「新しい空のワークスペース」として validate() を通過してしまい、
+// /api/data のPUTや /api/restore 経由で本番の業務データを無言で空に上書きできる状態になっていた。
+// migrate() は新規コレクション(NEW_COLLECTIONS)の欠落キーだけを補い、元からある必須項目
+// （goals/tasks/shipments/metrics/brand/integrations）は一切補完しないことを確認する。
+test('migrate/validate never silently treat null, {} or a revision-only body as a valid empty workspace (would allow a malformed request to wipe production data)', () => {
+  for (const malformed of [null, undefined, {}, { revision: 5 }, []]) {
+    assert.throws(() => validate(malformed), /データの形式が正しくありません/, 'malformed input: ' + JSON.stringify(malformed));
+  }
+  // migrate()自体も、goals等の元の必須項目を黙って補完してはいけない（validate()が拒否できるように欠落のまま返す）。
+  assert.equal(migrate(null).goals, undefined);
+  assert.equal(migrate({}).brand, undefined);
+  assert.equal(migrate({ revision: 5 }).tasks, undefined);
+});
+
 const orgBase = () => ({ id: 'o1', name: 'テストFC', category: 'サッカー', size: '20名', assignee: '竹田', contact: 'a@example.com',
   stage: 'DM送信', sampleQty: null, sampleCost: null, shippingCost: null, trialUsers: null, feedback: '', proposal: '',
   paidQty: null, paidRevenue: null, paidCost: null, lostReason: '', nextAction: '', nextDue: '', notes: '', updatedAt: '2026-10-21T00:00:00.000Z',
