@@ -123,6 +123,12 @@ export async function createMeeting(store,{topic,startIso,durationMin}){
  const access=await accessToken(store);
  const r=await remote('create_meeting','https://api.zoom.us/v2/users/me/meetings',{method:'POST',headers:{Authorization:`Bearer ${access}`,'Content-Type':'application/json'},
   body:JSON.stringify({topic,type:2,start_time:startIso,duration:durationMin,timezone:'Asia/Tokyo',settings:{join_before_host:true,waiting_room:true,mute_upon_entry:true,approval_type:2}})});
+ // remote()はHTTP応答自体は成功（2xx）でも、本文の読み取り（response.json()）が途中で失敗した場合はnullを
+ // 返す。Zoomは会議を作成済みの可能性が高いのに、ここでTypeErrorとして投げてしまうと、呼び出し元
+ // （lib/meeting-sync.js）は通常のZoomErrorとの区別ができず、確定失敗として再試行してしまい、作成済みの
+ // 会議が孤立したまま重複作成される恐れがある（Codex独立レビュー指摘）。専用のエラーコードで区別する。
+ if(!r||typeof r.id!=='number'&&typeof r.id!=='string')
+  throw new ZoomError('response_body_unreadable','Zoomからの応答本文を読み取れませんでした。会議が作成されている可能性があります','create_meeting');
  return {meetingId:String(r.id),joinUrl:r.join_url};
 }
 export async function updateMeeting(store,meetingId,{topic,startIso,durationMin}){

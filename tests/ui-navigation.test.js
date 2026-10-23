@@ -71,6 +71,13 @@ test('広告CSV取込は、広告費・広告経由売上のセルが空欄で�
  assert.match(fn,/costCell\.invalid\|\|salesCell\.invalid/,'解析失敗したセルは行の除外条件(bad.push)に含まれる');
 });
 
+test('CSV取込等でinstagramEntered:falseの売上記録も、renderSnsMetricsの一覧（metrics唯一の編集入口）から除外されず編集・削除できる（Codex独立レビュー指摘の回帰：ナビ整理後、取込済みの売上記録を直す・消す手段がどの画面にも無くなっていた）',()=>{
+ const fn=js.match(/function renderSnsMetrics\(metrics,esc\)\{[\s\S]*?\n\}/)?.[0]||'';
+ assert.ok(fn,'renderSnsMetrics関数が見つかる');
+ assert.doesNotMatch(fn,/filter\(m=>m\.instagramEntered/,'instagramEntered:falseの行を一覧から除外していない');
+ assert.match(fn,/data-edit="metrics:/,'各行に編集ボタンが出る（除外された行を含む）');
+});
+
 test('MTG連携ボタンはフォームに未保存の変更がある間は同期を実行しない（Codex独立レビュー指摘の回帰：保存前の値が古いまま同期され、同期後の再描画で未保存の入力が失われるのを防ぐ）',()=>{
  assert.match(js,/function orgFormHasUnsavedChanges\(record\)/);
  const handler=js.match(/d\.querySelectorAll\('\[data-mtgsync\]'\)\.forEach\(btn=>btn\.onclick=async\(\)=>\{[\s\S]*?\n \}\);/)?.[0]||'';

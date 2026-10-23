@@ -45,6 +45,12 @@ export async function createEvent(store,{summary,description,location,startIso,e
  const access=await accessToken(store,p);
  const r=await remote('https://www.googleapis.com/calendar/v3/calendars/primary/events',{method:'POST',headers:{Authorization:`Bearer ${access}`,'Content-Type':'application/json'},
   body:JSON.stringify({summary,description,location,start:{dateTime:startIso,timeZone:'Asia/Tokyo'},end:{dateTime:endIso,timeZone:'Asia/Tokyo'},attendees:(attendees||[]).map(email=>({email}))})});
+ // remote()はHTTP応答自体は成功（2xx）でも、本文の読み取りが途中で失敗した場合はnullを返す。Googleは予定を
+ // 作成済みの可能性が高いのに、ここでTypeErrorとして投げてしまうと、呼び出し元（lib/meeting-sync.js）は
+ // 通常のGoogleCalendarErrorとの区別ができず、確定失敗として再試行してしまい、作成済みの予定が孤立したまま
+ // 重複作成される恐れがある（Codex独立レビュー指摘）。専用のコードで区別する。
+ if(!r||typeof r.id!=='string')
+  throw new GoogleCalendarError('response_body_unreadable','Googleからの応答本文を読み取れませんでした。予定が作成されている可能性があります');
  return {eventId:r.id,htmlLink:r.htmlLink||null};
 }
 export async function updateEvent(store,eventId,{summary,description,location,startIso,endIso}){

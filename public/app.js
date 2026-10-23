@@ -163,12 +163,16 @@ function instagramView(){const c=ig?.cache;const expired=ig?.expiresAt&&ig.expir
  ${c?.reels?.length?`<div class="records">${c.reels.map(r=>`<article class="record"><h3>${esc((r.caption||'').slice(0,120))}</h3><p class="note">${fmtTime(r.timestamp)}</p><div class="metricmini">${[['views','再生'],['reach','リーチ'],['total_interactions','反応合計'],['likes','いいね'],['comments','コメント'],['saved','保存'],['shares','シェア']].map(([k,label])=>`<span>${label}<b>${num(r.values[k])}</b></span>`).join('')}</div><p><a href="${safeLink(r.permalink)}" target="_blank" rel="noopener noreferrer">Instagramで開く ↗</a></p></article>`).join('')}</div>`:empty('リールのデータはまだありません。','接続後に同期してください。')}</section>
  <h2 class="sectiondivider">リール分析（自己記録・テーマ別のレート分析）</h2>${renderReels(state.reelPosts,reelUI,esc,today())}
  <h2 class="sectiondivider">参考アカウント</h2>${renderAccounts(state.competitorAccounts,accountUI,esc)}
- <h2 class="sectiondivider">SNS実績（手入力・日次記録）</h2>${renderSnsMetrics(state.metrics,esc)}`;}
+ <h2 class="sectiondivider">SNS・売上の日次記録（手入力・CSV取込）</h2>${renderSnsMetrics(state.metrics,esc)}`;}
 function renderSnsMetrics(metrics,esc){
- const rows=[...metrics].filter(m=>m.instagramEntered!==false).sort((a,b)=>b.date.localeCompare(a.date));
- return `<section class="panel"><div class="panelhead"><h2>フォロワー・リーチ・反応の記録 <small>${rows.length} 件</small></h2><button class="primary" data-new="metrics">＋ 記録を追加</button></div>
- <p class="note">Amazon売上・注文件数は同じ記録の一部ですが、Amazon連携画面に表示します。日付ごとに1件の記録です。</p>
- ${rows.length?`<div class="records">${rows.slice(0,30).map(r=>`<article class="record"><div class="recordtop"><span class="badge">${esc(r.date)}</span><button data-edit="metrics:${esc(r.id)}">編集</button></div><div class="metricmini"><span>フォロワー<b>${esc(r.followers)}</b></span><span>リーチ<b>${esc(r.reach)}</b></span><span>反応<b>${esc(r.engagement)}</b></span></div>${r.notes?`<p class="note">${esc(r.notes)}</p>`:''}</article>`).join('')}</div>`:empty('SNS実績の記録はまだありません。','日次のフォロワー・リーチ・反応数を記録できます。','metrics')}</section>`;}
+ // instagramEntered===falseの行（CSV取込等でAmazon売上だけが登録された記録）も編集・削除できる一覧に含める。
+ // 以前は除外していたため、CSV取込した売上記録を直す・消す手段がどの画面にも無くなっていた
+ // （Codex独立レビュー指摘：この一覧がmetrics唯一の編集入口であるため）。
+ const rows=[...metrics].sort((a,b)=>b.date.localeCompare(a.date));
+ const SHOWN=90;
+ return `<section class="panel"><div class="panelhead"><h2>日次記録（SNS・売上の手入力/CSV取込） <small>${rows.length} 件</small></h2><button class="primary" data-new="metrics">＋ 記録を追加</button></div>
+ <p class="note">Amazon売上・注文件数のグラフはAmazon連携画面に表示します。日付ごとに1件の記録です。CSV取込等でInstagram指標が未入力の記録もここから編集・削除できます。</p>
+ ${rows.length?`<div class="records">${rows.slice(0,SHOWN).map(r=>`<article class="record"><div class="recordtop"><span class="badge">${esc(r.date)}</span><button data-edit="metrics:${esc(r.id)}">編集</button></div><p class="note">売上 ${yen(r.sales)} ・ 注文 ${esc(r.orders)} 件${r.source==='csv'?' · CSV取込':''}</p>${r.instagramEntered===false?'<p class="note">Instagram指標は未入力</p>':`<div class="metricmini"><span>フォロワー<b>${esc(r.followers)}</b></span><span>リーチ<b>${esc(r.reach)}</b></span><span>反応<b>${esc(r.engagement)}</b></span></div>`}${r.notes?`<p class="note">${esc(r.notes)}</p>`:''}</article>`).join('')}</div>${rows.length>SHOWN?`<p class="note">最新${SHOWN}件を表示しています（他${rows.length-SHOWN}件）。古い記録はAPIからエクスポート（バックアップ）で確認してください。</p>`:''}`:empty('日次記録はまだありません。','日次の売上・Instagram指標を記録できます。','metrics')}</section>`;}
 function bindInstagram(){const connect=document.querySelector('#igconnect');if(connect)connect.onclick=async()=>{connect.disabled=true;try{location.assign((await api('instagram/connect','POST',{})).url);}catch(e){toast(e.message);connect.disabled=false;}};
  const sync=document.querySelector('#igsync');if(sync)sync.onclick=async()=>{sync.disabled=true;sync.textContent='同期しています…';try{ig=await api('instagram/sync','POST',{});conversations=(await api('instagram/conversations')).data;render();toast(syncMessage(ig));}catch(e){try{ig=await api('instagram/status');render();}catch{}toast(e.message);}};
  const dis=document.querySelector('#igdisconnect');if(dis)dis.onclick=async()=>{if(!confirm('Instagram接続を解除し、取得データとDM観測履歴を削除しますか？手入力データは残ります。'))return;try{const r=await api('instagram/disconnect','POST',{});ig=await api('instagram/status');conversations=[];render();toast(r.warning||'接続を解除しました');}catch(e){toast(e.message);}};
