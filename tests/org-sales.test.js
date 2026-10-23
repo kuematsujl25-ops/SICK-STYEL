@@ -1,3 +1,4 @@
+import {renderMeetingEditor} from '../public/meetings.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { computeOrgKPI, renderOrgList, renderOrgKPI, renderOrgEditor, newOrg } from '../public/org-sales.js';
@@ -100,18 +101,18 @@ test('newOrg starts with the first pipeline stage and empty history', () => {
 
 test('MTG自動作成ボタンは、Zoom・Googleカレンダーとも接続済みで、かつ団体が保存済みの場合のみ表示される', () => {
   const saved = org({ id: 'o1', initialZoomAt: '2026-10-28T14:00' });
-  const unconnected = renderOrgEditor(saved, esc, '2026-10-21', { zoomConnected: false, calendarConnected: true });
+  const unconnected = renderMeetingEditor(saved, 'initial', esc, { zoomConnected: false, calendarConnected: true });
   assert.doesNotMatch(unconnected, /data-mtgsync="initial:prepare"/);
   const unsaved = renderOrgEditor(null, esc, '2026-10-21', { zoomConnected: true, calendarConnected: true });
   assert.doesNotMatch(unsaved, /data-mtgsync="initial:prepare"/);
-  const ready = renderOrgEditor(saved, esc, '2026-10-21', { zoomConnected: true, calendarConnected: true });
+  const ready = renderMeetingEditor(saved, 'initial', esc, { zoomConnected: true, calendarConnected: true });
   assert.match(ready, /data-mtgsync="initial:prepare"/);
   assert.match(ready, /確認してZoomを作成/);
 });
 
 test('同期済みMTGは「日程を同期し直す」「MTGを取消」を表示し、未作成時は作成ボタンのみ', () => {
   const synced = org({ id: 'o1', initialZoomAt: '2026-10-28T14:00', initialMeetingSync: { requestId: 'r1', zoomMeetingId: 'z1', calendarEventId: 'e1', status: 'synced', error: null, updatedAt: '2026-10-21T00:00:00.000Z' } });
-  const html = renderOrgEditor(synced, esc, '2026-10-21', { zoomConnected: true, calendarConnected: true });
+  const html = renderMeetingEditor(synced, 'initial', esc, { zoomConnected: true, calendarConnected: true });
   assert.match(html, /data-mtgsync="initial:update"/);
   assert.match(html, /data-mtgsync="initial:cancel"/);
   assert.doesNotMatch(html, /data-mtgsync="initial:create"/);
@@ -119,17 +120,17 @@ test('同期済みMTGは「日程を同期し直す」「MTGを取消」を表�
 
 test('zoom_only（Zoom作成済み・カレンダー未登録）の会議は「再試行する」で同期を再開でき、取消しか選べない状態にならない（Codex独立レビュー指摘の回帰）', () => {
   const zoomOnly = org({ id: 'o1', initialZoomAt: '2026-10-28T14:00', initialMeetingSync: { requestId: 'r1', zoomMeetingId: 'z1', calendarEventId: null, status: 'zoom_only', error: null, updatedAt: '2026-10-21T00:00:00.000Z' } });
-  const html = renderOrgEditor(zoomOnly, esc, '2026-10-21', { zoomConnected: true, calendarConnected: true });
+  const html = renderMeetingEditor(zoomOnly, 'initial', esc, { zoomConnected: true, calendarConnected: true });
   assert.match(html, /data-mtgsync="initial:create"/, 'zoom_onlyでも再試行（カレンダー登録の再開）ボタンが表示される');
   assert.match(html, /data-mtgsync="initial:cancel"/);
 });
 
 test('uncertain（Zoom会議が実際に作成されたか不明）の会議は、無言の重複作成を防ぐため通常の「再試行する」ボタンを出さず、取消（ローカルの記録クリア）だけを提示する（Codex独立レビュー指摘の回帰）', () => {
   const uncertain = org({ id: 'o1', initialZoomAt: '2026-10-28T14:00', initialMeetingSync: { requestId: 'r1', zoomMeetingId: null, calendarEventId: null, status: 'uncertain', error: 'Zoomへの通信がタイムアウトし、会議が実際に作成されたか不明です。', updatedAt: '2026-10-21T00:00:00.000Z' } });
-  const html = renderOrgEditor(uncertain, esc, '2026-10-21', { zoomConnected: true, calendarConnected: true });
+  const html = renderMeetingEditor(uncertain, 'initial', esc, { zoomConnected: true, calendarConnected: true });
   assert.doesNotMatch(html, /data-mtgsync="initial:create"/, 'uncertainでは確認前の自動的な再試行を促さない（重複作成の回避）');
   assert.match(html, /data-mtgsync="initial:cancel"/, '確認後にローカルの記録をクリアする手段は残す');
-  assert.match(html, /作成結果が不明（要確認）/);
+  assert.match(html, /結果不明・管理者の確認が必要/);
   assert.match(html, /会議が実際に作成されたか不明です/);
 });
 
@@ -163,7 +164,7 @@ test('切断後も既存会議の状態・取消再試行を表示し、新規�
   if(zoomConnected&&calendarConnected)continue;
   for(const kind of ['initial','proposal'])for(const status of ['synced','error','zoom_only','uncertain']){
    const saved=org({id:'o1',[kind+'MeetingSync']:{requestId:'qa',zoomMeetingId:'qa-z',calendarEventId:null,status,cancelPending:true,error:'架空の取消失敗'}});
-   const html=renderOrgEditor(saved,esc,'2026-10-23',{zoomConnected,calendarConnected});
+   const html=renderMeetingEditor(saved,kind,esc,{zoomConnected,calendarConnected});
    assert.match(html,new RegExp('data-mtgsync="'+kind+':cancel"'));
    assert.match(html,/取消を再試行/);assert.match(html,/架空の取消失敗/);
    assert.doesNotMatch(html,new RegExp('data-mtgsync="'+kind+':(?:create|update)"'));

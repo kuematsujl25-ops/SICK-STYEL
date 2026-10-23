@@ -86,10 +86,10 @@ test('CSV取込等でinstagramEntered:falseの売上記録も、renderSnsMetrics
 });
 
 test('MTG連携ボタンはフォームに未保存の変更がある間は同期を実行しない（Codex独立レビュー指摘の回帰：保存前の値が古いまま同期され、同期後の再描画で未保存の入力が失われるのを防ぐ）',()=>{
- assert.match(js,/function orgFormHasUnsavedChanges\(record\)/);
+ assert.match(js,/import .*meetingFormChanged.*from '.\/meetings.js'/);
  const handler=js.match(/d\.querySelectorAll\('\[data-mtgsync\]'\)\.forEach\(btn=>btn\.onclick=async\(\)=>\{[\s\S]*?\n \}\);/)?.[0]||'';
- assert.match(handler,/orgFormHasUnsavedChanges\(record\)/,'MTG連携ボタンのクリック処理が未保存チェックを呼んでいる');
- const guardIndex=handler.search(/orgFormHasUnsavedChanges\(record\)/);
+ assert.match(handler,/meetingFormChanged\(record,kind,/,'MTG連携ボタンのクリック処理が未保存チェックを呼んでいる');
+ const guardIndex=handler.search(/meetingFormChanged\(record,kind,/);
  const apiCallIndex=handler.search(/api\('orgsales\/meeting'/);
  assert.ok(guardIndex>=0&&apiCallIndex>guardIndex,'未保存チェックはAPI呼び出しより前に行われる');
 });

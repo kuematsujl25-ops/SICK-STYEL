@@ -1,3 +1,4 @@
+import {renderMeetings,renderMeetingEditor,meetingFormChanged,saveMeetingFields} from './meetings.js';
 import {hasOutstandingMeetings} from './org-meeting-lifecycle.js';
 import {confirmMeetingPlan} from './meeting-confirmation-ui.js';
 import {renderTeam,bindTeam} from './ai-team.js';
@@ -43,7 +44,7 @@ async function load(){
  if(q.has('notifications')){section='settings';render();}
  if(q.has('instagram')){section='instagram';render();toast(q.get('instagram')==='connected'?'Instagramの認可が完了しました。「今すぐ同期」で読み取りを検証してください。':'Instagramの認可を完了できませんでした。設定・権限を確認して再接続してください。');}
  if(q.has('amazon')){section='amazon';render();toast(q.get('amazon')==='connected'?'Amazonの認可が完了しました。「今すぐ同期」でデータを取得してください。':'Amazonの認可を完了できませんでした。アプリ設定・リダイレクトURIを確認してください。');}
- if(q.has('zoom')){section='settings';render();const zStage=q.get('zoom_stage'),zCode=q.get('zoom_code');const diag=zStage&&/^[a-z_]{1,30}$/.test(zStage)&&zCode&&/^[a-zA-Z0-9_-]{1,40}$/.test(zCode)?'（'+zStage+' / '+zCode+'）':'';toast(q.get('zoom')==='connected'?'Zoomの認可が完了しました。団体営業画面からMTGを作成できます。':'Zoomの認可未完了'+diag+'。設定を確認してください。');}
+ if(q.has('zoom')){section='settings';render();const zStage=q.get('zoom_stage'),zCode=q.get('zoom_code');const diag=zStage&&/^[a-z_]{1,30}$/.test(zStage)&&zCode&&/^[a-zA-Z0-9_-]{1,40}$/.test(zCode)?'（'+zStage+' / '+zCode+'）':'';toast(q.get('zoom')==='connected'?'Zoomの認可が完了しました。会議タブからMTGを作成できます。':'Zoomの認可未完了'+diag+'。設定を確認してください。');}
  if(q.has('googlecalendar')){section='settings';render();toast(q.get('googlecalendar')==='connected'?'Googleカレンダーの認可が完了しました。':'Googleカレンダーの認可を完了できませんでした。アプリ設定・リダイレクトURIを確認してください。');}
  if(q.size)history.replaceState(null,'','/');
 }
@@ -71,13 +72,13 @@ function auth(){
 // ---------- 画面 ----------
 // 団体営業・集める数字・購入実験・選手候補・利益在庫はメニューから削除（データ・コードは保持、いつでも復元可能）。
 // リール分析・参考アカウント・売上SNS実績（SNS側）はInstagram画面へ、売上SNS実績（Amazon側）・利益在庫の広告費のみAmazon画面へ統合。
-const nav=[['overview','◈','ダッシュボード'],['goals','◎','目標'],['tasks','☑','タスク'],['staffTasks','▤','担当タスク'],['shipments','▣','発送管理'],['team','♙','AI社員'],['amazon','◆','Amazon連携'],['instagram','◉','Instagram連携'],['site','◇','サイト掲載'],['brand','✳','ブランド'],['settings','⚙','設定・バックアップ']];
+const nav=[['overview','◈','ダッシュボード'],['goals','◎','目標'],['tasks','☑','タスク'],['staffTasks','▤','担当タスク'],['shipments','▣','発送管理'],['team','♙','AI社員'],['meetings','▦','会議'],['amazon','◆','Amazon連携'],['instagram','◉','Instagram連携'],['site','◇','サイト掲載'],['brand','✳','ブランド'],['settings','⚙','設定・バックアップ']];
 const names={...Object.fromEntries(nav.map(([id,,name])=>[id,name])),orgSales:'団体営業・会議'};
 const rate=g=>Math.min(100,Math.max(0,Math.round(Number(g.current||0)/Number(g.target||1)*100)));
 function render(){
  const previousNav=document.querySelector('#app aside nav');
  const navScrollTop=previousNav?.scrollTop||0,navScrollLeft=previousNav?.scrollLeft||0;
- const views={team:()=>renderTeam(team,esc),finance:()=>renderFinance(financeReport,esc),overview,instagram:instagramView,amazon:amazonView,brand,settings,site:siteView,staffTasks:()=>renderStaffTasks(state.staffTasks,staffUI,esc,today()),orgSales:orgSalesView,collectionTasks:()=>renderCollectionTasks(state.collectionTasks,collectUI,esc),
+ const views={team:()=>renderTeam(team,esc),finance:()=>renderFinance(financeReport,esc),overview,instagram:instagramView,amazon:amazonView,brand,settings,site:siteView,staffTasks:()=>renderStaffTasks(state.staffTasks,staffUI,esc,today()),meetings:()=>renderMeetings(state.orgSales,esc),orgSales:orgSalesView,collectionTasks:()=>renderCollectionTasks(state.collectionTasks,collectUI,esc),
  reelPosts:()=>renderReels(state.reelPosts,reelUI,esc,today()),growthExperiments:()=>renderExperiments(state.growthExperiments,experimentUI,esc),competitorAccounts:()=>renderAccounts(state.competitorAccounts,accountUI,esc),playerCandidates:()=>renderPlayers(state.playerCandidates,playerUI,esc)};
  app.innerHTML=`<aside><div class="brandtop"><a href="#" class="brandmark" data-nav="overview">${LOGO}<span><b>SICKSTYLE</b><small>管理アプリ</small></span></a><span class="mobileonly"><button id="mrefresh" aria-label="最新データに更新">↻</button><button id="mlogout" aria-label="ログアウト">ログアウト</button></span></div><nav aria-label="メニュー">${nav.map(([id,icon,name])=>`<button data-nav="${id}" class="${section===id?'active':''}" ${section===id?'aria-current="page"':''}><span aria-hidden="true">${icon}</span>${name}</button>`).join('')}</nav><div class="sidebottom"><div>管理者<small>${esc(storageKind==='d1'?'クラウド保存（Cloudflare D1）':'このPCに保存（SQLite）')}</small></div><button id="logout">ログアウト</button></div></aside>
  <main><header><div class="breadcrumb">SICKSTYLE<span>/ ${names[section]}</span></div><div class="headeractions"><span class="live">保存先: ${storageKind==='d1'?'クラウド':'このPC'}</span><button id="refresh" aria-label="最新データに更新" title="最新データに更新">↻ 更新</button></div></header>
@@ -123,7 +124,7 @@ function zoomCalendarBadge(s){if(!s)return '<span class="badge">確認中</span>
 function settings(){return `<div class="settingsgrid"><section class="panel"><h2>バックアップ</h2><p>保存済みの業務データをJSONファイルでダウンロードします。パスワード・連携トークンは含まれません。</p><a class="primary" href="/api/backup" download>バックアップをダウンロード</a><hr><h2>バックアップから復元</h2><p>現在の業務データを置き換えます。復元前にバックアップをダウンロードしてください。</p><label class="filelabel">JSONファイルを選択<input type="file" id="restore" accept="application/json,.json"></label></section>
  <section class="panel"><h2>外部サービス連携</h2><p>どちらも認可前から手入力（AmazonはCSVも可）で利用できます。</p><div class="integration"><b>Amazon Selling Partner API</b>${statusBadge(amz)}<p>${amz?.connected?'最終同期: '+fmtTime(amz.cache?.syncedAt):'公式の認可が完了するまでは手入力・CSVの値を使います。'}</p><button data-nav="amazon" class="secondary">Amazon連携を開く</button></div><div class="integration"><b>Instagram API</b>${statusBadge(ig)}<p>${ig?.connected?'最終同期: '+fmtTime(ig.cache?.syncedAt):'公式の認可が完了するまでは手入力の値を使います。'}</p><button data-nav="instagram" class="secondary">Instagram連携を開く</button></div><hr><h2>スマートフォンのホーム画面に追加</h2><p>iPhone: Safariの共有ボタン →「ホーム画面に追加」。Android: Chromeのメニュー →「ホーム画面に追加」。オフラインでは業務データを表示しません。</p></section>
  <section class="panel"><h2>通知センター（PC・iPhone）</h2><div id="notification-panel"><p>通知を読み込み中…</p></div></section>
- <section class="panel"><h2>Zoom × Googleカレンダー連携（団体営業のMTG自動作成）</h2><button class="primary" data-nav="orgSales">団体営業・会議を開く</button><details><summary>使い方・詳細</summary><p>団体営業で内容・日時を保存し、Zoomを作成します。発行されたURL・主催者・ゲストを確認してからカレンダー登録・招待を実行します。ChatGPT側の接続とは別の認可です。</p></details>
+ <section class="panel"><h2>Zoom × Googleカレンダー連携（団体営業のMTG自動作成）</h2><button class="primary" data-nav="meetings">会議を開く</button><details><summary>使い方・詳細</summary><p>団体営業で内容・日時を保存し、Zoomを作成します。発行されたURL・主催者・ゲストを確認してからカレンダー登録・招待を実行します。ChatGPT側の接続とは別の認可です。</p></details>
  <div class="integration"><b>Zoom</b>${zoomCalendarBadge(zoomStatus)}<p>${zoomStatus?.connected?'接続アカウント: '+esc(zoomStatus.email||'—'):'本人のZoomアカウントで認可してください（ミーティング作成・変更・削除の最小権限のみ）。'}</p>${zoomStatus?.connected?`<p class="note">許可された権限: ${esc((zoomStatus.scopes||[]).join(', ')||'（スコープ情報なし）')}</p>`:''}
  <details class="guide" ${!zoomStatus?.configured?'open':''}><summary><b>Zoomアプリ登録の手順</b></summary><ol>
  <li><a href="https://marketplace.zoom.us/" target="_blank" rel="noopener noreferrer">Zoom App Marketplace ↗</a>で本人のZoomアカウントにログインし、「Develop」→「Build App」からOAuthアプリを作成します（Server-to-Server OAuthではなく、ユーザー認可が必要なタイプを選びます）。</li>
@@ -347,6 +348,8 @@ function bind(){bindMetricsPages();if(section==='team')bindTeam({model:team,api,
  const newOrgBtn=document.querySelector('[data-neworg]');if(newOrgBtn)newOrgBtn.onclick=()=>orgEditor(null);
  const orgQ=document.querySelector('#orgsearch');if(orgQ){const search=e=>{if(e.isComposing)return;const start=orgQ.selectionStart,end=orgQ.selectionEnd;orgUI={...orgUI,q:orgQ.value};render();const next=document.querySelector('#orgsearch');next?.focus();next?.setSelectionRange(start,end);};orgQ.oninput=search;orgQ.oncompositionend=search;}
  document.querySelectorAll('[data-restoreorg]').forEach(b=>b.onclick=async()=>{if(!confirm('削除済み団体を一覧へ戻します。会議は作成・取消せず、元の連携記録を保持します。復元しますか？'))return;b.disabled=true;try{await persist({...state,orgSales:state.orgSales.map(x=>x.id===b.dataset.restoreorg?{...x,deletedAt:null}:x)});toast('団体を復元しました。編集画面で会議の状態と取消を確認してください');}catch(e){toast(e.message);b.disabled=false;}});
+ const meetingSelect=document.querySelector('#meetingselect');if(meetingSelect)meetingSelect.onsubmit=e=>{e.preventDefault();const id=new FormData(meetingSelect).get('orgId');meetingEditor(state.orgSales.find(o=>o.id===id));};
+ document.querySelectorAll('[data-meetingorg]').forEach(b=>b.onclick=()=>meetingEditor(state.orgSales.find(o=>o.id===b.dataset.meetingorg),b.dataset.meetingkind));
  document.querySelectorAll('[data-editorg]').forEach(b=>b.onclick=()=>orgEditor(state.orgSales.find(x=>x.id===b.dataset.editorg)));
  const ccf=document.querySelector('#collectcategoryfilter');if(ccf)ccf.onchange=()=>{collectUI={...collectUI,category:ccf.value};render();};
  const csf=document.querySelector('#collectstatusfilter');if(csf)csf.onchange=()=>{collectUI={...collectUI,status:csf.value};render();};
@@ -375,25 +378,22 @@ function editor(key,record){const c=configs[key];const r=record||{due:key==='col
 // フォームを編集中（まだ「保存する」していない）のままMTG連携ボタンを押すと、古い（保存済みの）日時・名称を
 // そのまま同期してしまい、しかも同期後にstateを再取得してエディタを再描画するため未保存の入力が無言で
 // 失われる（Codex独立レビュー指摘）。未保存の変更がある場合は先に保存するよう案内し、同期を実行しない。
-function orgFormHasUnsavedChanges(record){
- const form=document.querySelector('#orgform');if(!form||!record)return false;
- const vals=Object.fromEntries(new FormData(form));
- for(const k in vals){if(k==='stageNote')continue;const meetingDefault=k==='initialMeetingContent'?'初回ZOOM':k==='proposalMeetingContent'?'活用法提案ZOOM':undefined;const saved=meetingDefault!==undefined?(record[k]||meetingDefault):record[k];if((k in record||meetingDefault!==undefined)&&String(saved??'')!==String(vals[k]))return true;}
- return false;
-}
-function orgEditor(record){const d=document.querySelector('#editor');
- d.innerHTML=renderOrgEditor(record,esc,today(),{zoomConnected:!!zoomStatus?.connected,calendarConnected:!!calendarStatus?.connected});d.showModal();
+function meetingEditor(record,kind='initial'){
+ if(!record||record.deletedAt)return;
+ const d=document.querySelector('#editor');
+ d.innerHTML=renderMeetingEditor(record,kind,esc,{zoomConnected:!!zoomStatus?.connected,calendarConnected:!!calendarStatus?.connected,calendarIdentityReady:calendarStatus?.identityReady});d.showModal();
  d.querySelectorAll('[data-mtgsync]').forEach(btn=>btn.onclick=async()=>{
   if(btn.disabled)return;
   const [kind,action]=btn.dataset.mtgsync.split(':');
 
-  if(orgFormHasUnsavedChanges(record)){toast('未保存の変更があります。先に「保存する」で保存してからMTG連携を実行してください');return;}
+  if(meetingFormChanged(record,kind,Object.fromEntries(new FormData(d.querySelector('#meetingform'))))){toast('未保存の変更があります。先に「内容・日時を保存」で保存してからMTG連携を実行してください');return;}
   btn.disabled=true;
   try{
    const request={orgId:record.id,kind,action,revision:state.revision};
    const plan=await api('orgsales/meeting-preview','POST',request);
    if(!d.open){btn.disabled=false;return;}
    if(!await confirmMeetingPlan({...plan,action})){btn.disabled=false;return;}
+   if(!d.open)return;
    const r=await api('orgsales/meeting','POST',{...request,confirmation:plan.confirmation});
    // サーバー側は、Zoom/カレンダーの外部呼び出し中に他端末が無関係な箇所を編集していても、その編集を
    // 保持したまま最新revisionへ自動的に追従して保存を完了させることがある（saveSyncReconciled）。
@@ -402,13 +402,24 @@ function orgEditor(record){const d=document.querySelector('#editor');
    // 他端末の変更を無言で上書きしてしまう（Codex独立レビュー指摘）。ワークスペース全体を再取得する。
    state=await api('data');
    toast(r.warnings?.length?r.warnings.join(' / '):'MTGを更新しました');
-   render();orgEditor(state.orgSales.find(x=>x.id===record.id));
+   render();meetingEditor(state.orgSales.find(x=>x.id===record.id),kind);
   }catch(e){
-   toast(e.message);
-   try{state=await api('data');render();const current=state.orgSales.find(x=>x.id===record.id);if(current)orgEditor(current);else d.close();}
+   const message=e.message;toast(message);
+   try{state=await api('data');render();const current=state.orgSales.find(x=>x.id===record.id);if(current&&!current.deletedAt)meetingEditor(current,kind);else d.close();const error=document.querySelector('#editerror');if(error)error.textContent=message;}
    catch{d.close();toast('最新の状態を取得できません。更新してから再度操作してください');}
   }
  });
+ document.querySelector('#close').onclick=document.querySelector('#cancel').onclick=()=>d.close();
+ d.querySelector('#meetingform').onsubmit=async e=>{
+  e.preventDefault();const button=d.querySelector('#save');if(button.disabled||busy)return;button.disabled=true;
+  try{const row=saveMeetingFields(record,kind,Object.fromEntries(new FormData(e.target)));
+   await persist({...state,orgSales:state.orgSales.map(o=>o.id===record.id?row:o)});
+   meetingEditor(state.orgSales.find(o=>o.id===record.id),kind);
+  }catch(error){d.querySelector('#editerror').textContent=error.message;button.disabled=false;}
+ };
+}
+function orgEditor(record){const d=document.querySelector('#editor');
+ d.innerHTML=renderOrgEditor(record,esc,today());d.showModal();
  document.querySelector('#close').onclick=document.querySelector('#cancel').onclick=()=>d.close();
  document.querySelector('#orgform').onsubmit=async e=>{e.preventDefault();const b=document.querySelector('#save');b.disabled=true;try{
   const vals=Object.fromEntries(new FormData(e.target));
@@ -419,7 +430,7 @@ function orgEditor(record){const d=document.querySelector('#editor');
   const stageChanged=!record||record.stage!==vals.stage;
   const history=stageChanged?[...base.history,{stage:vals.stage,at:now,note:vals.stageNote||''}]:base.history;
   const row={...base,name:vals.name,category:vals.category,size:vals.size,assignee:vals.assignee,contact:vals.contact,
-   stage:vals.stage,initialMeetingContent:vals.initialMeetingContent,proposalMeetingContent:vals.proposalMeetingContent,initialZoomAt:vals.initialZoomAt,initialZoomUrl:vals.initialZoomUrl,proposalZoomAt:vals.proposalZoomAt,proposalZoomUrl:vals.proposalZoomUrl,sampleQty:vals.sampleQty,sampleCost:vals.sampleCost,shippingCost:vals.shippingCost,trialUsers:vals.trialUsers,
+   stage:vals.stage,sampleQty:vals.sampleQty,sampleCost:vals.sampleCost,shippingCost:vals.shippingCost,trialUsers:vals.trialUsers,
    feedback:vals.feedback,proposal:vals.proposal,paidQty:vals.paidQty,paidRevenue:vals.paidRevenue,paidCost:vals.paidCost,
    lostReason:vals.lostReason,nextAction:vals.nextAction,nextDue:vals.nextDue,notes:vals.notes,updatedAt:now,history,deletedAt:base.deletedAt??null};
   const next={...state,orgSales:record?state.orgSales.map(x=>x.id===record.id?row:x):[...state.orgSales,row]};

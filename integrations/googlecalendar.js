@@ -43,7 +43,7 @@ async function accessToken(store,p){
  if(!fresh.access_token)throw Error('Googleトークンの更新に失敗しました。再接続してください');
  return fresh.access_token;
 }
-export async function safeStatus(store){const p=await privateData(store);return {configured:config(),connected:!!p,email:p?.email||null,connectedAt:p?.connectedAt||null};}
+export async function safeStatus(store){const p=await privateData(store);return {configured:config(),connected:!!p,identityReady:!!p&&(p.scope||'').split(/\s+/).some(s=>[identityScope,'https://www.googleapis.com/auth/calendar.readonly','https://www.googleapis.com/auth/calendar'].includes(s)),email:p?.email||null,connectedAt:p?.connectedAt||null};}
 export async function createEvent(store,{summary,description,location,startIso,endIso,attendees,calendarId='primary'}){
  const p=await privateData(store);if(!p)throw Error('Googleカレンダーを接続してください');
  const access=await accessToken(store,p);
