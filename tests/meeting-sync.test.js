@@ -7,7 +7,7 @@ import {randomBytes} from 'node:crypto';
 import {createStore} from '../lib/store.js';
 import {encrypt} from '../lib/security.js';
 import {empty,validate} from '../lib/domain.js';
-import {newOrg} from '../public/org-sales.js';
+import {newOrg,renderOrgEditor} from '../public/org-sales.js';
 import {syncMeeting} from '../lib/meeting-sync.js';
 
 async function seed(store,org){
@@ -29,6 +29,7 @@ function fakeFetch(behavior){
   if(/^\/v2\/meetings\/\d+$/.test(u.pathname)&&options.method==='DELETE')return behavior.zoomDeleteFails?new Response(JSON.stringify({code:1,message:'fail'}),{status:400}):new Response(null,{status:204});
   if(u.hostname==='oauth2.googleapis.com')return Response.json({access_token:'ga'});
   if(u.pathname==='/calendar/v3/calendars/primary/events'&&options.method==='POST'){
+   if(behavior.calendarNetworkFails)throw Error('network');
    if(behavior.calendarFails)return new Response(JSON.stringify({error:{code:500,message:'fail'}}),{status:500});
    return Response.json({id:'evt-'+(zoomMeetingSeq),htmlLink:'https://calendar.google.com/x'});
   }
@@ -463,6 +464,24 @@ test('Zoom会議作成がタイムアウト等の通信失敗で終わった場�
  const latest=await store.doc('workspace');
  const cancelled=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'cancel',revision:latest.revision});
  assert.equal(cancelled.org.initialMeetingSync,null,'uncertain状態は取消でローカルの記録を安全にクリアできる（Zoomへの削除呼び出しは発生しない）');
+});
+
+test('カレンダー予定の新規作成がタイムアウト等の通信失敗で終わった場合、予定が実際に作成されたか不明なため「確定失敗」とは別の状態（uncertain）として記録する（Zoom会議は作成済みのIDを保持する、Codex独立レビュー指摘の回帰）',async t=>{
+ const env={...process.env};process.env.ZOOM_CLIENT_ID='c';process.env.ZOOM_CLIENT_SECRET='s';process.env.GOOGLE_CLIENT_ID='c';process.env.GOOGLE_CLIENT_SECRET='s';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-meeting-calendar-create-uncertain-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
+ t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
+ const org={...newOrg(),id:'org-1',name:'FC Example',updatedAt:new Date().toISOString(),deletedAt:null,history:[{stage:'DM送信',at:new Date().toISOString(),note:''}],initialZoomAt:'2026-10-28T14:00'};
+ const revision=await seed(store,org);
+ global.fetch=fakeFetch({calendarNetworkFails:true});
+ const result=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision});
+ assert.equal(result.org.initialMeetingSync.status,'uncertain');
+ assert.ok(result.org.initialMeetingSync.zoomMeetingId,'Zoom会議は確定して作成済みのため、そのIDは保持される');
+ assert.equal(result.org.initialMeetingSync.calendarEventId,null,'カレンダー予定は実際の作成が確認できないためIDを持たない');
+ assert.match(result.warnings.join(' / '),/予定が実際に作成されたか不明/);
+ // uncertain状態はpublic/org-sales.jsで通常の「再試行する」ボタン対象に含まれない（無言の重複作成防止）。
+ const html=renderOrgEditor(result.org,x=>String(x),'2026-10-21',{zoomConnected:true,calendarConnected:true});
+ assert.doesNotMatch(html,/data-mtgsync="initial:create"/);
+ assert.match(html,/data-mtgsync="initial:cancel"/);
 });
 
 test('カレンダー予定の新規作成自体は成功しても、その保存が2回続けて失敗した場合、creating状態のまま固着させず最終的に保存できる（round16・17と同じ固着パターンの自己点検での発見）',async t=>{
