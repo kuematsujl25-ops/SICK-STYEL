@@ -67,6 +67,22 @@ test('daily notifications are idempotent on repeated Cron retries and remain in 
  assert.equal(items.filter(x=>x.kind==='ai_review').length,1);
  assert.equal(items.filter(x=>x.kind==='ai_completed').length,1);
 });
+test('listNotifications orders by actual creation time, not by the document name string, so an older kind cannot crowd out a more recent one once history grows large (Codex独立レビュー指摘の回帰)',async t=>{
+ const dir=await mkdtemp(path.join(tmpdir(),'sickstyle-notify-order-'));
+ const store=await createStore({DATA_DIR:dir});
+ t.after(async()=>{store.close();await rm(dir,{recursive:true,force:true});});
+ // name = 'notify-event-v1:'+kind+':'+id なので、'sales'は辞書順で'morning'より後ろに来る。
+ // 旧実装は SQL の ORDER BY name DESC LIMIT 300 で絞り込んでいたため、'sales'だけで300件を超えると
+ // 実際には最新である'morning'の1件がSQL段階で完全に除外されていた。createdAtを明示的にずらして検証する。
+ const base=Date.parse('2026-01-01T00:00:00.000Z');
+ for(let i=0;i<305;i++)await store.put('notify-event-v1:sales:day-'+String(i).padStart(4,'0'),
+  {id:'notify-event-v1:sales:day-'+String(i).padStart(4,'0'),kind:'sales',title:'売上速報',body:'本日の売上 ¥1,000（テスト）',detail:null,createdAt:new Date(base+i).toISOString(),readAt:null});
+ await store.put('notify-event-v1:morning:latest-morning',
+  {id:'notify-event-v1:morning:latest-morning',kind:'morning',title:'今日の予定',body:'テスト',detail:null,createdAt:new Date(base+1000).toISOString(),readAt:null});
+ const items=await listNotifications(store);
+ assert.ok(items.some(x=>x.kind==='morning'&&x.id.includes('latest-morning')),'305件のsalesに埋もれず、最新のmorning通知が一覧に含まれる');
+ assert.equal(items[0].kind,'morning','一覧の先頭は実際の作成時刻で最新のもの');
+});
 test('push subscriptions are encrypted in D1 and can be removed per device',async t=>{
  const previous={...process.env};process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
  const dir=await mkdtemp(path.join(tmpdir(),'sickstyle-device-'));
