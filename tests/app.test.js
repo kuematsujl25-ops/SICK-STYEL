@@ -72,6 +72,11 @@ test('管理者登録・認証・業務データ保存・復元・永続化', as
  assert.equal((await req('logout','POST',{})).status,200);assert.equal((await req('data')).status,401);assert.equal((await req('backup')).status,401);assert.equal((await req('instagram/status')).status,401);assert.equal((await req('amazon/status')).status,401);cookie=secondCookie;assert.equal((await req('data')).status,200);cookie='';
  assert.equal((await req('login','POST',{...creds,password:'wrong-password-123'})).status,401);const login=await req('login','POST',creds);assert.equal(login.status,200);cookie=login.cookie.split(';')[0];assert.equal((await req('session')).data.authenticated,true);
  const html=await fetch(base);assert.equal(html.status,200);assert.match(await html.text(),/lang="ja"/);assert.match(html.headers.get('content-security-policy'),/default-src 'self'/);
+ // img-srcにhttps:を許可：選手候補のphotoUrl（権利確認済みの外部URLを管理者が手入力）が表示できるよう
+ // img-src 'self' data: のみだと外部写真が一切読み込めなかった（Codex独立レビュー指摘の回帰）。
+ // 他のディレクティブ（script-src等）は従来どおり'self'のみに限定されたままであることも確認する。
+ assert.match(html.headers.get('content-security-policy'),/img-src 'self' data: https:/);
+ assert.doesNotMatch(html.headers.get('content-security-policy'),/script-src 'self' [^;]*https:/,'script-srcは緩めない');
  assert.equal((await fetch(base+'/server.js')).status,404);assert.equal((await fetch(base+'/manifest.webmanifest')).status,200);assert.equal((await fetch(base+'/icon-192.png')).status,200);assert.equal((await req('instagram/cron')).status,401);assert.equal((await req('instagram/webhook','POST',{})).status,403);
 });
 test('未設定の公式APIは外部通信を行わない',async()=>{const c=createIntegrations();assert.equal(c.amazon.mode,'manual');await assert.rejects(c.amazon.fetchMetrics(),/手入力/);assert.throws(()=>createIntegrations({amazon:{}}),/adapter/);});
