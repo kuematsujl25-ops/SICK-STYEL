@@ -1,3 +1,4 @@
+import {assertMeetingRecordsRetained} from '../public/org-meeting-lifecycle.js';
 import {previewMeeting,confirmMeeting} from '../lib/meeting-confirmation.js';
 import {readTeam,writeTeam,taskPacket,TeamError} from '../lib/ai-team.js';
 import {runtime} from '../lib/runtime.js';
@@ -115,6 +116,7 @@ export default async function handler(req,res){
  if(route==='/api/data'&&req.method==='GET')return json(res,200,await revisionOf(store));
  if(route==='/api/data'&&req.method==='PUT'){
   const b=await body(req);const d=validate(b);if(!Number.isSafeInteger(b.revision)||b.revision<0)return json(res,400,{error:'更新バージョンが必要です'});
+  assertMeetingRecordsRetained(await revisionOf(store),d);
   await store.query('INSERT INTO ss_documents(name,body,revision) VALUES ($1,$2,0) ON CONFLICT(name) DO NOTHING',['workspace',JSON.stringify(empty())]);
   const rows=await store.query('UPDATE ss_documents SET body=$1,revision=revision+1 WHERE name=$2 AND revision=$3 RETURNING revision',[JSON.stringify(d),'workspace',b.revision]);if(!rows.length)return json(res,409,{error:'他の端末で更新されました。再読み込みしてから編集してください'});return json(res,200,{ok:true,revision:rows[0].revision});
  }
@@ -122,6 +124,7 @@ export default async function handler(req,res){
  if(route==='/api/restore'&&req.method==='POST'){
   const b=await body(req);if(b.version!==1)throw Error('対応していないバックアップです');const data=validate(b.data);
   if(!Number.isSafeInteger(b.revision))return json(res,400,{error:'現在の更新バージョンが必要です'});
+  assertMeetingRecordsRetained(await revisionOf(store),data);
   const result=await store.transaction([
    ['INSERT INTO ss_documents(name,body,revision) VALUES ($1,$2,0) ON CONFLICT(name) DO NOTHING',['workspace',JSON.stringify(empty())]],
    ['INSERT INTO ss_documents(name,body) SELECT $1,body FROM ss_documents WHERE name=$2 AND revision=$3 ON CONFLICT(name) DO UPDATE SET body=excluded.body,revision=ss_documents.revision+1',['before-restore','workspace',b.revision]],

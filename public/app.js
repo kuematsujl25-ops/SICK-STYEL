@@ -1,3 +1,4 @@
+import {hasOutstandingMeetings} from './org-meeting-lifecycle.js';
 import {confirmMeetingPlan} from './meeting-confirmation-ui.js';
 import {renderTeam,bindTeam} from './ai-team.js';
 import {mountNotifications} from './notifications.js';
@@ -345,6 +346,7 @@ function bind(){bindMetricsPages();if(section==='team')bindTeam({model:team,api,
  const oke=document.querySelector('#orgkpiend');if(oke)oke.onchange=()=>{orgKPIPeriod={...orgKPIPeriod,end:oke.value};render();};
  const newOrgBtn=document.querySelector('[data-neworg]');if(newOrgBtn)newOrgBtn.onclick=()=>orgEditor(null);
  const orgQ=document.querySelector('#orgsearch');if(orgQ){const search=e=>{if(e.isComposing)return;const start=orgQ.selectionStart,end=orgQ.selectionEnd;orgUI={...orgUI,q:orgQ.value};render();const next=document.querySelector('#orgsearch');next?.focus();next?.setSelectionRange(start,end);};orgQ.oninput=search;orgQ.oncompositionend=search;}
+ document.querySelectorAll('[data-restoreorg]').forEach(b=>b.onclick=async()=>{if(!confirm('削除済み団体を一覧へ戻します。会議は作成・取消せず、元の連携記録を保持します。復元しますか？'))return;b.disabled=true;try{await persist({...state,orgSales:state.orgSales.map(x=>x.id===b.dataset.restoreorg?{...x,deletedAt:null}:x)});toast('団体を復元しました。編集画面で会議の状態と取消を確認してください');}catch(e){toast(e.message);b.disabled=false;}});
  document.querySelectorAll('[data-editorg]').forEach(b=>b.onclick=()=>orgEditor(state.orgSales.find(x=>x.id===b.dataset.editorg)));
  const ccf=document.querySelector('#collectcategoryfilter');if(ccf)ccf.onchange=()=>{collectUI={...collectUI,category:ccf.value};render();};
  const csf=document.querySelector('#collectstatusfilter');if(csf)csf.onchange=()=>{collectUI={...collectUI,status:csf.value};render();};
@@ -423,7 +425,7 @@ function orgEditor(record){const d=document.querySelector('#editor');
   const next={...state,orgSales:record?state.orgSales.map(x=>x.id===record.id?row:x):[...state.orgSales,row]};
   await persist(next);
  }catch(err){const t=document.querySelector('#editerror');if(t)t.textContent=err.message;else toast(err.message);b.disabled=false;}};
- const del=document.querySelector('#delete');if(del)del.onclick=async()=>{if(!confirm('この団体を削除しますか？'))return;try{await persist({...state,orgSales:state.orgSales.map(x=>x.id===record.id?{...x,deletedAt:new Date().toISOString()}:x)});}catch(e){toast(e.message);}};
+ const del=document.querySelector('#delete');if(del)del.onclick=async()=>{if(hasOutstandingMeetings(record)){toast('会議が残っています。先にMTGを取消し、完了を確認してください。処理中・結果不明の場合は管理者へ確認してください');return;}if(!confirm('この団体を削除しますか？'))return;try{await persist({...state,orgSales:state.orgSales.map(x=>x.id===record.id?{...x,deletedAt:new Date().toISOString()}:x)});}catch(e){toast(e.message);}};
  const toTask=document.querySelector('#orgtotask');if(toTask)toTask.onclick=async()=>{try{
   const task={id:crypto.randomUUID(),title:'['+record.name+'] '+record.nextAction,assignee:record.assignee||'',due:record.nextDue||today(),priority:'中',status:'未着手',relatedOrg:record.name,relatedPlayer:'',relatedPost:'',nextAction:record.nextAction,notes:'',updatedAt:new Date().toISOString()};
   await persist({...state,staffTasks:[...state.staffTasks,task]});toast('担当タスクに追加しました');
