@@ -14,3 +14,14 @@ export function selectAmazonSales(status,metrics,currentMonth){
 }
 
 export function syncMessage(status){return status?.cache?.syncVerified?status.cache.warnings?.length?'同期を確認しました。一部の指標は未取得です。':'読み取り同期を確認しました。':'同期未検証です。未取得項目とエラーを確認してください。';}
+
+// Unknown status, incomplete pagination, and stale results cannot establish zero open orders.
+export function amazonOpenOrders(status){
+ const c=status?.cache,o=c?.orders;
+ if(!status?.connected||!o||c.error||c.ordersError||c.ordersTruncated||!Number.isFinite(Date.parse(c.ordersSyncedAt)))return null;
+ const known=['PENDING_AVAILABILITY','PENDING','UNSHIPPED','PARTIALLY_SHIPPED','SHIPPED','CANCELLED','UNFULFILLABLE'];
+ if(!o.counts||!Number.isInteger(o.total)||o.total<0)return null;
+ const entries=Object.entries(o.counts);
+ if(entries.some(([s,n])=>!known.includes(s)||!Number.isInteger(n)||n<0)||entries.reduce((sum,[,n])=>sum+n,0)!==o.total)return null;
+ return (o.counts.UNSHIPPED??0)+(o.counts.PARTIALLY_SHIPPED??0);
+}
