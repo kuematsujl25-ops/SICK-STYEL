@@ -18,3 +18,9 @@ test('Ads作成応答不明は再要求停止、取得先はHTTPS S3だけ、失
  const store=await setup(t);let requests=0;const fetcher=async(url)=>{if(String(url).includes('/auth/'))return Response.json({access_token:'mock'});if(String(url).endsWith('/v2/profiles'))return Response.json([{profileId:1,countryCode:'JP',currencyCode:'JPY',timezone:'Asia/Tokyo',accountInfo:{type:'seller'}}]);requests++;throw Error('network');};
  await withRuntime(env,async()=>{await assert.rejects(sync(store,{fetcher,now}),/結果が不明/);await assert.rejects(sync(store,{fetcher,now}),/結果確認/);assert.equal((await status(store)).lastSuccess,null);});assert.equal(requests,1);
 });
+
+test('Adsの明示的429拒否は待機後に再試行でき、通信結果不明とは区別する',async t=>{
+ const store=await setup(t);let requests=0;
+ const fetcher=async url=>{if(String(url).includes('/auth/'))return Response.json({access_token:'mock'});if(String(url).endsWith('/v2/profiles'))return Response.json([{profileId:1,countryCode:'JP',currencyCode:'JPY',timezone:'Asia/Tokyo',accountInfo:{type:'seller'}}]);requests++;return requests===1?new Response(null,{status:429}):Response.json({reportId:'retry-example'});};
+ await withRuntime(env,async()=>{await assert.rejects(sync(store,{fetcher,now}),/HTTP 429/);assert.equal((await status(store)).job,null);await assert.rejects(sync(store,{fetcher,now}),/再試行待ち/);assert.equal(requests,1);await sync(store,{fetcher,now:new Date(now.getTime()+61000)});assert.equal((await status(store)).job.status,'pending');assert.equal(requests,2);});
+});

@@ -19,8 +19,8 @@ export function normalizeReport(rows,{profileId,windowDays,start,end}){
 export async function sync(store,{fetcher=fetch,now=new Date()}={}){
  if(!configured())throw Error('Amazon Ads専用の認可・プロフィール設定が未完了です。SP-API認証は流用しません');
  await store.query('INSERT INTO ss_documents(name,body,revision) VALUES ($1,$2,0) ON CONFLICT(name) DO NOTHING',[NAME,JSON.stringify({rows:[],job:null,lastSuccess:null,error:null})]);
- let {state,revision}=await read(store);if(state.profileVerified&&state.profileVerified!==runtime().AMAZON_ADS_PROFILE_ID)throw Error('広告プロフィールが変わりました。既存データの移行確認が必要です');if(state.job?.status==='requesting'||state.job?.status==='uncertain')throw Error('前回のレポート要求の結果確認が必要です。再要求しません');
- const api=async(url,opts={})=>{const r=await fetcher(url,{...opts,redirect:'error',signal:AbortSignal.timeout(15000)});if(!r.ok)throw Error('Amazon Ads応答 '+r.status);return r;};
+ let {state,revision}=await read(store);if(state.retryAt&&Date.parse(state.retryAt)>now.getTime())throw Error('広告APIの再試行待ちです。しばらくしてから確認してください');if(state.profileVerified&&state.profileVerified!==runtime().AMAZON_ADS_PROFILE_ID)throw Error('広告プロフィールが変わりました。既存データの移行確認が必要です');if(state.job?.status==='requesting'||state.job?.status==='uncertain')throw Error('前回のレポート要求の結果確認が必要です。再要求しません');
+ const api=async(url,opts={})=>{const r=await fetcher(url,{...opts,redirect:'error',signal:AbortSignal.timeout(15000)});if(!r.ok)throw Object.assign(Error('Amazon Ads応答 '+r.status),{httpStatus:r.status});return r;};
  try{
   const tokens=await (await api('https://api.amazon.com/auth/o2/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({grant_type:'refresh_token',client_id:runtime().AMAZON_ADS_CLIENT_ID,client_secret:runtime().AMAZON_ADS_CLIENT_SECRET,refresh_token:runtime().AMAZON_ADS_REFRESH_TOKEN})})).json();
   if(!tokens.access_token)throw Error('Amazon Ads認証応答が不正です');
@@ -30,7 +30,7 @@ export async function sync(store,{fetcher=fetch,now=new Date()}={}){
   state.profileVerified=String(p.profileId);
   if(!state.job){const w=reportingWindow(now);state.job={...w,status:'requesting',windowDays:p.accountInfo.type==='seller'?7:14,profileId:String(p.profileId),requestId:randomUUID()};revision=await cas(store,revision,state);
    try{const b=await (await api(host+'/reporting/reports',{method:'POST',headers:{...headers,'Content-Type':'application/vnd.createasyncreportrequest.v3+json'},body:JSON.stringify({name:'SICKSTYLE daily SP',startDate:w.start,endDate:w.end,configuration:{adProduct:'SPONSORED_PRODUCTS',groupBy:['campaign'],columns:['date','campaignId','campaignName','cost','sales'+state.job.windowDays+'d'],reportTypeId:'spCampaigns',timeUnit:'DAILY',format:'GZIP_JSON'}})})).json();if(!b.reportId)throw Error('レポートID未取得');state.job.id=b.reportId;state.job.status='pending';await cas(store,revision,state);return status(store);}
-   catch{state.job.status='uncertain';state.error='レポート要求の結果が不明です。自動再要求を停止しました';await cas(store,revision,state);throw Error(state.error);}
+   catch(e){if([400,401,403,422,429].includes(e.httpStatus)){state.job=null;state.retryAt=new Date(now.getTime()+60000).toISOString();state.error='レポート要求が拒否されました（HTTP '+e.httpStatus+'）。設定・利用制限を確認し、1分以上空けて再試行してください';}else{state.job.status='uncertain';state.error='レポート要求の結果が不明です。自動再要求を停止しました';}await cas(store,revision,state);throw Error(state.error);}
   }
   if(state.job.profileId!==String(p.profileId))throw Error('広告プロフィールが変わりました。既存ジョブを確認してください');
   const report=await (await api(host+'/reporting/reports/'+encodeURIComponent(state.job.id),{headers})).json();
