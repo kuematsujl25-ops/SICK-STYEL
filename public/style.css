@@ -251,37 +251,29 @@ dialog::backdrop{background:#000b;backdrop-filter:blur(3px)}
 
 /* 選手調査カード：写真は権利確認済みURLのみ読み込む */
 .playerprofile{display:flex;align-items:flex-start;gap:14px;margin:12px 0}.playerprofile h3{margin:0}.playerprofile>div:last-child{min-width:0}.playerphoto{width:72px;height:88px;flex:0 0 72px;object-fit:cover;object-position:top center;border-radius:9px;background:var(--surface-3);border:1px solid var(--line-strong)}.playerplaceholder{display:flex;align-items:center;justify-content:center;font-size:25px;color:var(--silver-2)}@media(max-width:720px){.playerphoto{width:58px;height:72px;flex-basis:58px}}
-/* SICKSTYLE workspace: a black brand rail with a cool, readable working surface. */
-main:not(.auth),dialog{
- --bg:#eef2f6;--surface:#fff;--surface-2:#e9eff5;--surface-3:#dce6ee;
- --silver:#506879;--silver-2:#506879;--line:#cbd6e0;--line-strong:#8fa4b5;--text:#182e40;--text-2:#344f63;--muted:#506879;
- --danger:#9d302a;--danger-bg:#fff0ed;--ok:#176b59;--focus:#12619c;
- color:var(--text);color-scheme:light;
-}
-main:not(.auth){background:var(--bg)}
-main:not(.auth) .panel{box-shadow:0 2px 7px #19344a09;border-radius:10px;border-color:var(--line)}
-main:not(.auth) .panelhead{border-bottom:1px solid var(--line);padding-bottom:12px;margin-bottom:18px}
-main:not(.auth) .primary,dialog .primary{background:#174e75;color:white;border-color:#174e75;box-shadow:none}
-main:not(.auth) .primary:hover,dialog .primary:hover{background:#103c5c}
-main:not(.auth) .secondary,dialog .secondary{color:var(--text);border-color:var(--line-strong);background:var(--surface)}
-main:not(.auth) h1{letter-spacing:0;font-weight:800;color:#142b3e}
-main:not(.auth) .badge.ok,dialog .badge.ok{background:#e4f3ed;color:#155c4d;border-color:#88b8aa}
-main:not(.auth) .badge.warn,dialog .badge.warn{background:#fff1d7;color:#794900;border-color:#cea752}
-main:not(.auth) .metricmini{background:#edf3f8;padding:14px;border-radius:6px}
-main:not(.auth) .metricmini b{color:#174e75;font-variant-numeric:tabular-nums}
-main:not(.auth) .record{border-left:3px solid #497b9f}
-main:not(.auth) input,main:not(.auth) select,main:not(.auth) textarea,dialog input,dialog select,dialog textarea{background:white;color:var(--text);border-color:var(--line-strong)}
-main:not(.auth) code,dialog code{color:var(--text)}
-.notes-panel{margin-top:24px;padding:18px;background:#edf5f1;border-top:3px solid #527e70;color:#193d32}
-.notes-panel label{display:block;margin:12px 0}.notes-panel input:not([type=checkbox]),.notes-panel textarea{width:100%}.notes-panel textarea{min-height:100px}
+/* Preserve the original black / white / silver identity across the new workspace. */
+:root{--radius:10px}
+.pageheading{margin-bottom:24px}
+h1{font-weight:750;letter-spacing:-.025em}
+.panelhead{padding-bottom:12px;margin-bottom:16px;border-bottom:1px solid var(--line)}
+.stats article::before{height:1px;opacity:.8}
+.primary{font-weight:700}
+.secondary{border-color:var(--line-strong)}
+.metricmini b{font-variant-numeric:tabular-nums}
+.notes-panel{margin-top:24px;padding:18px;background:var(--surface-2);border:1px solid var(--line-strong);border-top:2px solid var(--silver);border-radius:8px;color:var(--text)}
+.notes-panel label{display:block;margin:12px 0}
+.notes-panel input:not([type=checkbox]),.notes-panel textarea{width:100%}
+.notes-panel textarea{min-height:100px}
 .note-body{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;line-height:1.8;max-height:320px;overflow:auto}
-.notes-panel blockquote{margin:12px 0;padding-left:12px;border-left:3px solid #73998b;overflow-wrap:anywhere}
+.notes-panel blockquote{margin:12px 0;padding-left:12px;border-left:2px solid var(--silver-2);overflow-wrap:anywhere;color:var(--text-2)}
 #meetingselect{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:16px;align-items:end}
-#meetingselect select{width:100%} main:not(.auth) details>summary,dialog details>summary{min-height:44px;cursor:pointer;padding:8px 0}
-@media(max-width:720px){#meetingselect{grid-template-columns:minmax(0,1fr)}.notes-panel{padding:12px}.dialogactions{flex-wrap:wrap}main:not(.auth) .record{padding:16px}}
-
-/* Match fixed dark surfaces and white-only metrics to the scoped light workspace. */
-main:not(.auth) header{background:rgba(255,255,255,.96)}
-main:not(.auth) .stats strong,main:not(.auth) .source.api,main:not(.auth) .guide b{color:var(--text)}
-main:not(.auth) .bar.today{background:#174e75}
-main:not(.auth) .identity{--text-2:#c4c4c9;--muted:#9a9aa1;--surface-3:#26262a}
+#meetingselect select{width:100%}
+main:not(.auth) details>summary,dialog details>summary{min-height:44px;cursor:pointer;padding:8px 0}
+@media(max-width:720px){
+ #meetingselect{grid-template-columns:minmax(0,1fr)}
+ .notes-panel{padding:14px}
+ .dialogactions{flex-wrap:wrap}
+ main:not(.auth) .record{padding:16px}
+ h1{font-size:25px}
+ .panelhead{gap:12px}
+}
