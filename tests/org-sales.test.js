@@ -105,6 +105,13 @@ test('同期済みMTGは「日程を同期し直す」「MTGを取消」を表�
   assert.doesNotMatch(html, /data-mtgsync="initial:create"/);
 });
 
+test('zoom_only（Zoom作成済み・カレンダー未登録）の会議は「再試行する」で同期を再開でき、取消しか選べない状態にならない（Codex独立レビュー指摘の回帰）', () => {
+  const zoomOnly = org({ id: 'o1', initialZoomAt: '2026-10-28T14:00', initialMeetingSync: { requestId: 'r1', zoomMeetingId: 'z1', calendarEventId: null, status: 'zoom_only', error: null, updatedAt: '2026-10-21T00:00:00.000Z' } });
+  const html = renderOrgEditor(zoomOnly, esc, '2026-10-21', { zoomConnected: true, calendarConnected: true });
+  assert.match(html, /data-mtgsync="initial:create"/, 'zoom_onlyでも再試行（カレンダー登録の再開）ボタンが表示される');
+  assert.match(html, /data-mtgsync="initial:cancel"/);
+});
+
 test('cohort month uses JST, not UTC, for grouping the first history entry (Codex独立レビュー指摘の回帰)', () => {
   // 2026-11-01 08:00 JST = 2026-10-31 23:00 UTC。UTCのまま月を切り出すと「2026-10」に誤分類される。
   const o = org({ history: [{ stage: 'DM送信', at: '2026-10-31T23:00:00.000Z', note: '' }] });

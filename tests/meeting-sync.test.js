@@ -229,6 +229,38 @@ test('カレンダー作成の外部呼び出し中に無関係な別の編集�
  assert.notEqual(finalDoc.orgSales[0].initialMeetingSync.status,'creating','statusが作成中のまま固着していない（以後の操作がブロックされない）');
 });
 
+test('カレンダー作成の外部呼び出し中に、同じ団体のMTG日時そのものが別編集で変更された場合は、古い日時の成功を「同期済み」として保存しない（Codex指摘の回帰）',async t=>{
+ const env={...process.env};process.env.ZOOM_CLIENT_ID='c';process.env.ZOOM_CLIENT_SECRET='s';process.env.GOOGLE_CLIENT_ID='c';process.env.GOOGLE_CLIENT_SECRET='s';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-meeting-input-changed-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
+ t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
+ const org={...newOrg(),id:'org-1',name:'FC Example',updatedAt:new Date().toISOString(),deletedAt:null,history:[{stage:'DM送信',at:new Date().toISOString(),note:''}],initialZoomAt:'2026-10-28T14:00'};
+ const revision=await seed(store,org);
+ global.fetch=fakeFetch({calendarFails:true});
+ const created=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision});
+ assert.equal(created.org.initialMeetingSync.calendarEventId,null);
+ // カレンダー作成の再試行中、Googleへのリクエストが返ってくる直前に、別の操作がこの団体自身のMTG日時を
+ // 変更したとする（同期対象の入力そのものが途中で変わった、Codexが指摘したケース）。
+ const okFetch=fakeFetch({});
+ global.fetch=async(u,o)=>{
+  if(String(u).includes('/calendar/v3/calendars/primary/events')&&o?.method==='POST'){
+   const doc=await store.doc('workspace');const data=JSON.parse(doc.body);
+   data.orgSales[0].initialZoomAt='2026-11-05T10:00'; // 日時そのものを変更
+   await store.query('UPDATE ss_documents SET body=$1,revision=revision+1 WHERE name=$2 AND revision=$3',[JSON.stringify(data),'workspace',doc.revision]);
+  }
+  return okFetch(u,o);
+ };
+ // このケースはgoogleカレンダー新規作成の直前に日時が変わるため、既存のcatch(カレンダー登録失敗)経路に
+ // guardの拒否理由が合流し、最終的に status:'error'（'synced'ではない）として明示的なエラーメッセージ付きで
+ // 保存される。例外を投げっぱなしにするよりも、既存のUI（再試行ボタン・エラー文言表示）にそのまま乗る。
+ const retried=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision:created.revision});
+ assert.notEqual(retried.org.initialMeetingSync.status,'synced','「同期済み」として誤って記録されていない（古い日時の成功を真実として保存しない）');
+ assert.match(retried.org.initialMeetingSync.error,/変更したため、今回の同期結果は保存しませんでした/);
+ assert.ok(retried.org.initialMeetingSync.zoomMeetingId,'Zoom会議のIDは保持され、再試行時に重複作成されない');
+ const finalOrg=JSON.parse((await store.doc('workspace')).body).orgSales[0];
+ assert.notEqual(finalOrg.initialMeetingSync.status,'synced','「同期済み」として誤って記録されていない');
+ assert.equal(finalOrg.initialZoomAt,'2026-11-05T10:00','変更後の日時そのものは失われていない');
+});
+
 test('同じ更新番号の2重送信で外部Zoom会議は1件しか作成しない',async t=>{
  const env={...process.env};process.env.ZOOM_CLIENT_ID='c';process.env.ZOOM_CLIENT_SECRET='s';process.env.GOOGLE_CLIENT_ID='c';process.env.GOOGLE_CLIENT_SECRET='s';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
  const dir=await mkdtemp(path.join(tmpdir(),'ss-meeting-concurrent-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
