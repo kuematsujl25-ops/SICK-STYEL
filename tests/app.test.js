@@ -4,6 +4,8 @@ import { spawn } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import {newOrg} from '../public/org-sales.js';
+import {importNote} from '../lib/meeting-notes.js';
 import { createIntegrations } from '../integrations/index.js';
 
 test('管理者登録・認証・業務データ保存・復元・永続化', async t=>{
@@ -78,6 +80,16 @@ test('管理者登録・認証・業務データ保存・復元・永続化', as
  // 他のディレクティブ（script-src等）は従来どおり'self'のみに限定されたままであることも確認する。
  assert.match(html.headers.get('content-security-policy'),/img-src 'self' data: https:/);
  assert.doesNotMatch(html.headers.get('content-security-policy'),/script-src 'self' [^;]*https:/,'script-srcは緩めない');
+ // Explicit backup restoration can recover notes, but ordinary PUT cannot forge note history.
+ const current=(await req('data')).data;
+ const noteOrg=importNote({...newOrg(),id:'restore-example',name:'Example Group'},{kind:'initial',source:'https://app.notta.ai/example/restore',body:'試用人数は3人で確定です。',meetingAt:'2026-12-01T10:00',consentConfirmed:true}).org;
+ const noteData={...current,orgSales:[noteOrg]};assert.equal((await req('data','PUT',noteData)).status,400);
+ assert.equal((await req('restore','POST',{version:1,data:noteData,revision:current.revision})).status,200);
+ const recovered=(await req('data')).data;assert.deepEqual(recovered.orgSales[0].meetingNotes,noteOrg.meetingNotes);
+ const forged=structuredClone(recovered);forged.orgSales[0].meetingNotes[0].history=[null];assert.equal((await req('restore','POST',{version:1,data:forged,revision:recovered.revision})).status,400);
+ assert.deepEqual((await req('data')).data,recovered);
+ const altered=structuredClone(recovered);altered.orgSales[0].meetingNotes[0].body='Changed';assert.equal((await req('data','PUT',altered)).status,400);
+ assert.deepEqual((await req('backup')).data.data.orgSales[0].meetingNotes,noteOrg.meetingNotes);
  assert.equal((await fetch(base+'/server.js')).status,404);assert.equal((await fetch(base+'/manifest.webmanifest')).status,200);assert.equal((await fetch(base+'/icon-192.png')).status,200);assert.equal((await req('instagram/cron')).status,401);assert.equal((await req('instagram/webhook','POST',{})).status,403);
 });
 test('未設定の公式APIは外部通信を行わない',async()=>{const c=createIntegrations();assert.equal(c.amazon.mode,'manual');await assert.rejects(c.amazon.fetchMetrics(),/手入力/);assert.throws(()=>createIntegrations({amazon:{}}),/adapter/);});

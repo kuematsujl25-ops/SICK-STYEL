@@ -7,7 +7,7 @@ export const ORG_ALL_STAGES=[...ORG_STAGES,...ORG_SIDE_STAGES];
 export const ORG_PHASES=[['DM','DM送信'],['ZOOM','初回ZOOM予約','初回ZOOM実施'],['サンプル','サンプル発送','到着確認'],['試用','試用確認'],['活用法提案ZOOM','活用法提案ZOOM予約','活用法提案ZOOM実施'],['導入','有償導入','継続購入']];
 export const ORG_STAFF=['入戸野','竹田','植松'];
 
-export const newOrg=()=>({category:'',size:'',assignee:'',contact:'',stage:'DM送信',
+export const newOrg=()=>({partyType:'organization',category:'',size:'',assignee:'',contact:'',stage:'DM送信',
  sampleQty:null,sampleCost:null,shippingCost:null,trialUsers:null,feedback:'',proposal:'',
  initialMeetingContent:'初回ZOOM',proposalMeetingContent:'活用法提案ZOOM',initialZoomAt:'',initialZoomUrl:'',proposalZoomAt:'',proposalZoomUrl:'',initialMeetingSync:null,proposalMeetingSync:null,
  paidQty:null,paidRevenue:null,paidCost:null,lostReason:'',nextAction:'',nextDue:'',notes:'',history:[]});
@@ -41,7 +41,7 @@ function orgRow(o,esc,today){
  const stalled=isStalled(o,today);
  const stageIndex=ORG_PHASES.findIndex(([, ...stages])=>stages.includes(o.stage));
  const step=stageIndex<0?o.stage:ORG_PHASES[stageIndex][0];
- return `<div class="listrow" data-search="${esc(orgSearchHay(o))}"><div class="grow"><b>${esc(o.name)}</b><small>${esc(o.category||'未入力')} · 担当${esc(o.assignee||'未設定')}${o.nextAction?' · 次: '+esc(o.nextAction)+(o.nextDue?'（'+esc(o.nextDue)+'）':''):''}${late?' · 期限超過':''}${stalled?' · 停滞中（'+STALLED_DAYS+'日以上動きなし）':''}</small><small>営業フェーズ: ${esc(step)}</small></div><span class="badge ${ORG_SIDE_STAGES.includes(o.stage)?'warn':'ok'}">${esc(o.stage)}</span>${stalled?'<span class="badge warn">停滞</span>':''}<button data-editorg="${esc(o.id)}">編集</button></div>`;
+ return `<div class="listrow" data-search="${esc(orgSearchHay(o))}"><div class="grow"><b>${o.partyType==='oem'?'OEM：':'団体：'}${esc(o.name)}</b><small>${esc(o.category||'未入力')} · 担当${esc(o.assignee||'未設定')}${o.nextAction?' · 次: '+esc(o.nextAction)+(o.nextDue?'（'+esc(o.nextDue)+'）':''):''}${late?' · 期限超過':''}${stalled?' · 停滞中（'+STALLED_DAYS+'日以上動きなし）':''}</small><small>営業フェーズ: ${esc(step)}</small></div><span class="badge ${ORG_SIDE_STAGES.includes(o.stage)?'warn':'ok'}">${esc(o.stage)}</span>${stalled?'<span class="badge warn">停滞</span>':''}<button data-editorg="${esc(o.id)}">編集</button></div>`;
 }
 
 export function renderOrgList(orgs,ui,esc,today){
@@ -116,7 +116,7 @@ export function renderOrgEditor(org,esc,today,autoSync){
  const hist=[...(o.history||[])].reverse();
  return `<form id="orgform"><div class="panelhead"><h2>団体を${org?.id?'編集':'追加'}</h2><button type="button" id="close" aria-label="閉じる">✕</button></div>
  <div class="formfields">
- <label>団体名<input name="name" required maxlength="200" value="${esc(o.name)}"></label>
+ <label>対象区分<select name="partyType"><option value="organization" ${o.partyType!=='oem'?'selected':''}>団体</option><option value="oem" ${o.partyType==='oem'?'selected':''}>OEM先</option></select></label><label>団体・OEM先名<input name="name" required maxlength="200" value="${esc(o.name)}"></label>
  <label>競技・カテゴリ<input name="category" maxlength="200" value="${esc(o.category)}"></label>
  <label>規模<input name="size" maxlength="200" value="${esc(o.size)}"></label>
  <label>担当<select name="assignee"><option value="" ${!o.assignee?'selected':''}>未設定</option>${ORG_STAFF.map(s=>`<option value="${s}" ${o.assignee===s?'selected':''}>${s}</option>`).join('')}</select></label>
@@ -127,7 +127,7 @@ export function renderOrgEditor(org,esc,today,autoSync){
  <label>サンプル数量<input name="sampleQty" type="number" min="0" step="1" value="${o.sampleQty??''}"></label>
  <label>サンプル原価（円）<input name="sampleCost" type="number" min="0" step="1" value="${o.sampleCost??''}"></label>
  <label>送料（円）<input name="shippingCost" type="number" min="0" step="1" value="${o.shippingCost??''}"></label>
- <label>試用人数<input name="trialUsers" type="number" min="0" step="1" value="${o.trialUsers??''}"></label>
+ ${[ ["desiredQty","希望数"],["proposedQty","提案数"],["confirmedQty","確定導入数"] ].map(([f,l])=>`<label>${l}（個）<input name="${f}" type="number" min="0" step="1" value="${o[f]??''}"></label>`).join('')}<label>試用人数<input name="trialUsers" type="number" min="0" step="1" value="${o.trialUsers??''}"></label>
  <label>感想<textarea name="feedback" maxlength="2000">${esc(o.feedback)}</textarea></label>
  <label>提案内容<textarea name="proposal" maxlength="2000">${esc(o.proposal)}</textarea></label>
  <label>導入数量<input name="paidQty" type="number" min="0" step="1" value="${o.paidQty??''}"></label>
