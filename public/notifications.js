@@ -6,6 +6,19 @@ async function api(path,method='GET',data){
  const body=await r.json();if(!r.ok)throw Error(body.error||'通知設定に失敗しました');return body;
 }
 function localTime(s){return new Date(s).toLocaleString('ja-JP',{timeZone:'Asia/Tokyo'});}
+// 「9時 今日の予定」通知は、本文で「詳細はアプリで確認してください」と案内しているが、サーバー側が
+// detailに保存しているGoogle予定・担当タスク・団体商談の一覧を、通知履歴のどこにも表示していなかった
+// （Codex独立レビュー指摘）。ここで実際に一覧表示する。
+function morningDetailHtml(detail){
+ if(!detail)return '';
+ const list=(labels,empty)=>labels.length?'<ul>'+labels.map(s=>'<li>'+escapeHtml(s)+'</li>').join('')+'</ul>':'<p class="note">'+escapeHtml(empty)+'</p>';
+ return '<details><summary>予定の内訳を見る</summary>'+
+  '<p class="note">Googleカレンダー（'+(detail.googleConnected?detail.calendarEvents.length+'件':'未接続')+'）</p>'+
+  (detail.googleConnected?list(detail.calendarEvents.map(e=>e.title+(e.start?`（${e.start}）`:'')),'本日の予定はありません'):'')+
+  '<p class="note">担当タスク（'+detail.tasks.length+'件）</p>'+list(detail.tasks.map(t=>t.title),'本日期限のタスクはありません')+
+  '<p class="note">団体商談（'+detail.meetings.length+'件）</p>'+list(detail.meetings.map(m=>m.name),'本日のMTG予定はありません')+
+  '</details>';
+}
 // Service Workerの登録・有効化が失敗/保留のままだと navigator.serviceWorker.ready が解決しないことがある
 // （端末のブラウザー設定やネットワーク事情による）。通知履歴の表示はプッシュ登録状態に依存しないため、
 // ここで必ずタイムアウトして「この端末ではプッシュ通知が利用できない」側に倒し、履歴表示自体を止めない。
@@ -27,7 +40,7 @@ export async function mountNotifications(){
   '<p class="note">通知の状態：'+(current?'この端末で登録済み':permission==='denied'?'通知が拒否されています（端末の設定から許可してください）':!supports?'この表示環境ではプッシュ通知が利用できません':!status.configured?'配信用キーの本番設定待ち':'端末で未登録')+
   ' ／ 登録端末数：'+status.devices+'</p>'+
   '<h3>通知履歴</h3><div class="records">'+(inbox.items.length?inbox.items.map(x=>
-  '<article class="record"><b>'+escapeHtml(x.title)+'</b><p>'+escapeHtml(x.body)+'</p><small>'+escapeHtml(localTime(x.createdAt))+(x.readAt?' · 確認済み':' · 未確認')+'</small><div class="actions">'+(x.readAt?'':'<button class="secondary" data-notification-read="'+escapeHtml(x.id)+'">確認済みにする</button>')+'</div></article>').join(''):'<p class="note">通知はまだありません。通知先を登録して予定時刻を迎えると、ここに履歴が保存されます。</p>')+'</div>';
+  '<article class="record"><b>'+escapeHtml(x.title)+'</b><p>'+escapeHtml(x.body)+'</p>'+(x.kind==='morning'?morningDetailHtml(x.detail):'')+'<small>'+escapeHtml(localTime(x.createdAt))+(x.readAt?' · 確認済み':' · 未確認')+'</small><div class="actions">'+(x.readAt?'':'<button class="secondary" data-notification-read="'+escapeHtml(x.id)+'">確認済みにする</button>')+'</div></article>').join(''):'<p class="note">通知はまだありません。通知先を登録して予定時刻を迎えると、ここに履歴が保存されます。</p>')+'</div>';
  const enable=ref.querySelector('#notification-enable');
  if(enable)enable.onclick=async()=>{
   // Must be initiated by the person's click; never auto-prompt.
