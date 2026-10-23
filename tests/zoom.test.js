@@ -165,6 +165,25 @@ test('Zoomのエラー応答を403/429のヒント付きで分類する',async t
  await assert.rejects(createMeeting(store,{topic:'t',startIso:'2026-10-28T05:00:00.000Z',durationMin:45}),e=>{assert.ok(e instanceof ZoomError);assert.match(e.message,/呼び出し上限/);return true;});
 });
 
+test('会議作成がHTTP成功応答を返したのに本文を読み取れない場合、確定失敗ではなく専用のresponse_body_unreadableとして区別する（Codex独立レビュー指摘の回帰：区別しないと、実際には作成済みの会議が再試行で重複作成される）',async t=>{
+ const env={...process.env};process.env.ZOOM_CLIENT_ID='c';process.env.ZOOM_CLIENT_SECRET='s';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-zoom-body-unreadable-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
+ t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
+ global.fetch=async(url,options)=>{const u=new URL(url);
+  if(u.pathname==='/oauth/token')return Response.json({access_token:'a',refresh_token:'r',scope:'meeting:write:meeting meeting:update:meeting meeting:delete:meeting user:read:user'});
+  if(u.pathname==='/v2/users/me')return Response.json({id:'u1',email:'owner@example.com'});
+  // HTTPとしては成功（2xx）だが、本文が壊れていてresponse.json()が失敗する状況を再現する
+  // （Zoomは会議を作成済みの可能性が高い）。
+  if(u.pathname==='/v2/users/me/meetings')return new Response('{not valid json',{status:201,headers:{'Content-Type':'application/json'}});
+  return new Response(null,{status:404});
+ };
+ const url=new URL(await begin(store,'s'));const cb=new URL('http://localhost/api/zoom/callback?code=c&state='+url.searchParams.get('state'));
+ await connect(store,'s',cb);
+ await assert.rejects(createMeeting(store,{topic:'t',startIso:'2026-10-28T05:00:00.000Z',durationMin:45}),e=>{
+  assert.ok(e instanceof ZoomError);assert.equal(e.code,'response_body_unreadable');assert.match(e.message,/作成されている可能性があります/);return true;
+ });
+});
+
 test('Zoomがエラー応答に任意の文字列を返してもOAuthログの例外に転記しない',async t=>{
  const original={...process.env},originalFetch=global.fetch;
  process.env.ZOOM_CLIENT_ID='client-test';process.env.ZOOM_CLIENT_SECRET='secret-test';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');

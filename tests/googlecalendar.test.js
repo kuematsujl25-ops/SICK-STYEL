@@ -65,3 +65,21 @@ test('Googleのエラー応答を401/403/429のヒント付きで分類する',a
  await connect(store,'s',cb);
  await assert.rejects(createEvent(store,{summary:'t',description:'',location:'',startIso:'2026-10-28T05:00:00.000Z',endIso:'2026-10-28T05:45:00.000Z'}),e=>{assert.ok(e instanceof GoogleCalendarError);assert.match(e.message,/権限不足/);return true;});
 });
+
+test('予定作成がHTTP成功応答を返したのに本文を読み取れない場合、確定失敗ではなく専用のresponse_body_unreadableとして区別する（Codex独立レビュー指摘の回帰：区別しないと、実際には作成済みの予定が再試行で重複作成される）',async t=>{
+ const env={...process.env};process.env.GOOGLE_CLIENT_ID='c';process.env.GOOGLE_CLIENT_SECRET='s';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-gcal-body-unreadable-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
+ t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
+ global.fetch=async(url,options)=>{const u=new URL(url);
+  if(u.pathname==='/token')return Response.json({access_token:'a',refresh_token:'r'});
+  // HTTPとしては成功（2xx）だが、本文が壊れていてresponse.json()が失敗する状況を再現する
+  // （Googleは予定を作成済みの可能性が高い）。
+  if(u.pathname==='/calendar/v3/calendars/primary/events'&&options.method==='POST')return new Response('{not valid json',{status:200,headers:{'Content-Type':'application/json'}});
+  return new Response(null,{status:404});
+ };
+ const url=new URL(await begin(store,'s'));const cb=new URL('http://localhost/api/googlecalendar/callback?code=c&state='+url.searchParams.get('state'));
+ await connect(store,'s',cb);
+ await assert.rejects(createEvent(store,{summary:'t',description:'',location:'',startIso:'2026-10-28T05:00:00.000Z',endIso:'2026-10-28T05:45:00.000Z'}),e=>{
+  assert.ok(e instanceof GoogleCalendarError);assert.equal(e.code,'response_body_unreadable');assert.match(e.message,/作成されている可能性があります/);return true;
+ });
+});
