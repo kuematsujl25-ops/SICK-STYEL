@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,rm} from 'node:fs/promises';
+import {mkdtemp,rm,readFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {randomBytes} from 'node:crypto';
@@ -9,6 +9,16 @@ import {withRuntime} from '../lib/runtime.js';
 import {scheduledKind,reportFor,runReport,listNotifications,emit,aiUpdated,subscribe,unsubscribe,status,markRead} from '../lib/notifications.js';
 import {validateSubscription,pushRequest,base64url,unbase64url} from '../lib/web-push.js';
 import {empty} from '../lib/domain.js';
+
+// 回帰確認: navigator.serviceWorker.ready はSW登録が失敗・保留のままだと永久に解決しないことがある
+// （実機テストで確認: サンドボックス環境でSW登録が失敗すると、通知履歴パネルが「読み込み中…」のまま固まった）。
+// 通知履歴の表示はプッシュ登録の状態に依存しないため、必ずタイムアウトで打ち切り、履歴表示自体をブロックしない。
+test('public/notifications.js never awaits navigator.serviceWorker.ready without a timeout guard (would hang the whole history panel if SW registration stalls)',async()=>{
+ const src=await readFile(new URL('../public/notifications.js',import.meta.url),'utf8');
+ const bareAwaits=[...src.matchAll(/await\s+(?:navigator\.serviceWorker\.ready|\w+\.pushManager\.getSubscription\(\))/g)];
+ for(const m of bareAwaits)assert.match(src.slice(Math.max(0,m.index-40),m.index),/withTimeout\($/,'bare await (no withTimeout wrapper) at: '+m[0]);
+ assert.match(src,/withTimeout\s*=\s*\(p,ms\)=>Promise\.race/,'withTimeout helper must exist');
+});
 
 const jst='2026-10-23T00:00:00.000Z';
 test('cron times map to 09:00/20:00/22:00 JST, existing 09:10 sync is untouched',()=>{
