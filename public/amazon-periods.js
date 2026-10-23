@@ -36,9 +36,13 @@ export function dailyRowsForMonth(c,metrics,targetMonth){
  const apiByDate=new Map((c?.dailyHistory||[]).filter(x=>x.date.startsWith(targetMonth)).map(x=>[x.date,x]));
  const manualByDate=new Map((metrics||[]).filter(m=>m.date.startsWith(targetMonth)).map(m=>[m.date,m]));
  const dates=new Set([...apiByDate.keys(),...manualByDate.keys()]);
+ // APIの履歴行は存在するが売上がnull（例: 取得できなかった日・非JPY通貨の除外等）のことがあり、その場合は
+ // 手入力/CSVの値があればそちらを優先する。「行がある＝API値を信頼してよい」ではない（Codex独立レビュー指摘。
+ // todaySalesInfo()は既に同じ優先順位で正しく判定しており、ここを合わせる）。
  return [...dates].sort().map(date=>{
-  const a=apiByDate.get(date);if(a)return {date,value:a.sales,source:'api'};
-  const m=manualByDate.get(date);return {date,value:m&&Number.isFinite(m.sales)?m.sales:null,source:m?'manual':'missing'};
+  const a=apiByDate.get(date);if(a&&typeof a.sales==='number')return {date,value:a.sales,source:'api'};
+  const m=manualByDate.get(date);if(m&&Number.isFinite(m.sales))return {date,value:m.sales,source:'manual'};
+  return {date,value:null,source:a?'api_partial':'missing'};
  });
 }
 // 月の合計は「API日次履歴 ∪ 手入力/CSV」の日別マージ（dailyRowsForMonthと同じ基準）で求める。
