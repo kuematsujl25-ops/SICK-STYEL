@@ -118,3 +118,59 @@ test('片側だけ残る取消は対象サービスだけ認可確認し、切�
  assert.equal(calls.slice(secondStart).some(c=>c.path.startsWith('/v2/')),false);
  assert.equal(calls.slice(secondStart).filter(c=>c.method==='DELETE'&&c.path.endsWith('/events/remaining')).length,1);
 });
+
+test('指定所要時間を保存・再読込し、確認画面とZoom/Calendar作成・更新で一致させる',async t=>{
+ const {store,calls}=await setup(t);
+ const data=JSON.parse((await store.doc('workspace')).body);
+ data.orgSales[0].initialMeetingDurationMin=75;
+ const [row]=await store.put('workspace',validate(data));
+ let input={orgId:'example',kind:'initial',action:'prepare',revision:row.revision};
+ let plan=await previewMeeting(store,input,policy);assert.equal(plan.duration,75);
+ let result=await confirmMeeting(store,{...input,confirmation:plan.confirmation},policy);
+ assert.equal(JSON.parse(calls.find(c=>c.path==='/v2/users/me/meetings').body).duration,75);
+ input={...input,action:'create',revision:result.revision};plan=await previewMeeting(store,input,policy);
+ result=await confirmMeeting(store,{...input,confirmation:plan.confirmation},policy);
+ const event=JSON.parse(calls.find(c=>c.path.endsWith('/events')&&c.method==='POST').body);
+ assert.equal(Date.parse(event.end.dateTime)-Date.parse(event.start.dateTime),75*60000);
+ assert.equal(event.location,'https://zoom.us/j/123');
+ const changed=JSON.parse((await store.doc('workspace')).body);changed.orgSales[0].initialMeetingDurationMin=30;
+ const [updated]=await store.put('workspace',validate(changed));
+ input={...input,action:'update',revision:updated.revision};plan=await previewMeeting(store,input,policy);assert.equal(plan.duration,30);
+ result=await confirmMeeting(store,{...input,confirmation:plan.confirmation},policy);
+ const patches=calls.filter(c=>c.method==='PATCH');
+ assert.equal(JSON.parse(patches.filter(c=>c.path.startsWith('/v2/')).at(-1).body).duration,30);
+ const change=JSON.parse(patches.filter(c=>c.path.includes('/events/')).at(-1).body);
+ assert.equal(Date.parse(change.end.dateTime)-Date.parse(change.start.dateTime),30*60000);
+ assert.equal(result.org.initialMeetingSync.status,'synced');
+});
+
+test('所要時間の既定値・境界値と不正値を検証し既存履歴を保持する',async t=>{
+ const {store,revision}=await setup(t);
+ const data=JSON.parse((await store.doc('workspace')).body);
+ assert.equal((await previewMeeting(store,{orgId:'example',kind:'initial',action:'prepare',revision},policy)).duration,45);
+ for(const kind of ['initial','proposal']){
+  for(const value of [1,1440]){const d=structuredClone(data);d.orgSales[0][kind+'MeetingDurationMin']=value;assert.deepEqual(validate(d),d);}
+  for(const value of [0,-1,1441,1.5,'30',null,NaN,Infinity]){const d=structuredClone(data);d.orgSales[0][kind+'MeetingDurationMin']=value;assert.throws(()=>validate(d),/形式/);}
+ }
+});
+
+test('同期中の所要時間変更は成功扱いせず、既存IDと最新入力を保持して復旧する',async t=>{
+ const {store,calls,revision}=await setup(t);
+ let input={orgId:'example',kind:'initial',action:'prepare',revision};
+ let plan=await previewMeeting(store,input,policy);let result=await confirmMeeting(store,{...input,confirmation:plan.confirmation},policy);
+ const mock=global.fetch;let changed=false;
+ global.fetch=async(url,opts={})=>{
+  if(opts.method==='PATCH'&&!changed){changed=true;const d=JSON.parse((await store.doc('workspace')).body);d.orgSales[0].initialMeetingDurationMin=60;await store.put('workspace',validate(d));}
+  return mock(url,opts);
+ };
+ input={...input,action:'create',revision:result.revision};plan=await previewMeeting(store,input,policy);
+ result=await confirmMeeting(store,{...input,confirmation:plan.confirmation},policy);
+ assert.equal(result.partial,true);assert.match(result.warnings.join(' / '),/変更/);
+ const saved=JSON.parse((await store.doc('workspace')).body).orgSales[0];
+ assert.equal(saved.initialMeetingDurationMin,60);assert.equal(saved.initialMeetingSync.status,'error');assert.ok(saved.initialMeetingSync.calendarEventId);assert.ok(saved.initialMeetingSync.zoomMeetingId);
+ const row=await store.doc('workspace');input={...input,revision:row.revision};plan=await previewMeeting(store,input,policy);
+ result=await confirmMeeting(store,{...input,confirmation:plan.confirmation},policy);
+ assert.equal(result.org.initialMeetingSync.status,'synced');
+ assert.equal(calls.filter(c=>c.path.endsWith('/events')&&c.method==='POST').length,1);
+ assert.equal(calls.filter(c=>c.path==='/v2/users/me/meetings'&&c.method==='POST').length,1);
+});

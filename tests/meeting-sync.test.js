@@ -1,3 +1,4 @@
+import {renderMeetingEditor} from '../public/meetings.js';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
@@ -7,7 +8,7 @@ import {randomBytes} from 'node:crypto';
 import {createStore} from '../lib/store.js';
 import {encrypt} from '../lib/security.js';
 import {empty,validate} from '../lib/domain.js';
-import {newOrg,renderOrgEditor} from '../public/org-sales.js';
+import {newOrg} from '../public/org-sales.js';
 import {syncMeeting} from '../lib/meeting-sync.js';
 
 async function seed(store,org){
@@ -552,7 +553,7 @@ test('カレンダー予定の新規作成がタイムアウト等の通信失�
  assert.equal(result.org.initialMeetingSync.calendarEventId,null,'カレンダー予定は実際の作成が確認できないためIDを持たない');
  assert.match(result.warnings.join(' / '),/予定が実際に作成されたか不明/);
  // uncertain状態はpublic/org-sales.jsで通常の「再試行する」ボタン対象に含まれない（無言の重複作成防止）。
- const html=renderOrgEditor(result.org,x=>String(x),'2026-10-21',{zoomConnected:true,calendarConnected:true});
+ const html=renderMeetingEditor(result.org,'initial',x=>String(x),{zoomConnected:true,calendarConnected:true});
  assert.doesNotMatch(html,/data-mtgsync="initial:create"/);
  assert.match(html,/data-mtgsync="initial:cancel"/);
 });
@@ -568,7 +569,7 @@ test('Googleトークン更新（予定作成リクエストより前の段階�
  assert.equal(result.org.initialMeetingSync.status,'error','予定作成リクエスト自体が送られていないため、uncertainではなく確定失敗として記録される');
  assert.ok(result.org.initialMeetingSync.zoomMeetingId,'Zoom会議は作成済みのため、そのIDは保持される');
  // uncertainではないため、サーバー側のuncertain専用ガードに拒否されず、通常の再試行（「再試行する」ボタン対象）が進む。
- const html=renderOrgEditor(result.org,x=>String(x),'2026-10-21',{zoomConnected:true,calendarConnected:true});
+ const html=renderMeetingEditor(result.org,'initial',x=>String(x),{zoomConnected:true,calendarConnected:true});
  assert.match(html,/data-mtgsync="initial:create"/,'uncertainではないため通常の再試行ボタンが表示される');
  global.fetch=fakeFetch({});
  const latest=await store.doc('workspace');

@@ -5,7 +5,6 @@ export const ORG_STAGES=['DM送信','初回ZOOM予約','初回ZOOM実施','サ�
 export const ORG_SIDE_STAGES=['返信待ち','保留','失注','連絡不要'];
 export const ORG_ALL_STAGES=[...ORG_STAGES,...ORG_SIDE_STAGES];
 export const ORG_PHASES=[['DM','DM送信'],['ZOOM','初回ZOOM予約','初回ZOOM実施'],['サンプル','サンプル発送','到着確認'],['試用','試用確認'],['活用法提案ZOOM','活用法提案ZOOM予約','活用法提案ZOOM実施'],['導入','有償導入','継続購入']];
-import {googleCalendarDraft} from './meeting-links.js';
 export const ORG_STAFF=['入戸野','竹田','植松'];
 
 export const newOrg=()=>({category:'',size:'',assignee:'',contact:'',stage:'DM送信',
@@ -112,25 +111,6 @@ export function renderOrgKPI(orgs,period,esc){
  <section class="panel"><h2>開始月別の追跡</h2><p class="note">各団体の最初の履歴（通常はDM送信）が記録された月で分類します。</p>${cohortRows?`<div class="tablewrap"><table class="data"><thead><tr><th>開始月</th><th>団体数</th><th>有償導入</th><th>転換率</th></tr></thead><tbody>${cohortRows}</tbody></table></div>`:'<p>まだ集計できる団体がありません。</p>'}</section>`;
 }
 
-const SYNC_LABEL={creating:'Zoom作成処理中・重複作成防止',zoom_only:'Zoom作成済み・カレンダー未登録',synced:'連携済み（Zoom・カレンダーとも登録）',error:'一部失敗（再試行できます）',uncertain:'作成結果が不明（要確認）'};
-// kind: 'initial'/'proposal' はlib/meeting-sync.jsのKINDSと一致させる（MTG同期APIへそのまま送るため）。
-// meeting-links.jsのgoogleCalendarDraft()だけは既存の'intro'/'proposal'表記を使うので、ここで変換する。
-function meetingBlock(o,kind,label,autoSync,esc){
- const draftKind=kind==='initial'?'intro':'proposal';
- const sync=kind==='initial'?o.initialMeetingSync:o.proposalMeetingSync;
- const atName=kind==='initial'?'initialZoomAt':'proposalZoomAt',urlName=kind==='initial'?'initialZoomUrl':'proposalZoomUrl';
- const atVal=o[atName]||'',urlVal=o[urlName]||'';
- const ready=autoSync?.zoomConnected&&autoSync?.calendarConnected&&!!o.id;
- const draftUrl=o.id?googleCalendarDraft(o,draftKind):null;
- return `<label>${label}の内容<input name="${kind}MeetingContent" maxlength="200" value="${esc(o[kind+'MeetingContent']||label)}"></label><label>${label}開始予定（日本時間）<input name="${atName}" type="datetime-local" value="${esc(atVal)}"></label>
- <label>${label}参加URL${ready?'（自動連携で設定されます）':'（任意・発行済みのみ）'}<input name="${urlName}" type="url" maxlength="2000" placeholder="https://..." value="${esc(urlVal)}" ${ready?'readonly':''}></label>
- ${(ready||sync)?`<div class="meetingsync"><span class="badge ${sync?.status==='synced'?'ok':sync?.status==='error'?'warn':sync?'warn':''}">${sync?SYNC_LABEL[sync.status]:'未作成'}</span>
- ${sync?.error?`<p class="note red">${esc(sync.error)}</p>`:''}
- <div class="actions">${ready&&(!sync||(['error','zoom_only'].includes(sync.status)&&!sync.cancelPending))?`<button type="button" class="secondary" data-mtgsync="${kind}:${sync?.zoomMeetingId?'create':'prepare'}">${sync?.zoomMeetingId?'URLを確認してカレンダー登録・招待':'確認してZoomを作成'}</button>`:''}
- ${ready&&sync?.status==='synced'?`<button type="button" class="secondary" data-mtgsync="${kind}:update">日程を同期し直す</button>`:''}
- ${sync&&sync.status!=='creating'?`<button type="button" class="red" data-mtgsync="${kind}:cancel">${sync.cancelPending?'取消を再試行':'MTGを取消'}</button>`:''}</div></div>`
- :draftUrl?`<a class="secondary" href="${esc(draftUrl)}" target="_blank" rel="noopener noreferrer">${label}の予定をGoogleカレンダーへ追加（手動で保存） ↗</a>`:''}`;
-}
 export function renderOrgEditor(org,esc,today,autoSync){
  const o=org||{...newOrg(),id:null,name:'',updatedAt:''};
  const hist=[...(o.history||[])].reverse();
@@ -143,10 +123,7 @@ export function renderOrgEditor(org,esc,today,autoSync){
  <label>連絡先<input name="contact" maxlength="500" value="${esc(o.contact)}"></label>
  <label>現在の段階<select name="stage">${ORG_ALL_STAGES.map(s=>`<option value="${s}" ${o.stage===s?'selected':''}>${s}</option>`).join('')}</select></label>
  <label>段階変更のメモ（履歴に残ります）<input name="stageNote" maxlength="500" placeholder="例: 電話で合意"></label>
- <div class="orgmeeting"><h3>Googleカレンダー・ZOOM商談</h3><details><summary>使い方・詳細</summary><p class="note">${autoSync?.zoomConnected&&autoSync?.calendarConnected?'Zoom・Googleカレンダーとも接続済みです。日時・内容を保存後、Zoom作成→URL確認→カレンダー登録・招待の順に進めます。':'Zoom・Googleカレンダーの接続が完了するまでは、予定をアプリに保存し、Googleカレンダーの予定作成画面に事前入力する手動方式です。「設定・バックアップ」画面で接続できます。'}</p></details>
- ${meetingBlock(o,'initial','初回ZOOM',autoSync,esc)}
- ${meetingBlock(o,'proposal','活用法提案ZOOM',autoSync,esc)}
- <p class="note">${!o.id?'MTGの自動作成・更新・取消は団体を保存した後に利用できます。':'Zoom発行後にURLとゲストを確認し、カレンダー登録時に招待を送信します。更新・取消もゲストへ通知します。'}</p></div>
+ <p class="note">会議は「会議」タブから設定できます。</p>
  <label>サンプル数量<input name="sampleQty" type="number" min="0" step="1" value="${o.sampleQty??''}"></label>
  <label>サンプル原価（円）<input name="sampleCost" type="number" min="0" step="1" value="${o.sampleCost??''}"></label>
  <label>送料（円）<input name="shippingCost" type="number" min="0" step="1" value="${o.shippingCost??''}"></label>
