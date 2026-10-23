@@ -6,6 +6,14 @@ import {spawnSync} from 'node:child_process';
 const css=readFileSync(new URL('../public/style.css',import.meta.url),'utf8');
 const js=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 
+test('本番(workers/index.js)とローカル開発(server.js)のContent-Security-Policyは同じimg-src（選手候補の写真表示に必要なhttps:を含む）を使う（Codex独立レビュー指摘の回帰：production/localの設定が分岐しないようにする）',()=>{
+ const workers=readFileSync(new URL('../workers/index.js',import.meta.url),'utf8');
+ const serverJs=readFileSync(new URL('../server.js',import.meta.url),'utf8');
+ const csp=/img-src 'self' data: https:/;
+ assert.match(workers,csp,'workers/index.js（本番）');
+ assert.match(serverJs,csp,'server.js（ローカル開発）');
+});
+
 test('desktop sidebar can scroll independently within the viewport',()=>{
  const sidebar=css.match(/^aside\{[^}]*\}/m)?.[0]||'';
  const nav=css.match(/^nav\{[^}]*\}/m)?.[0]||'';

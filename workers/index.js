@@ -10,7 +10,12 @@ import {scheduledKind,runReport} from '../lib/notifications.js';
 const api=httpServerHandler(createServer(handler));
 const security={
  'X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY','Referrer-Policy':'no-referrer',
- 'Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+ // img-srcにhttps:を許可：選手候補のphotoUrl（public/players.js）は権限確認済みの外部URL（Wikimedia等）を
+ // 管理者が手入力する前提のフィールドで、ホストを限定すると想定外の正規URLまで表示できなくなる
+ // （Codex独立レビュー指摘：img-src 'self' data:のみだと外部写真が一切表示されなかった）。このフィールドは
+ // 管理者（認証済み）のみが入力し、画像タグにはreferrerpolicy="no-referrer"を設定済みのため、クロスサイト
+ // 追跡・リファラ漏洩のリスクは抑えている。
+ 'Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
 };
 function secured(response){const r=new Response(response.body,response);for(const [k,v]of Object.entries(security))r.headers.set(k,v);return r;}
 export default {
