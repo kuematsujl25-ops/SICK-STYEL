@@ -473,10 +473,18 @@ test('Zoom会議の作成自体が失敗し、そのエラー記録の保存も�
  // 作成したかどうか不明なため、通常の'error'ではなく'uncertain'として記録される（別のCodex独立レビュー
  // 指摘の回帰：不明な場合を確定失敗と同じに扱うと、再試行で重複作成が起きうる）。
  assert.equal(afterFailure.initialMeetingSync.status,'uncertain');
- // 固着していないことを実際に確認：次の作成リトライがブロックされずに進む。
+ // uncertainの間はcreate/updateがサーバー側でも拒否される（Codex独立レビュー指摘：UIがボタンを
+ // 隠すだけではAPIを直接呼ぶ経路を防げない）。取消でクリアしてから再作成できることを確認する。
+ const beforeRetry=await store.doc('workspace');
+ await assert.rejects(syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision:beforeRetry.revision}),/作成結果が不明です/);
  global.fetch=fakeFetch({});
  const latest=await store.doc('workspace');
- const retried=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision:latest.revision});
+ const cancelled=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'cancel',revision:latest.revision});
+ assert.equal(cancelled.org.initialMeetingSync,null);
+ // 取消が完全に成功すると開始予定の日時も消える（round19の回帰防止）ため、再作成には新しい日時が必要。
+ const afterCancel=JSON.parse((await store.doc('workspace')).body);afterCancel.orgSales[0].initialZoomAt='2026-11-10T10:00';
+ const put=(await store.query('UPDATE ss_documents SET body=$1,revision=revision+1 WHERE name=$2 AND revision=$3 RETURNING revision',[JSON.stringify(afterCancel),'workspace',cancelled.revision]))[0];
+ const retried=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision:put.revision});
  assert.equal(retried.org.initialMeetingSync.status,'synced','固着していれば「会議を作成処理中です」で拒否されるはずの再作成が正常に完了する');
 });
 
@@ -494,9 +502,14 @@ test('Zoom会議作成がタイムアウト等の通信失敗で終わった場�
  assert.match(afterFailure.initialMeetingSync.error,/会議が実際に作成されたか不明/);
  assert.match(afterFailure.initialMeetingSync.error,/Zoom管理画面/);
  // uncertain状態は、確定したエラー（'error'）とは違い通常の「再試行する」ボタン対象には含めない
- // （public/org-sales.jsのSYNC_LABEL／ボタン表示ロジック）。管理者がZoom側を確認してから
- // 「MTGを取消」でこの記録をクリアできることだけを保証する（zoomMeetingIdがnullなのでZoomへの
- // 削除呼び出しは発生せず、ローカルの記録だけが安全にクリアされる）。
+ // （public/org-sales.jsのSYNC_LABEL／ボタン表示ロジック）。ただしUIがボタンを隠すだけではAPIを
+ // 直接呼ぶ経路を防げないため、サーバー側でもcreate/updateを明示的に拒否する（Codex独立レビュー
+ // 指摘：確認前の再試行による重複作成を、UIだけでなくAPI境界でも防ぐ）。
+ const stillStuckRevision=(await store.doc('workspace')).revision;
+ await assert.rejects(syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision:stillStuckRevision}),/作成結果が不明です/);
+ await assert.rejects(syncMeeting(store,{orgId:'org-1',kind:'initial',action:'update',revision:stillStuckRevision}),/作成結果が不明です/);
+ // 管理者がZoom側を確認してから「MTGを取消」でこの記録をクリアできることだけを保証する
+ // （zoomMeetingIdがnullなのでZoomへの削除呼び出しは発生せず、ローカルの記録だけが安全にクリアされる）。
  global.fetch=fakeFetch({});
  const latest=await store.doc('workspace');
  const cancelled=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'cancel',revision:latest.revision});

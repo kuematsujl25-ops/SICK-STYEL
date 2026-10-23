@@ -6,7 +6,16 @@ import path from 'node:path';
 import {randomBytes} from 'node:crypto';
 import {createStore} from '../lib/store.js';
 import {decrypt} from '../lib/security.js';
-import {begin,connect,createMeeting,updateMeeting,deleteMeeting,safeStatus,storageDiagnostics,disconnect,ZoomError} from '../integrations/zoom.js';
+import {readFileSync} from 'node:fs';
+import {begin,connect,createMeeting,updateMeeting,deleteMeeting,safeStatus,storageDiagnostics,disconnect,ZoomError,scopes} from '../integrations/zoom.js';
+
+test('scripts/set-secrets.jsのZoom設定案内が、integrations/zoom.jsが実際に要求するスコープ表記と一致している（Codex独立レビュー指摘の回帰：以前はuser:read:user:meという誤った表記が案内されており、その手順に従うとscope_missingで接続できなかった）',()=>{
+ const setSecretsJs=readFileSync(new URL('../scripts/set-secrets.js',import.meta.url),'utf8');
+ const zoomNote=setSecretsJs.match(/zoom:\{[\s\S]*?note:`([\s\S]*?)`\}/)?.[1]||'';
+ assert.ok(zoomNote,'zoom設定の案内文が見つかる');
+ for(const scope of scopes)assert.ok(zoomNote.includes(scope),'案内文に'+scope+'が含まれる');
+ assert.doesNotMatch(zoomNote,/user:read:user:me(?!はZoom)/,'integrations/zoom.jsが要求しない誤った表記(user:read:user:me)を必須スコープとして案内していない');
+});
 
 test('Zoom OAuth: state固定・トークン暗号化・会議作成はjoin_urlのみ返す（start_urlを渡さない）',async t=>{
  const env={...process.env};process.env.ZOOM_CLIENT_ID='client-1';process.env.ZOOM_CLIENT_SECRET='secret-1';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
