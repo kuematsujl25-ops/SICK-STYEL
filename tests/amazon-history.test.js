@@ -89,6 +89,19 @@ test('dailyRowsForMonth prefers the API record over a manual record on the same 
  ]);
 });
 
+test('dailyRowsForMonth falls back to a manual value when the API has a row for that date but its sales is null (Codex独立レビュー指摘の回帰)', () => {
+ // APIの日次履歴に行はあるが売上がnull（取得できなかった日・非JPY通貨の除外等）で、
+ // 同じ日に手入力/CSVの実測値がある場合、nullのAPI行を優先して「未取得」と表示してはいけない。
+ const c={dailyHistory:[d('2026-10-05',null)]};
+ const metrics=[{date:'2026-10-05',sales:4200}];
+ const rows=dailyRowsForMonth(c,metrics,'2026-10');
+ assert.deepEqual(rows,[{date:'2026-10-05',value:4200,source:'manual'}]);
+});
+test('dailyRowsForMonth reports api_partial (not missing) when the API has a null-sales row and there is no manual fallback', () => {
+ const rows=dailyRowsForMonth({dailyHistory:[d('2026-10-05',null)]},[],'2026-10');
+ assert.deepEqual(rows,[{date:'2026-10-05',value:null,source:'api_partial'}]);
+});
+
 test('dailyRowsForMonth marks a day with neither API nor manual data as missing, not 0', () => {
  const rows=dailyRowsForMonth({dailyHistory:[d('2026-10-01',500)]},[],'2026-10');
  assert.equal(rows.length,1,'データのない日は行を作らない（0円の行を捏造しない）');
