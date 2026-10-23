@@ -31,14 +31,21 @@ export default {
     try{if((await amazon.safeStatus(store)).connected)await amazon.sync(store);}
     catch{console.error(JSON.stringify({event:'scheduled_sync_failed',service:'amazon'}));}
    }
+   const sendReport=async()=>{
+    try{await runReport(store,kind,new Date(),async()=>googlecalendar.listToday(store,new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'})));}
+    catch(e){console.error(JSON.stringify({event:'scheduled_notification_failed',kind,type:e.name||'unknown'}));}
+   };
+   // 09:00 JST（'0 0 * * *'）はInstagram同期と「今日の予定」通知で同じ呼び出しを共有している。
+   // Instagram同期は内部で多くのサブリクエストを使うことがあり、Workers Freeプランの1呼び出しあたり
+   // 50件の上限に、通知配信（Googleカレンダー取得＋登録端末へのPush送信）分を合わせると達しうる
+   // （Codex独立レビュー指摘）。通知は一度送信記録されると再送されないため、ユーザー向けの通知配信を
+   // 先に完了させ、バックグラウンドのInstagram同期（失敗しても次回の同期で取り戻せる）を後に回す。
+   if(kind==='morning')await sendReport();
    if(event.cron==='0 0 * * *'){
     try{if((await instagram.safeStatus(store)).connected)await instagram.sync(store);}
     catch{console.error(JSON.stringify({event:'scheduled_sync_failed',service:'instagram'}));}
    }
-   if(kind){
-    try{await runReport(store,kind,new Date(),async()=>googlecalendar.listToday(store,new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'})));}
-    catch(e){console.error(JSON.stringify({event:'scheduled_notification_failed',kind,type:e.name||'unknown'}));}
-   }
+   if(kind&&kind!=='morning')await sendReport();
   }));
  }
 };

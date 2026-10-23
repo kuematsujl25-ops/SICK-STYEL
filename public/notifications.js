@@ -36,7 +36,16 @@ export async function mountNotifications(){
    const reg=await withTimeout(navigator.serviceWorker.ready,8000);
    if(!reg)throw Error('この端末でService Workerの準備が完了しませんでした。ページを再読み込みしてもう一度お試しください');
    const sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:decode(status.publicKey)});
-   await api('/subscribe','POST',{subscription:sub.toJSON()});mountNotifications();
+   try{await api('/subscribe','POST',{subscription:sub.toJSON()});}
+   catch(e){
+    // サーバー側の登録が失敗した場合（登録端末5台の上限・通信エラー等）、ブラウザー側の購読だけが
+    // 残ると、次回この画面を開いたときgetSubscription()がこの「サーバーが知らない」購読を見つけて
+    // 「登録済み」と誤表示し、有効化ボタンが再試行できないまま無効化され続けてしまう
+    // （Codex独立レビュー指摘）。ブラウザー側の購読も必ず取り消し、状態を一致させる。
+    try{await sub.unsubscribe();}catch{}
+    throw e;
+   }
+   mountNotifications();
   }catch(e){alert(e.message);}
  };
  const disable=ref.querySelector('#notification-disable');
