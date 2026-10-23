@@ -356,9 +356,14 @@ function orgEditor(record){const d=document.querySelector('#editor');
   btn.disabled=true;
   try{
    const r=await api('orgsales/meeting','POST',{orgId:record.id,kind,action,revision:state.revision});
-   state={...state,orgSales:state.orgSales.map(x=>x.id===record.id?r.org:x),revision:r.revision};
+   // サーバー側は、Zoom/カレンダーの外部呼び出し中に他端末が無関係な箇所を編集していても、その編集を
+   // 保持したまま最新revisionへ自動的に追従して保存を完了させることがある（saveSyncReconciled）。
+   // ここで該当団体だけをstateへ上書きしてrevisionだけ進めると、他端末の編集内容はローカルのstateに
+   // 反映されないまま「最新revisionを持つ古いスナップショット」になり、次のpersist()が競合を検知できず
+   // 他端末の変更を無言で上書きしてしまう（Codex独立レビュー指摘）。ワークスペース全体を再取得する。
+   state=await api('data');
    toast(r.warnings?.length?r.warnings.join(' / '):'MTGを更新しました');
-   orgEditor(r.org);
+   render();orgEditor(state.orgSales.find(x=>x.id===record.id));
   }catch(e){toast(e.message);btn.disabled=false;}
  });
  document.querySelector('#close').onclick=document.querySelector('#cancel').onclick=()=>d.close();
