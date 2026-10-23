@@ -7,7 +7,19 @@ import {randomUUID} from 'node:crypto';
 import {ensureFree} from './lib/free-check.js';
 import {requireWranglerLogin} from './lib/wrangler-auth.js';
 import {reviewForHeadOrWaiver,productionVersions,verifySqlBackup,checkReadiness} from './lib/release-readiness.js';
+import {remoteBranchTipFromLsRemote} from './lib/deploy-branch.js';
 import {ask} from './lib/prompt.js';
+
+// 本番反映を許可する統合ブランチと、独立レビューの比較元ブランチ。AGENTS.mdの運用方針（作業ブランチ→PR→
+// CI/Codexレビュー→マージ）のもと、このリポジトリでは一本の統合ブランチにPRをマージしてから本番反映する
+// （現在は ai-staff/phase4-runtime）。ブランチ名を変更・引越しする場合は、ここだけを書き換え、通常のPR・
+// 独立レビュー・CIを通してから反映すること。実行時の環境変数などで反映対象ブランチを差し替えられる経路は
+// 意図的に設けていない（誰でも実行時に安全ゲートの対象ブランチを変えられると、それ自体が安全確認の迂回に
+// なるため）。反映対象ブランチが削除・改名された場合にブロックされるのは意図した挙動であり、再開するには
+// このファイルを更新した上で通常のレビュー・マージを経る必要がある（Codex独立レビュー指摘：ブランチ名の
+// 二重管理による不整合リスクと、削除時のエラーメッセージが「fetch/pullすれば直る」ように誤読されやすい点を修正）。
+const DEPLOY_BRANCH='ai-staff/phase4-runtime';
+const REVIEW_BASE_BRANCH='claude/initial-github-sync';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)),'..');
 process.chdir(root);
@@ -17,6 +29,8 @@ const wrangler = (args,options) => run(process.execPath,['node_modules/wrangler/
 const git = args => {
   const r=run('git',args);if(r.status!==0)throw Error('Git状態を確認してください');return r.stdout.trim();
 };
+// リモートの最新tipを返す（ブランチ不在時の判定・エラー文言は lib/deploy-branch.js に分離してテストする）。
+const remoteBranchTip = branch => remoteBranchTipFromLsRemote(branch, git(['ls-remote','--heads','origin',branch]));
 const currentVersions=()=>{
   const r=wrangler(['deployments','status','--name','sickstyle-manager','--json']);
   if(r.status!==0)throw Error('本番Versionを取得できません。反映を停止します');
@@ -65,9 +79,9 @@ try {
     await ensureFree(config.account_id);
     if (git(['status','--porcelain'])) throw Error('変更をコミットしてから反映してください');
     const head = git(['rev-parse','HEAD']);
-    const reviewBase=git(['rev-parse','origin/claude/initial-github-sync']);
-    const remoteHead=git(['ls-remote','--heads','origin','ai-staff/phase4-runtime']).split(/\s/)[0];
-    const remoteBase=git(['ls-remote','--heads','origin','claude/initial-github-sync']).split(/\s/)[0];
+    const reviewBase=git(['rev-parse','origin/'+REVIEW_BASE_BRANCH]);
+    const remoteHead=remoteBranchTip(DEPLOY_BRANCH);
+    const remoteBase=remoteBranchTip(REVIEW_BASE_BRANCH);
     if(remoteHead!==head||remoteBase!==reviewBase)throw Error('PRまたは比較元が更新されています。fetch/pull後に最新SHAを再レビューしてください');
     const receiptPath=resolve(root,'data/deploy-readiness',head+'.json');
     if(args[0]==='--preflight') {
@@ -127,8 +141,8 @@ try {
         throw Error('Versionアップロード未完了。本番トラフィックは切り替えていません');
       checkReadiness(root,head,config,receipt,reviewBase);
       if(git(['rev-parse','HEAD'])!==head||git(['status','--porcelain'])||
-          git(['ls-remote','--heads','origin','ai-staff/phase4-runtime']).split(/\s/)[0]!==head||
-          git(['ls-remote','--heads','origin','claude/initial-github-sync']).split(/\s/)[0]!==reviewBase||
+          remoteBranchTip(DEPLOY_BRANCH)!==head||
+          remoteBranchTip(REVIEW_BASE_BRANCH)!==reviewBase||
           JSON.stringify(currentVersions())!==JSON.stringify(receipt.previous_versions))
         throw Error('コードまたは本番Versionが変わりました。切り替えず停止します');
       if (wrangler(['versions','deploy','--config',path,'--version-tag',tag+'@100',
