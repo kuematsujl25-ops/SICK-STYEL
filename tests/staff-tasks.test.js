@@ -63,6 +63,18 @@ test('assignee filter narrows the visible list', () => {
  assert.match(narrowed, /1 \/ 2 件/);
 });
 
+test('検索語（ui.q）はレンダリング自体で絞り込みに反映される（Codex独立レビュー指摘の回帰：以前は入力時のDOM直接操作だけで絞り込んでおり、並べ替え・担当切替等での再描画で検索結果が失われていた）', () => {
+ const tasks = [sample({ id: 'a', title: 'サンプル採寸の依頼' }), sample({ id: 'b', title: '請求書の確認' })];
+ const all = renderStaffTasks(tasks, { assignee: 'all', sort: 'due', q: '' }, esc, '2026-10-20');
+ const searched = renderStaffTasks(tasks, { assignee: 'all', sort: 'due', q: '採寸' }, esc, '2026-10-20');
+ assert.match(all, /2 \/ 2 件/);
+ assert.match(searched, /1 \/ 2 件/, '検索語に一致する1件だけに絞り込まれる');
+ assert.match(searched, /サンプル採寸の依頼/);
+ assert.doesNotMatch(searched, /請求書の確認/);
+ // 検索欄の表示自体は常にui.qの値を保持する（入力中の見た目と一致）。
+ assert.match(searched, /value="採寸"/);
+});
+
 test('unassigned tab shows only tasks without an assignee', () => {
  const tasks = [sample({ id: 'a', assignee: '' }), sample({ id: 'b', assignee: '竹田' })];
  const html = renderStaffTasks(tasks, { assignee: 'unassigned', sort: 'due' }, esc, '2026-10-20');
