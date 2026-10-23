@@ -245,3 +245,39 @@ test('同じ更新番号の2重送信で外部Zoom会議は1件しか作成し�
  assert.equal(results.filter(x=>x.status==='fulfilled').length,1);
  assert.equal(results.filter(x=>x.status==='rejected').length,1);
 });
+
+test('既存会議への同時「日程変更」と「取消」は、片方だけが外部呼び出しへ進み、同期済み表示のまま削除済みIDを指す不整合にならない（Codex指摘の回帰）',async t=>{
+ const env={...process.env};process.env.ZOOM_CLIENT_ID='c';process.env.ZOOM_CLIENT_SECRET='s';process.env.GOOGLE_CLIENT_ID='c';process.env.GOOGLE_CLIENT_SECRET='s';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-meeting-update-cancel-race-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
+ t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
+ const org={...newOrg(),id:'org-1',name:'FC Example',updatedAt:new Date().toISOString(),deletedAt:null,history:[{stage:'DM送信',at:new Date().toISOString(),note:''}],initialZoomAt:'2026-10-28T14:00'};
+ const revision=await seed(store,org);
+ global.fetch=fakeFetch({});
+ const created=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision});
+ assert.equal(created.org.initialMeetingSync.status,'synced');
+ let zoomPatched=0,zoomDeleted=0,calendarPatched=0,calendarDeleted=0;
+ const okFetch=fakeFetch({});
+ global.fetch=async(u,o)=>{
+  const path=new URL(u).pathname;
+  if(/^\/v2\/meetings\/\d+$/.test(path)&&o?.method==='PATCH')zoomPatched++;
+  if(/^\/v2\/meetings\/\d+$/.test(path)&&o?.method==='DELETE')zoomDeleted++;
+  if(/^\/calendar\/v3\/calendars\/primary\/events\/.+$/.test(path)&&o?.method==='PATCH')calendarPatched++;
+  if(/^\/calendar\/v3\/calendars\/primary\/events\/.+$/.test(path)&&o?.method==='DELETE')calendarDeleted++;
+  return okFetch(u,o);
+ };
+ // 同じrevisionに対して、同時に「日程変更」と「取消」を投げる。
+ const results=await Promise.allSettled([
+  syncMeeting(store,{orgId:'org-1',kind:'initial',action:'update',revision:created.revision}),
+  syncMeeting(store,{orgId:'org-1',kind:'initial',action:'cancel',revision:created.revision})
+ ]);
+ assert.equal(results.filter(x=>x.status==='fulfilled').length,1,'予約のCAS競合により、片方だけが成功する');
+ assert.equal(results.filter(x=>x.status==='rejected').length,1);
+ // 先に予約を取れた側だけが実際に外部呼び出しを行う：更新のPATCHと取消のDELETEが両方とも発生することはない。
+ assert.equal(zoomPatched>0&&zoomDeleted>0,false,'Zoom側でPATCHとDELETEの両方が実行されることはない');
+ assert.equal(calendarPatched>0&&calendarDeleted>0,false,'カレンダー側でPATCHとDELETEの両方が実行されることはない');
+ const finalOrg=JSON.parse((await store.doc('workspace')).body).orgSales[0];
+ const sync=finalOrg.initialMeetingSync;
+ // 最終状態は自己矛盾しない：同期済み（会議が実在）か、完全に取消済み（null）のどちらかのみ。
+ if(sync===null){assert.equal(finalOrg.initialZoomUrl,'');}
+ else{assert.equal(sync.status,'synced');assert.ok(sync.zoomMeetingId);assert.ok(sync.calendarEventId);}
+});

@@ -134,7 +134,10 @@ export default async function handler(req,res){
  if(route==='/api/site/publish'&&req.method==='POST'){
   const b=await body(req);const d=await store.doc('site-draft');if(!d)return json(res,400,{error:'下書きがありません'});
   if(b.revision!==d.revision)return json(res,409,{error:'下書きが更新されています。再読み込みして内容を確認してから公開してください'});
-  const view=publicView(JSON.parse(d.body),new Date().toISOString());
+  // players等、後から追加された項目が無い旧いsite-draft（一度も再保存されていない保留中の下書き）でも
+  // publicView()が落ちないよう、GET /api/site と同じ方法でemptySite()の既定値を補って正規化する
+  // （Codex独立レビュー指摘）。
+  const view=publicView({...emptySite(),...JSON.parse(d.body)},new Date().toISOString());
   const prev=await store.doc('site-public');
   await store.transaction([...(prev?[['INSERT INTO ss_documents(name,body) VALUES ($1,$2) ON CONFLICT(name) DO UPDATE SET body=excluded.body,revision=ss_documents.revision+1',['site-public-previous',prev.body]]]:[]),['INSERT INTO ss_documents(name,body) VALUES ($1,$2) ON CONFLICT(name) DO UPDATE SET body=excluded.body,revision=ss_documents.revision+1',['site-public',JSON.stringify(view)]]]);
   return json(res,200,{ok:true,published:view});
