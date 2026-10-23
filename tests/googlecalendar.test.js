@@ -83,3 +83,18 @@ test('予定作成がHTTP成功応答を返したのに本文を読み取れな�
   assert.ok(e instanceof GoogleCalendarError);assert.equal(e.code,'response_body_unreadable');assert.match(e.message,/作成されている可能性があります/);return true;
  });
 });
+
+test('朝の予定は全ページを取得し、途中失敗・循環トークンでは部分件数を返さない',async t=>{
+ const {encrypt}=await import('../lib/security.js');const {listToday}=await import('../integrations/googlecalendar.js');
+ const {withRuntime}=await import('../lib/runtime.js');const original=global.fetch;t.after(()=>global.fetch=original);
+ await withRuntime({TOKEN_ENCRYPTION_KEY:randomBytes(32).toString('base64')},async()=>{
+  const store={doc:async()=>({body:JSON.stringify({encrypted:encrypt({refresh:'dummy'})})})};let mode='ok',calls=[];
+  global.fetch=async url=>{const u=new URL(url);if(u.hostname==='oauth2.googleapis.com')return Response.json({access_token:'dummy'});calls.push(u);
+   if(!u.searchParams.has('pageToken'))return Response.json({items:Array.from({length:50},(_,i)=>({id:String(i)})),nextPageToken:'next'});
+   if(mode==='fail')return Response.json({error:{code:403}},{status:403});
+   return Response.json({items:[{id:'last'}],...(mode==='loop'?{nextPageToken:'next'}:{})});};
+  const r=await listToday(store,'2026-10-23');assert.equal(r.events.length,51);assert.equal(calls[1].searchParams.get('pageToken'),'next');assert.equal(calls[0].searchParams.get('timeMin'),calls[1].searchParams.get('timeMin'));
+  mode='fail';await assert.rejects(listToday(store,'2026-10-23'));
+  mode='loop';await assert.rejects(listToday(store,'2026-10-23'),/全件取得/);
+ });
+});

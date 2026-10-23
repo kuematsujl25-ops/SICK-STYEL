@@ -157,3 +157,16 @@ test('cohort table renders a conversion rate with explicit denominator', () => {
   assert.match(html, /2026-10/);
   assert.match(html, /対象期間/);
 });
+
+test('切断後も既存会議の状態・取消再試行を表示し、新規作成/更新を許さない',()=>{
+ for(const zoomConnected of [false,true])for(const calendarConnected of [false,true]){
+  if(zoomConnected&&calendarConnected)continue;
+  for(const kind of ['initial','proposal'])for(const status of ['synced','error','zoom_only','uncertain']){
+   const saved=org({id:'o1',[kind+'MeetingSync']:{requestId:'qa',zoomMeetingId:'qa-z',calendarEventId:null,status,cancelPending:true,error:'架空の取消失敗'}});
+   const html=renderOrgEditor(saved,esc,'2026-10-23',{zoomConnected,calendarConnected});
+   assert.match(html,new RegExp('data-mtgsync="'+kind+':cancel"'));
+   assert.match(html,/取消を再試行/);assert.match(html,/架空の取消失敗/);
+   assert.doesNotMatch(html,new RegExp('data-mtgsync="'+kind+':(?:create|update)"'));
+  }
+ }
+});
