@@ -12,7 +12,8 @@ test('管理者登録・認証・業務データ保存・復元・永続化', as
  async function stop(){const p=proc;await new Promise(resolve=>{p.once('exit',resolve);p.kill();});}
  t.after(async()=>{if(proc?.exitCode===null)await stop();await rm(dir,{recursive:true,force:true});});
  async function req(route,method='GET',data,headers={}){const r=await fetch(base+'/api/'+route,{method,headers:{Cookie:cookie,...(data?{'Content-Type':'application/json'}:{}),...headers},body:data?JSON.stringify(data):undefined});return {status:r.status,data:await r.json(),cookie:r.headers.get('set-cookie')};}
- await start();assert.equal((await req('session')).data.configured,false);assert.equal((await req('data')).status,401);
+ await start();for(const asset of ['org-meeting-lifecycle.js','meeting-confirmation-ui.js']){const r=await fetch(base+'/'+asset);assert.equal(r.status,200,asset);assert.match(r.headers.get('content-type'),/javascript/);assert.match(await r.text(),/export function/);}
+ assert.equal((await req('session')).data.configured,false);assert.equal((await req('data')).status,401);
  assert.equal((await req('setup','POST',{email:'a@example.com',password:'short'})).status,400);
  assert.equal((await req('setup','POST',{email:'bad@example.com',password:'bad-password-12345'})).status,403);
  const creds={email:'owner@example.com',password:'Test-password-2026',setupToken:'test-setup-key'};const signup=await req('setup','POST',creds);assert.equal(signup.status,200);assert.match(signup.cookie,/HttpOnly/);cookie=signup.cookie.split(';')[0];
