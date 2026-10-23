@@ -3,10 +3,10 @@ import {assertTypeChange} from './meeting-policy.js';
 export function hasOutstandingMeetings(org){
  return ['initial','proposal'].some(kind=>{const s=org?.[kind+'MeetingSync'];return !!s&&(!!s.zoomMeetingId||!!s.calendarEventId||s.status!=='none'||s.cancelPending);});
 }
-export function assertMeetingRecordsRetained(previous,next){
- for(const o of next.orgSales||[])if(!previous.orgSales?.some(x=>x.id===o.id)&&o.meetingNotes?.length)throw Error('議事録は専用の保存操作を使ってください');
+export function assertMeetingRecordsRetained(previous,next,{restoreNotes=false}={}){
+ for(const o of next.orgSales||[])if(!restoreNotes&&!previous.orgSales?.some(x=>x.id===o.id)&&o.meetingNotes?.length)throw Error('議事録は専用の保存操作を使ってください');
  for(const org of previous.orgSales||[]){
-  const candidate=next.orgSales.find(x=>x.id===org.id);if(candidate){if(org.meetingNotes?.length&&!org.deletedAt&&candidate.deletedAt)throw Error('議事録が残っている対象は削除できません');assertTypeChange(org,candidate);if(JSON.stringify(org.meetingNotes||[])!==JSON.stringify(candidate.meetingNotes||[]))throw Error('議事録は専用の保存・取消操作を使ってください');}else if(org.meetingNotes?.length)throw Error('議事録が残っている対象は削除できません');
+  const candidate=next.orgSales.find(x=>x.id===org.id);if(candidate){if(!restoreNotes&&org.meetingNotes?.length&&!org.deletedAt&&candidate.deletedAt)throw Error('議事録が残っている対象は削除できません');assertTypeChange(org,candidate);if(!restoreNotes&&JSON.stringify(org.meetingNotes||[])!==JSON.stringify(candidate.meetingNotes||[]))throw Error('議事録は専用の保存・取消操作を使ってください');}else if(!restoreNotes&&org.meetingNotes?.length)throw Error('議事録が残っている対象は削除できません');
   if(!hasOutstandingMeetings(org))continue;
   const retained=next.orgSales.find(x=>x.id===org.id);
   if(!retained||(!org.deletedAt&&retained.deletedAt)||['initial','proposal'].some(k=>JSON.stringify(org[k+'MeetingSync']??null)!==JSON.stringify(retained[k+'MeetingSync']??null)))
