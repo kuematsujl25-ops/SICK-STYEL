@@ -1,4 +1,5 @@
 import {renderTeam,bindTeam} from './ai-team.js';
+import {mountNotifications} from './notifications.js';
 let team=null;
 import {connectionReadiness,selectAmazonSales,syncMessage} from './integration-status.js';
 import {validateFinanceReport,renderFinance} from './finance.js';
@@ -37,9 +38,10 @@ async function load(){
  [state,ig,amz,zoomStatus,calendarStatus]=await Promise.all([api('data'),api('instagram/status'),api('amazon/status'),api('zoom/status'),api('googlecalendar/status')]);
  conversations=(await api('instagram/conversations')).data;if(section==='team')team=await api('ai-team');site=null;if(section==='site')site=await api('site');render();
  const q=new URLSearchParams(location.search);
+ if(q.has('notifications')){section='settings';render();}
  if(q.has('instagram')){section='instagram';render();toast(q.get('instagram')==='connected'?'Instagramの認可が完了しました。「今すぐ同期」で読み取りを検証してください。':'Instagramの認可を完了できませんでした。設定・権限を確認して再接続してください。');}
  if(q.has('amazon')){section='amazon';render();toast(q.get('amazon')==='connected'?'Amazonの認可が完了しました。「今すぐ同期」でデータを取得してください。':'Amazonの認可を完了できませんでした。アプリ設定・リダイレクトURIを確認してください。');}
- if(q.has('zoom')){section='settings';render();toast(q.get('zoom')==='connected'?'Zoomの認可が完了しました。団体営業画面からMTGを作成できます。':'Zoomの認可を完了できませんでした。アプリ設定・リダイレクトURIを確認してください。');}
+ if(q.has('zoom')){section='settings';render();const zStage=q.get('zoom_stage'),zCode=q.get('zoom_code');const diag=zStage&&/^[a-z_]{1,30}$/.test(zStage)&&zCode&&/^[a-zA-Z0-9_-]{1,40}$/.test(zCode)?'（'+zStage+' / '+zCode+'）':'';toast(q.get('zoom')==='connected'?'Zoomの認可が完了しました。団体営業画面からMTGを作成できます。':'Zoomの認可未完了'+diag+'。設定を確認してください。');}
  if(q.has('googlecalendar')){section='settings';render();toast(q.get('googlecalendar')==='connected'?'Googleカレンダーの認可が完了しました。':'Googleカレンダーの認可を完了できませんでした。アプリ設定・リダイレクトURIを確認してください。');}
  if(q.size)history.replaceState(null,'','/');
 }
@@ -118,6 +120,7 @@ function statusBadge(s){if(!s)return '<span class="badge">確認中</span>';cons
 function zoomCalendarBadge(s){if(!s)return '<span class="badge">確認中</span>';if(!s.configured)return '<span class="badge warn">アプリ設定待ち</span>';return `<span class="badge ${s.connected?'ok':'warn'}">${s.connected?'接続済み':'本人認可待ち'}</span>`;}
 function settings(){return `<div class="settingsgrid"><section class="panel"><h2>バックアップ</h2><p>保存済みの業務データをJSONファイルでダウンロードします。パスワード・連携トークンは含まれません。</p><a class="primary" href="/api/backup" download>バックアップをダウンロード</a><hr><h2>バックアップから復元</h2><p>現在の業務データを置き換えます。復元前にバックアップをダウンロードしてください。</p><label class="filelabel">JSONファイルを選択<input type="file" id="restore" accept="application/json,.json"></label></section>
  <section class="panel"><h2>外部サービス連携</h2><p>どちらも認可前から手入力（AmazonはCSVも可）で利用できます。</p><div class="integration"><b>Amazon Selling Partner API</b>${statusBadge(amz)}<p>${amz?.connected?'最終同期: '+fmtTime(amz.cache?.syncedAt):'公式の認可が完了するまでは手入力・CSVの値を使います。'}</p><button data-nav="amazon" class="secondary">Amazon連携を開く</button></div><div class="integration"><b>Instagram API</b>${statusBadge(ig)}<p>${ig?.connected?'最終同期: '+fmtTime(ig.cache?.syncedAt):'公式の認可が完了するまでは手入力の値を使います。'}</p><button data-nav="instagram" class="secondary">Instagram連携を開く</button></div><hr><h2>スマートフォンのホーム画面に追加</h2><p>iPhone: Safariの共有ボタン →「ホーム画面に追加」。Android: Chromeのメニュー →「ホーム画面に追加」。オフラインでは業務データを表示しません。</p></section>
+ <section class="panel"><h2>通知センター（PC・iPhone）</h2><div id="notification-panel"><p>通知を読み込み中…</p></div></section>
  <section class="panel"><h2>Zoom × Googleカレンダー連携（団体営業のMTG自動作成）</h2><p>団体営業画面で「MTGを作成」を押すと、Zoom会議の発行とGoogleカレンダーへの予定登録を自動で行います。どちらも未接続の間は、手動でZoom URLを入力し、Googleカレンダーの予定作成画面を開くリンクが使えます（自動化はされません）。ChatGPTに接続されたZoom/Googleカレンダーとは別の認可です。</p>
  <div class="integration"><b>Zoom</b>${zoomCalendarBadge(zoomStatus)}<p>${zoomStatus?.connected?'接続アカウント: '+esc(zoomStatus.email||'—'):'本人のZoomアカウントで認可してください（ミーティング作成・変更・削除の最小権限のみ）。'}</p>${zoomStatus?.connected?`<p class="note">許可された権限: ${esc((zoomStatus.scopes||[]).join(', ')||'（スコープ情報なし）')}</p>`:''}
  <details class="guide" ${!zoomStatus?.configured?'open':''}><summary><b>Zoomアプリ登録の手順</b></summary><ol>
@@ -294,7 +297,7 @@ function csvDialog(){const d=document.querySelector('#editor');d.innerHTML=`<for
 async function persist(next){if(busy)return;busy=true;try{const saved=await api('data','PUT',next);state={...next,revision:saved.revision};render();toast('保存しました');}finally{busy=false;}}
 async function logout(){try{await api('logout','POST',{});}catch(e){toast(e.message);return;}state=null;ig=null;amz=null;configured=true;auth();}
 async function refresh(){if(confirm('保存していない入力内容は破棄されます。最新データを読み込みますか？'))try{await load();toast('最新データを読み込みました');}catch(e){toast(e.message);}}
-function bind(){if(section==='team')bindTeam({model:team,api,setModel:v=>team=v,render,toast});bindFinance();bindInstagram();bindAmazon();bindZoomCalendar();bindSite();
+function bind(){if(section==='team')bindTeam({model:team,api,setModel:v=>team=v,render,toast});bindFinance();bindInstagram();bindAmazon();bindZoomCalendar();bindSite();if(section==='settings')mountNotifications();
  for(const id of ['#refresh','#mrefresh'])document.querySelector(id).onclick=refresh;for(const id of ['#logout','#mlogout'])document.querySelector(id).onclick=logout;
  document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=async e=>{e.preventDefault();section=b.dataset.nav;if(section==='team')try{team=await api('ai-team');}catch(x){toast(x.message);}if(section==='site'&&!site)try{site=await api('site');}catch(x){toast(x.message);}render();window.scrollTo(0,0);});
  document.querySelectorAll('[data-new]').forEach(b=>b.onclick=()=>editor(b.dataset.new));

@@ -61,4 +61,16 @@ export async function deleteEvent(store,eventId){
  catch(e){if(e instanceof GoogleCalendarError&&(e.code===410||e.code===404))return {ok:true,alreadyGone:true};throw e;}
  return {ok:true};
 }
+// 毎朝の予定通知用。calendar.events権限で本人のprimaryカレンダーのみ読み取り。
+export async function listToday(store,day){
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(day))throw Error('対象日が不正です');
+ const p=await privateData(store);if(!p)return {connected:false,events:[]};
+ const access=await accessToken(store,p);
+ const timeMin=new Date(day+'T00:00:00+09:00').toISOString();
+ const next=new Date(Date.parse(timeMin)+86400000).toISOString();
+ const u=new URL('https://www.googleapis.com/calendar/v3/calendars/primary/events');
+ u.search=new URLSearchParams({timeMin,timeMax:next,singleEvents:'true',orderBy:'startTime',maxResults:'50'});
+ const r=await remote(u.href,{headers:{Authorization:'Bearer '+access}});
+ return {connected:true,events:Array.isArray(r.items)?r.items:[]};
+}
 export async function disconnect(store){await store.query('DELETE FROM ss_documents WHERE name=$1',['googlecalendar-private']);return {ok:true};}
