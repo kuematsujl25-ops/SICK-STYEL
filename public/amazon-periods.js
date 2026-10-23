@@ -80,9 +80,13 @@ export function fullMonthRows(c,metrics,targetMonth,t){
 }
 export function priorPeriodSales(c,metrics,targetMonth,throughDay){
  const priorMonth=addMonths(targetMonth,-1);
- const rows=dailyRowsForMonth(c,metrics,priorMonth).filter(r=>Number(r.date.slice(8,10))<=throughDay);
- const complete=rows.length===throughDay&&rows.every(r=>r.value!==null);
- return {month:priorMonth,value:complete?rows.reduce((n,r)=>n+r.value,0):null,daysCovered:rows.filter(r=>r.value!==null).length,daysExpected:throughDay};
+ // 対象月のほうが前月より日数が多い場合（例: 3月31日時点 vs 2月）、前月には存在しない日数までは
+ // 比較しようがない。前月の実際の日数で上限を揃える（Codex独立レビュー指摘：以前はthroughDayそのものを
+ // 要求していたため、月の長さが異なる組み合わせでは前月データが揃っていても常に「未取得」になっていた）。
+ const expected=Math.min(throughDay,daysInMonth(priorMonth));
+ const rows=dailyRowsForMonth(c,metrics,priorMonth).filter(r=>Number(r.date.slice(8,10))<=expected);
+ const complete=rows.length===expected&&rows.every(r=>r.value!==null);
+ return {month:priorMonth,value:complete?rows.reduce((n,r)=>n+r.value,0):null,daysCovered:rows.filter(r=>r.value!==null).length,daysExpected:expected};
 }
 // ROAS = 広告経由売上 ÷ 広告費。分母が0・未取得、または分子が未取得ならnull（＝「計算不可」）。総売上は使わない。
 export function adRoas(ad){if(!ad.adCost||ad.adCost<=0||ad.attributedSales===null)return null;return Math.round(ad.attributedSales/ad.adCost*100)/100;}
