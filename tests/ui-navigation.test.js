@@ -56,6 +56,13 @@ test('no inline style attributes are used anywhere in app.js (CSP style-src \'se
  assert.doesNotMatch(js,/\sstyle="/,'inline style="..." is silently dropped by the existing Content-Security-Policy (style-src \'self\'); use CSS classes instead');
 });
 
+test('広告CSV取込は、広告費・広告経由売上のセルが空欄でないのにtoNumber()で解析できない場合（誤入力・負数・桁超過など）、nullとして既存の値を無言で上書きせず行を除外する（Codex独立レビュー指摘の回帰）',()=>{
+ const fn=js.match(/function adCsvImport\(input\)\{[\s\S]*?\n\}/)?.[0]||'';
+ assert.ok(fn,'adCsvImport関数が見つかる');
+ assert.match(fn,/numericCell=idx=>\{if\(idx<0\|\|r\[idx\]===''\)return \{value:null,invalid:false\};const v=toNumber\(r\[idx\]\);return \{value:v,invalid:v===null\};\}/,'空欄は許容、非空欄の解析失敗はinvalidとして区別する');
+ assert.match(fn,/costCell\.invalid\|\|salesCell\.invalid/,'解析失敗したセルは行の除外条件(bad.push)に含まれる');
+});
+
 test('MTG連携ボタンはフォームに未保存の変更がある間は同期を実行しない（Codex独立レビュー指摘の回帰：保存前の値が古いまま同期され、同期後の再描画で未保存の入力が失われるのを防ぐ）',()=>{
  assert.match(js,/function orgFormHasUnsavedChanges\(record\)/);
  const handler=js.match(/d\.querySelectorAll\('\[data-mtgsync\]'\)\.forEach\(btn=>btn\.onclick=async\(\)=>\{[\s\S]*?\n \}\);/)?.[0]||'';

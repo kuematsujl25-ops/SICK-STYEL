@@ -260,10 +260,14 @@ function adCsvImport(input){const f=input.files[0];if(!f)return;(async()=>{try{i
   rows.slice(1).forEach((r,i)=>{
    const platformRaw=(r[ci.platform]||'').trim();const platform=/instagram/i.test(platformRaw)||platformRaw.includes('インスタ')?'Instagram':/amazon/i.test(platformRaw)||platformRaw.includes('アマゾン')?'Amazon':null;
    const start=toDate(r[ci.start]);const end=ci.end>=0?toDate(r[ci.end]):start;
-   const cost=ci.cost>=0&&r[ci.cost]!==''?toNumber(r[ci.cost]):null;
-   const sales=ci.sales>=0&&r[ci.sales]!==''?toNumber(r[ci.sales]):null;
+   // セルが空欄なら「未取得（null）」として許容するが、空欄でないのにtoNumber()が解析できなかった場合
+   // （誤入力・負数・桁超過など）は、nullとして既存の広告費・広告経由売上を無言で上書きしてしまわないよう、
+   // 行ごと除外する（Codex独立レビュー指摘）。
+   const numericCell=idx=>{if(idx<0||r[idx]==='')return {value:null,invalid:false};const v=toNumber(r[idx]);return {value:v,invalid:v===null};};
+   const costCell=numericCell(ci.cost),salesCell=numericCell(ci.sales);
+   const cost=costCell.value,sales=salesCell.value;
    const win=ci.window>=0&&String(r[ci.window]||'').trim()!==''?Number(r[ci.window]):null;
-   if(!platform||!start||!end||end<start||(win!==null&&(!Number.isInteger(win)||win<0||win>365))){bad.push(i+2);return;}
+   if(!platform||!start||!end||end<start||costCell.invalid||salesCell.invalid||(win!==null&&(!Number.isInteger(win)||win<0||win>365))){bad.push(i+2);return;}
    const campaign=ci.campaign>=0?String(r[ci.campaign]||'').slice(0,200):'';const key=platform+'|'+start+'|'+end+'|'+campaign;const cur=byKey.get(key);
    if(cur){cur.adCost=cost;cur.attributedSales=sales;cur.attributionWindowDays=win;cur.campaign=campaign;cur.source='csv';cur.updatedAt=new Date().toISOString();updated++;}
    else{const row={id:crypto.randomUUID(),platform,periodStart:start,periodEnd:end,attributionWindowDays:win,adCost:cost,attributedSales:sales,source:'csv',campaign,updatedAt:new Date().toISOString()};next.adMetrics.push(row);byKey.set(key,row);added++;}
