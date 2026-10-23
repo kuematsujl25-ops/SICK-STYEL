@@ -6,7 +6,7 @@ import path from 'node:path';
 import {randomBytes} from 'node:crypto';
 import {createStore} from '../lib/store.js';
 import {decrypt} from '../lib/security.js';
-import {begin,connect,createMeeting,updateMeeting,deleteMeeting,safeStatus,disconnect,ZoomError} from '../integrations/zoom.js';
+import {begin,connect,createMeeting,updateMeeting,deleteMeeting,safeStatus,storageDiagnostics,disconnect,ZoomError} from '../integrations/zoom.js';
 
 test('Zoom OAuth: state固定・トークン暗号化・会議作成はjoin_urlのみ返す（start_urlを渡さない）',async t=>{
  const env={...process.env};process.env.ZOOM_CLIENT_ID='client-1';process.env.ZOOM_CLIENT_SECRET='secret-1';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
@@ -121,4 +121,43 @@ test('Zoomがエラー応答に任意の文字列を返してもOAuthログの�
   assert.equal(e.message.includes('SENSITIVE_TOKEN_MUST_NOT_BE_LOGGED'),false);
   return true;
  });
+});
+
+test('Zoom保存前診断: 暗号化→D1書き込み/削除を検証し既存業務文書を変更しない',async t=>{
+ const env={...process.env};process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-zoom-diagnostic-'));const store=await createStore({DATA_DIR:dir});
+ t.after(async()=>{for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
+ await store.put('workspace',{goals:[],tasks:[],brand:{Mission:'重要な既存情報'}});
+ const before=(await store.doc('workspace')).body;
+ const ok=await storageDiagnostics(store);
+ assert.deepEqual(ok,{ok:true,stage:'ready',code:'ready'});
+ const after=(await store.doc('workspace')).body;
+ assert.equal(before,after);
+ assert.equal((await store.query('SELECT name FROM ss_documents WHERE name LIKE $1',['zoom-storage-check:%'])).length,0);
+ process.env.TOKEN_ENCRYPTION_KEY='not-base64-32-byte-key';
+ const bad=await storageDiagnostics(store);
+ assert.deepEqual(bad,{ok:false,stage:'encryption',code:'encryption_failed'});
+ const failingStore={transaction:async()=>{throw new Error('PRIVATE DATABASE MESSAGE');}};
+ process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
+ const fail=await storageDiagnostics(failingStore);
+ assert.deepEqual(fail,{ok:false,stage:'database_write',code:'database_write_failed'});
+ assert.equal(JSON.stringify(fail).includes('PRIVATE DATABASE MESSAGE'),false);
+});
+
+test('Zoom OAuth認証後の暗号化失敗とDB保存失敗を安全に区別する',async t=>{
+ const env={...process.env},oldFetch=global.fetch;
+ process.env.ZOOM_CLIENT_ID='client-test';process.env.ZOOM_CLIENT_SECRET='secret-test';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-zoom-failures-'));const store=await createStore({DATA_DIR:dir});
+ t.after(async()=>{global.fetch=oldFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
+ global.fetch=async url=>new URL(url).pathname==='/oauth/token'?
+   Response.json({access_token:'do-not-log',refresh_token:'do-not-log',scope:'meeting:write:meeting meeting:update:meeting meeting:delete:meeting user:read:user'}):
+   Response.json({id:'u-1',email:'owner@example.com'});
+ const callback=async()=>{const u=new URL(await begin(store,'s'));return new URL('http://localhost/api/zoom/callback?code=c&state='+u.searchParams.get('state'));};
+ process.env.TOKEN_ENCRYPTION_KEY='wrong';
+ await assert.rejects(connect(store,'s',await callback()),e=>{assert.equal(e.code,'encryption_failed');assert.equal(e.stage,'encryption');assert.equal(e.message.includes('do-not-log'),false);return true;});
+ process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
+ const put=store.put;store.put=async()=>{throw new Error('DATABASE_SECRET_SHOULD_NOT_LOG');};
+ await assert.rejects(connect(store,'s',await callback()),e=>{assert.equal(e.code,'database_write_failed');assert.equal(e.stage,'database_write');assert.equal(e.message.includes('DATABASE_SECRET_SHOULD_NOT_LOG'),false);return true;});
+ store.put=put;
+ assert.equal(await store.doc('zoom-private'),undefined);
 });
