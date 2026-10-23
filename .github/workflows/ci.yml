@@ -1,11 +1,15 @@
 name: CI
 
+# ai-staff/phase4-runtime は現在の本番反映用統合ブランチ（scripts/deploy-existing.js の
+# DEPLOY_BRANCH定数と一致させること）。PRの作成元ブランチ名が claude/** 以外（例: ai-staff/**）
+# でも、このブランチへのPR・pushなら必ずCIが走るようにする（Codex独立レビュー指摘：
+# 作成元ブランチ名に依存した従来のpushフィルタのみでは、統合ブランチ宛のPRがCI対象から漏れていた）。
 on:
   pull_request:
-    branches: [main, claude/initial-github-sync]
+    branches: [main, claude/initial-github-sync, ai-staff/phase4-runtime]
     types: [opened, synchronize, reopened]
   push:
-    branches: ["claude/**"]
+    branches: ["claude/**", "ai-staff/phase4-runtime"]
 
 permissions:
   contents: read
