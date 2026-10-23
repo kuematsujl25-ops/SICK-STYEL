@@ -361,6 +361,43 @@ test('Zoom会議の作成自体は成功しても、その直後のID保存が�
  assert.equal(retried.org.initialMeetingSync.status,'synced','固着していれば「会議を作成処理中です」で拒否されるはずの再作成が正常に完了する');
 });
 
+test('取消処理で両方の外部削除が成功しても、最後の保存自体が失敗した場合、creating状態のまま固着させず再試行できる（Codex独立レビュー指摘の回帰：P2）',async t=>{
+ const env={...process.env};process.env.ZOOM_CLIENT_ID='c';process.env.ZOOM_CLIENT_SECRET='s';process.env.GOOGLE_CLIENT_ID='c';process.env.GOOGLE_CLIENT_SECRET='s';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-meeting-cancel-save-fail-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
+ t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
+ const org={...newOrg(),id:'org-1',name:'FC Example',updatedAt:new Date().toISOString(),deletedAt:null,history:[{stage:'DM送信',at:new Date().toISOString(),note:''}],initialZoomAt:'2026-10-28T14:00'};
+ const revision=await seed(store,org);
+ global.fetch=fakeFetch({});
+ const created=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision});
+ assert.equal(created.org.initialMeetingSync.status,'synced');
+ let failRemaining=0;
+ const realQuery=store.query.bind(store);
+ store.query=(text,values)=>{
+  if(failRemaining>0&&typeof text==='string'&&text.startsWith('UPDATE ss_documents')&&values?.[1]==='workspace'){failRemaining--;return [];}
+  return realQuery(text,values);
+ };
+ const okFetch=fakeFetch({});
+ global.fetch=async(u,o)=>{
+  const p=new URL(u).pathname;
+  const res=await okFetch(u,o);
+  // Zoom会議の削除が成功した直後から、最後の保存を2回（saveSyncReconciledの初回+1回の再試行）だけ
+  // 失敗させる（両方の外部削除は成功しているのに、最後の保存だけがCAS競合の繰り返し等で失敗した想定）。
+  if(/^\/v2\/meetings\/\d+$/.test(p)&&o?.method==='DELETE')failRemaining=2;
+  return res;
+ };
+ await assert.rejects(syncMeeting(store,{orgId:'org-1',kind:'initial',action:'cancel',revision:created.revision}),/他の端末/);
+ assert.equal(failRemaining,0,'想定した2回の保存失敗が実際に発生した');
+ const afterFailure=JSON.parse((await store.doc('workspace')).body).orgSales[0];
+ assert.notEqual(afterFailure.initialMeetingSync?.status,'creating','creating状態のまま固着していない（以前は以後のcreate/update/cancelが全てブロックされていた）');
+ assert.equal(afterFailure.initialMeetingSync,null,'両方の外部削除は成功済みのため、再試行の保存で正しく取消済み（null）として記録される');
+ assert.equal(afterFailure.initialZoomUrl,'');
+ // 固着していないことを実際に確認：次の操作（再作成）がブロックされずに進む。
+ global.fetch=fakeFetch({});
+ const latest=await store.doc('workspace');
+ const recreated=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision:latest.revision});
+ assert.equal(recreated.org.initialMeetingSync.status,'synced','固着していれば「会議を作成処理中です」で拒否されるはずの再作成が正常に完了する');
+});
+
 test('同じ更新番号の2重送信で外部Zoom会議は1件しか作成しない',async t=>{
  const env={...process.env};process.env.ZOOM_CLIENT_ID='c';process.env.ZOOM_CLIENT_SECRET='s';process.env.GOOGLE_CLIENT_ID='c';process.env.GOOGLE_CLIENT_SECRET='s';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
  const dir=await mkdtemp(path.join(tmpdir(),'ss-meeting-concurrent-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
