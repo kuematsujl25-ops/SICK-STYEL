@@ -84,3 +84,10 @@ npm run integrations:googlecalendar -- --apply
 - https://developers.zoom.us/docs/integrations/oauth-scopes-granular/
 - https://developers.google.com/workspace/calendar/api/auth
 - https://developers.google.com/workspace/calendar/api/v3/reference/events/insert
+
+## 確認つき会議作成（開発中・本番未反映）
+日時と内容を保存後、確認→Zoomのみ作成→発行URLの確認→カレンダー登録・ゲスト招待の二段階です。予定名は「団体名｜内容」、所要時間45分。ZoomホストとCalendar主催者は別々に表示します。招待・更新・取消はGoogleのsendUpdates=allを使用します。キャンセルしても実行しない、5分で確認が失効、revision・接続先変更時は再確認します。
+
+主催者はサーバー側のmeeting-confirmationポリシーで固定します。OAuthのcalendar.eventsだけでは主カレンダーIDを検証できません。追加権限は calendar.calendars.readonly（カレンダー名・ID等のメタデータ読み取り）。本人承認に基づきOAuthスコープ配列へ追加済みです。本番配信と実際の再認可は未実施です。配信後に既存接続を解除せず、設定のGoogleカレンダー接続から指定アカウントで再認可します。未確認状態でZoomを先に作ることも拒否します。Zoomの既存user:read:userでホストを確認し、追加Zoom権限は要求しません。
+
+古い同期記録にホストID・主催カレンダーIDが無い場合は推測で更新・削除しません。元のZoom/Calendar管理画面で所有者と予定を確認する必要があります。会議の通信結果が不明な状態では自動再作成しません。片側の確定失敗は保存済みIDを維持して再確認から復旧します。確認トークン・参加URL・OAuth情報をログへ出力しません。

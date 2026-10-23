@@ -146,3 +146,11 @@ export async function deleteMeeting(store,meetingId){
  return {ok:true};
 }
 export async function disconnect(store){await store.query('DELETE FROM ss_documents WHERE name=$1',['zoom-private']);return {ok:true};}
+
+export async function verifyHost(store){
+ const p=await privateData(store);if(!p)throw Error('Zoomを接続してください');
+ const access=await accessToken(store);
+ const me=await remote('profile','https://api.zoom.us/v2/users/me',{headers:{Authorization:'Bearer '+access}});
+ if(!me?.id||!me?.email||me.id!==p.userId)throw Error('Zoomホストの本人確認に失敗しました');
+ return {userId:me.id,email:me.email};
+}

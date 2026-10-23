@@ -101,12 +101,12 @@ test('newOrg starts with the first pipeline stage and empty history', () => {
 test('MTG自動作成ボタンは、Zoom・Googleカレンダーとも接続済みで、かつ団体が保存済みの場合のみ表示される', () => {
   const saved = org({ id: 'o1', initialZoomAt: '2026-10-28T14:00' });
   const unconnected = renderOrgEditor(saved, esc, '2026-10-21', { zoomConnected: false, calendarConnected: true });
-  assert.doesNotMatch(unconnected, /data-mtgsync="initial:create"/);
+  assert.doesNotMatch(unconnected, /data-mtgsync="initial:prepare"/);
   const unsaved = renderOrgEditor(null, esc, '2026-10-21', { zoomConnected: true, calendarConnected: true });
-  assert.doesNotMatch(unsaved, /data-mtgsync="initial:create"/);
+  assert.doesNotMatch(unsaved, /data-mtgsync="initial:prepare"/);
   const ready = renderOrgEditor(saved, esc, '2026-10-21', { zoomConnected: true, calendarConnected: true });
-  assert.match(ready, /data-mtgsync="initial:create"/);
-  assert.match(ready, /MTGを作成/);
+  assert.match(ready, /data-mtgsync="initial:prepare"/);
+  assert.match(ready, /確認してZoomを作成/);
 });
 
 test('同期済みMTGは「日程を同期し直す」「MTGを取消」を表示し、未作成時は作成ボタンのみ', () => {

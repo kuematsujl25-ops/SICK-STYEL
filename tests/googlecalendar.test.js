@@ -27,6 +27,7 @@ test('Google Calendar OAuth: オフラインアクセス必須・state固定・�
  };
  const url=new URL(await begin(store,'session-a'));
  assert.equal(url.searchParams.get('access_type'),'offline');assert.equal(url.searchParams.get('prompt'),'consent');
+ assert.deepEqual(url.searchParams.get('scope').split(' '),['https://www.googleapis.com/auth/calendar.events','https://www.googleapis.com/auth/calendar.calendars.readonly']);
  const state=url.searchParams.get('state');
  const cb=new URL('http://localhost/api/googlecalendar/callback?code=code&state='+state);
  await assert.rejects(connect(store,'session-b',cb),/state/);

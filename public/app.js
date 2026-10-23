@@ -1,3 +1,4 @@
+import {confirmMeetingPlan} from './meeting-confirmation-ui.js';
 import {renderTeam,bindTeam} from './ai-team.js';
 import {mountNotifications} from './notifications.js';
 let team=null;
@@ -113,9 +114,9 @@ function orgSalesView(){
 }
 function taskrow(x){const t=today();return `<div class="listrow"><input aria-label="${esc(x.title)}を完了にする" type="checkbox" data-check="${esc(x.id)}" ${x.done?'checked':''}><div class="grow ${x.done?'done':''}"><b>${esc(x.title)}</b><small class="${!x.done&&x.due<t?'red':''}">${esc(x.due)}${!x.done&&x.due<t?' · 期限超過':''}</small></div><span class="badge ${x.priority==='高'?'danger':''}">${esc(x.priority)}</span><button data-edit="tasks:${esc(x.id)}">編集</button></div>`;}
 function collection(key){const c=configs[key];const t=today();let rows=[...state[key]];if(key==='tasks')rows.sort((a,b)=>Number(a.done)-Number(b.done)||a.due.localeCompare(b.due));if(key==='metrics')rows.sort((a,b)=>b.date.localeCompare(a.date));
- return `<section class="panel"><div class="panelhead"><h2>${c.title}一覧 <small>${rows.length} 件</small></h2><div class="actions">${key==='metrics'?'<button class="secondary" id="csvopen">CSVから取り込む</button>':''}<button class="primary" data-new="${key}">＋ ${c.title}を追加</button></div></div>${key==='metrics'?'<p class="note">同じ日の記録は1件にまとめます。売上・注文は日次の値、フォロワー数は当日時点の値です。Amazon公式APIの値は「Amazon連携」画面に別に表示します。</p>':''}
+ return `<section class="panel"><div class="panelhead"><h2>${c.title}一覧 <small>${rows.length} 件</small></h2><div class="actions">${key==='metrics'?'<button class="secondary" id="csvopen">CSVから取り込む</button>':''}<button class="primary" data-new="${key}">＋ ${c.title}を追加</button></div></div>${key==='metrics'?'<details><summary>使い方・詳細</summary><p class="note">同じ日の記録は1件にまとめます。売上・注文は日次の値、フォロワー数は当日時点の値です。Amazon公式APIの値は「Amazon連携」画面に別に表示します。</p></details>':''}
  ${rows.length?`<div class="records">${rows.map(r=>key==='tasks'?taskrow(r):`<article class="record"><div class="recordtop"><span class="badge">${esc(key==='goals'?(r.type==='final'?'最終目標':r.month):key==='shipments'?r.status:r.date)}</span><button data-edit="${key}:${esc(r.id)}">編集</button></div><h3>${esc(r.title||r.date)}</h3>${key==='goals'?`<div class="goalnumber">${rate(r)}<small>%</small></div><progress max="100" value="${rate(r)}" aria-label="達成率"></progress><p>${esc(r.current)} / ${esc(r.target)} ${esc(r.unit)}</p>`:key==='shipments'?`<p class="${r.due<t&&!['発送済み','配達完了'].includes(r.status)?'red':''}">発送期限：${esc(r.due)}</p><p>注文番号：${esc(r.order||'—')}<br>宛先：${esc(r.recipient||'—')}<br>配送会社：${esc(r.carrier||'—')}<br>追跡番号：${esc(r.tracking||'未登録')}</p>`:`<div class="goalnumber">${yen(r.sales)}</div><p>注文 ${esc(r.orders)} 件${r.source==='csv'?' · CSV取込':''}</p>${r.instagramEntered===false?'<p class="note">Instagram指標は未入力</p>':`<div class="metricmini"><span>フォロワー <b>${esc(r.followers)}</b></span><span>リーチ <b>${esc(r.reach)}</b></span><span>反応 <b>${esc(r.engagement)}</b></span></div>`}`}${r.notes?`<p class="note">${esc(r.notes)}</p>`:''}</article>`).join('')}</div>`:empty(`${c.title}はまだありません。`,'登録したデータはサーバーに保存され、他の端末からも見られます。',key)}</section>`;}
-function brand(){const labels=['大切にする考え','はじまり','果たしたいこと','目指す姿','行動の指針'];return `<form id="brand" class="panel brandform"><div class="panelhead"><h2>ブランドの原点 <small>IDENTITY</small></h2><button class="primary">保存する</button></div><p class="note">ご自身の言葉で入力してください。未入力の項目はダッシュボードにも表示されません。</p>${['理念','起源','Mission','Vision','Values'].map((k,i)=>`<label><span class="fieldnum">0${i+1}</span><span>${k}<small>${labels[i]}</small></span><textarea name="${k}" rows="3" maxlength="10000">${esc(state.brand[k])}</textarea></label>`).join('')}</form>`;}
+function brand(){const labels=['大切にする考え','はじまり','果たしたいこと','目指す姿','行動の指針'];return `<form id="brand" class="panel brandform"><div class="panelhead"><h2>ブランドの原点 <small>IDENTITY</small></h2><button class="primary">保存する</button></div><details><summary>使い方・詳細</summary><p class="note">ご自身の言葉で入力してください。未入力の項目はダッシュボードにも表示されません。</p></details>${['理念','起源','Mission','Vision','Values'].map((k,i)=>`<label><span class="fieldnum">0${i+1}</span><span>${k}<small>${labels[i]}</small></span><textarea name="${k}" rows="3" maxlength="10000">${esc(state.brand[k])}</textarea></label>`).join('')}</form>`;}
 function statusBadge(s){if(!s)return '<span class="badge">確認中</span>';const r=s.readiness||connectionReadiness(s,s.apiVersion?'instagram':'amazon');return `<span class="badge ${r.state==='connected'?'ok':'warn'}" title="${esc(r.detail)}">${esc(r.label)}</span>`;}
 function zoomCalendarBadge(s){if(!s)return '<span class="badge">確認中</span>';if(!s.configured)return '<span class="badge warn">アプリ設定待ち</span>';return `<span class="badge ${s.connected?'ok':'warn'}">${s.connected?'接続済み':'本人認可待ち'}</span>`;}
 function settings(){return `<div class="settingsgrid"><section class="panel"><h2>バックアップ</h2><p>保存済みの業務データをJSONファイルでダウンロードします。パスワード・連携トークンは含まれません。</p><a class="primary" href="/api/backup" download>バックアップをダウンロード</a><hr><h2>バックアップから復元</h2><p>現在の業務データを置き換えます。復元前にバックアップをダウンロードしてください。</p><label class="filelabel">JSONファイルを選択<input type="file" id="restore" accept="application/json,.json"></label></section>
@@ -138,7 +139,7 @@ function settings(){return `<div class="settingsgrid"><section class="panel"><h2
  <li>クライアントID/シークレットを確認し、Macのターミナルで <code>npm run integrations:googlecalendar -- --plan</code> を実行して登録内容を確認します。Cloudflareへの反映が別途承認済みの場合に限り、同じコマンドの <code>--apply</code> で非表示入力して登録します。</li>
  <li>この画面で「Googleカレンダーを接続」→ Google公式画面で本人認可します（オフラインアクセスの同意が必要です）。</li></ol></details>
  <div class="actions">${calendarStatus?.configured?`<button class="primary" id="calconnect">${calendarStatus.connected?'再認可する':'Googleカレンダーを接続'}</button>`:''}${calendarStatus?.connected?'<button id="caldisconnect" class="red">接続を解除</button>':''}</div></div>
- <p class="note">${zoomStatus?.connected&&calendarStatus?.connected?'両方接続済みです。団体営業画面の「MTGを作成」から自動連携を利用できます。':'両方の接続が完了するまで、団体営業のMTGは手動URL入力・手動カレンダー登録のままです。未完成の自動連携を完成済みとは表示しません。'}</p></section></div>`;}
+ <p class="note">${zoomStatus?.connected&&calendarStatus?.connected?'認可設定あり。会議の操作前にZoomホストと主催カレンダーの所有者を確認します。':'両方の接続が完了するまで、団体営業のMTGは手動URL入力・手動カレンダー登録のままです。未完成の自動連携を完成済みとは表示しません。'}</p></section></div>`;}
 // ---------- Instagram ----------
 function safeLink(value){try{const u=new URL(value);return u.protocol==='https:'&&['www.instagram.com','instagram.com'].includes(u.hostname)?esc(u.href):'#';}catch{return '#';}}
 function instagramView(){const c=ig?.cache;const expired=ig?.expiresAt&&ig.expiresAt<Date.now();const dm=c?.dm;
@@ -375,18 +376,23 @@ function editor(key,record){const c=configs[key];const r=record||{due:key==='col
 function orgFormHasUnsavedChanges(record){
  const form=document.querySelector('#orgform');if(!form||!record)return false;
  const vals=Object.fromEntries(new FormData(form));
- for(const k in vals){if(k==='stageNote')continue;if(k in record&&String(record[k]??'')!==String(vals[k]))return true;}
+ for(const k in vals){if(k==='stageNote')continue;const meetingDefault=k==='initialMeetingContent'?'初回ZOOM':k==='proposalMeetingContent'?'活用法提案ZOOM':undefined;const saved=meetingDefault!==undefined?(record[k]||meetingDefault):record[k];if((k in record||meetingDefault!==undefined)&&String(saved??'')!==String(vals[k]))return true;}
  return false;
 }
 function orgEditor(record){const d=document.querySelector('#editor');
  d.innerHTML=renderOrgEditor(record,esc,today(),{zoomConnected:!!zoomStatus?.connected,calendarConnected:!!calendarStatus?.connected});d.showModal();
  d.querySelectorAll('[data-mtgsync]').forEach(btn=>btn.onclick=async()=>{
+  if(btn.disabled)return;
   const [kind,action]=btn.dataset.mtgsync.split(':');
-  if(action==='cancel'&&!confirm('MTGを取消しますか？Zoom会議・Googleカレンダーの予定も削除を試みます。'))return;
+
   if(orgFormHasUnsavedChanges(record)){toast('未保存の変更があります。先に「保存する」で保存してからMTG連携を実行してください');return;}
   btn.disabled=true;
   try{
-   const r=await api('orgsales/meeting','POST',{orgId:record.id,kind,action,revision:state.revision});
+   const request={orgId:record.id,kind,action,revision:state.revision};
+   const plan=await api('orgsales/meeting-preview','POST',request);
+   if(!d.open){btn.disabled=false;return;}
+   if(!await confirmMeetingPlan({...plan,action})){btn.disabled=false;return;}
+   const r=await api('orgsales/meeting','POST',{...request,confirmation:plan.confirmation});
    // サーバー側は、Zoom/カレンダーの外部呼び出し中に他端末が無関係な箇所を編集していても、その編集を
    // 保持したまま最新revisionへ自動的に追従して保存を完了させることがある（saveSyncReconciled）。
    // ここで該当団体だけをstateへ上書きしてrevisionだけ進めると、他端末の編集内容はローカルのstateに
@@ -411,7 +417,7 @@ function orgEditor(record){const d=document.querySelector('#editor');
   const stageChanged=!record||record.stage!==vals.stage;
   const history=stageChanged?[...base.history,{stage:vals.stage,at:now,note:vals.stageNote||''}]:base.history;
   const row={...base,name:vals.name,category:vals.category,size:vals.size,assignee:vals.assignee,contact:vals.contact,
-   stage:vals.stage,initialZoomAt:vals.initialZoomAt,initialZoomUrl:vals.initialZoomUrl,proposalZoomAt:vals.proposalZoomAt,proposalZoomUrl:vals.proposalZoomUrl,sampleQty:vals.sampleQty,sampleCost:vals.sampleCost,shippingCost:vals.shippingCost,trialUsers:vals.trialUsers,
+   stage:vals.stage,initialMeetingContent:vals.initialMeetingContent,proposalMeetingContent:vals.proposalMeetingContent,initialZoomAt:vals.initialZoomAt,initialZoomUrl:vals.initialZoomUrl,proposalZoomAt:vals.proposalZoomAt,proposalZoomUrl:vals.proposalZoomUrl,sampleQty:vals.sampleQty,sampleCost:vals.sampleCost,shippingCost:vals.shippingCost,trialUsers:vals.trialUsers,
    feedback:vals.feedback,proposal:vals.proposal,paidQty:vals.paidQty,paidRevenue:vals.paidRevenue,paidCost:vals.paidCost,
    lostReason:vals.lostReason,nextAction:vals.nextAction,nextDue:vals.nextDue,notes:vals.notes,updatedAt:now,history,deletedAt:base.deletedAt??null};
   const next={...state,orgSales:record?state.orgSales.map(x=>x.id===record.id?row:x):[...state.orgSales,row]};
