@@ -103,7 +103,7 @@ export function renderOrgKPI(orgs,period,esc){
  <section class="panel"><h2>開始月別の追跡</h2><p class="note">各団体の最初の履歴（通常はDM送信）が記録された月で分類します。</p>${cohortRows?`<div class="tablewrap"><table class="data"><thead><tr><th>開始月</th><th>団体数</th><th>有償導入</th><th>転換率</th></tr></thead><tbody>${cohortRows}</tbody></table></div>`:'<p>まだ集計できる団体がありません。</p>'}</section>`;
 }
 
-const SYNC_LABEL={creating:'Zoom作成処理中・重複作成防止',zoom_only:'Zoom作成済み・カレンダー未登録',synced:'連携済み（Zoom・カレンダーとも登録）',error:'一部失敗（再試行できます）'};
+const SYNC_LABEL={creating:'Zoom作成処理中・重複作成防止',zoom_only:'Zoom作成済み・カレンダー未登録',synced:'連携済み（Zoom・カレンダーとも登録）',error:'一部失敗（再試行できます）',uncertain:'作成結果が不明（要確認）'};
 // kind: 'initial'/'proposal' はlib/meeting-sync.jsのKINDSと一致させる（MTG同期APIへそのまま送るため）。
 // meeting-links.jsのgoogleCalendarDraft()だけは既存の'intro'/'proposal'表記を使うので、ここで変換する。
 function meetingBlock(o,kind,label,autoSync,esc){
