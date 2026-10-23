@@ -1,8 +1,9 @@
 import {runtime} from '../lib/runtime.js';
 import {encrypt,decrypt,token,hash} from '../lib/security.js';
 // 本人（管理者）のGoogleカレンダーをOAuth（Authorization Code, offline access）で認可する。
-// 最小スコープ: カレンダーの予定（イベント）作成・変更・削除のみ。カレンダー本体の設定・他カレンダー一覧は要求しない。
-export const scopes=['https://www.googleapis.com/auth/calendar.events'];
+// 予定操作と、承認済みの主カレンダーID照合用メタデータ読み取り。
+export const identityScope='https://www.googleapis.com/auth/calendar.calendars.readonly';
+export const scopes=['https://www.googleapis.com/auth/calendar.events',identityScope];
 export function config(){return !!(runtime().GOOGLE_CLIENT_ID&&runtime().GOOGLE_CLIENT_SECRET&&runtime().APP_ORIGIN&&runtime().TOKEN_ENCRYPTION_KEY);}
 const callback=()=>new URL('/api/googlecalendar/callback',runtime().APP_ORIGIN).href;
 // stage: 失敗した処理段階（token_exchange/token_refresh/create_event/update_event/delete_event/list_events）。
@@ -92,8 +93,6 @@ export async function listToday(store,day){
 }
 export async function disconnect(store){await store.query('DELETE FROM ss_documents WHERE name=$1',['googlecalendar-private']);return {ok:true};}
 
-// Approval and reauthorization are separate operations; no new scope requested here.
-export const identityScope='https://www.googleapis.com/auth/calendar.calendars.readonly';
 export async function verifyOrganizer(store,expected){
  const p=await privateData(store);if(!p)throw Error('Googleカレンダーを接続してください');
  const granted=String(p.scope||'').split(' ');
