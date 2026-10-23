@@ -1,3 +1,4 @@
+import {confirmMeetingPlan} from './meeting-confirmation-ui.js';
 import {renderTeam,bindTeam} from './ai-team.js';
 import {mountNotifications} from './notifications.js';
 let team=null;
@@ -381,6 +382,7 @@ function orgFormHasUnsavedChanges(record){
 function orgEditor(record){const d=document.querySelector('#editor');
  d.innerHTML=renderOrgEditor(record,esc,today(),{zoomConnected:!!zoomStatus?.connected,calendarConnected:!!calendarStatus?.connected});d.showModal();
  d.querySelectorAll('[data-mtgsync]').forEach(btn=>btn.onclick=async()=>{
+  if(btn.disabled)return;
   const [kind,action]=btn.dataset.mtgsync.split(':');
 
   if(orgFormHasUnsavedChanges(record)){toast('未保存の変更があります。先に「保存する」で保存してからMTG連携を実行してください');return;}
@@ -388,8 +390,8 @@ function orgEditor(record){const d=document.querySelector('#editor');
   try{
    const request={orgId:record.id,kind,action,revision:state.revision};
    const plan=await api('orgsales/meeting-preview','POST',request);
-   const operation=action==='prepare'?'Zoomのみ作成（招待はまだ送りません）':action==='cancel'?'Zoom・予定を削除し、ゲストへ取消通知':action==='update'?'日時・内容を更新し、ゲストへ更新通知':'カレンダーへ登録し、ゲストへ招待を送信';
-   if(!confirm([operation,plan.summary,plan.start+'（日本時間・45分）','Zoomホスト: '+plan.zoomHost,'Calendar主催者: '+plan.calendarId,'ゲスト: '+plan.attendees.join(', '),'Zoom URL: '+(plan.zoomUrl||'作成後に発行・招待前に再確認')].join('\n'))){btn.disabled=false;return;}
+   if(!d.open){btn.disabled=false;return;}
+   if(!await confirmMeetingPlan({...plan,action})){btn.disabled=false;return;}
    const r=await api('orgsales/meeting','POST',{...request,confirmation:plan.confirmation});
    // サーバー側は、Zoom/カレンダーの外部呼び出し中に他端末が無関係な箇所を編集していても、その編集を
    // 保持したまま最新revisionへ自動的に追従して保存を完了させることがある（saveSyncReconciled）。
