@@ -1,3 +1,4 @@
+import * as amazonAds from '../integrations/amazon-ads.js';
 import {createServer} from 'node:http';
 import {httpServerHandler} from 'cloudflare:node';
 import handler from '../api/index.js';
@@ -51,6 +52,8 @@ export default {
     catch{console.error(JSON.stringify({event:'scheduled_sync_failed',service:'instagram'}));}
    }
    if(kind&&kind!=='morning')await sendReport();
+   if(env.AMAZON_ADS_SYNC_ENABLED==='true'&&['10 0 * * *','0 11 * * *','0 13 * * *'].includes(event.cron)){try{await amazonAds.sync(store);}catch{console.error(JSON.stringify({event:'scheduled_sync_failed',service:'amazonads'}));}}
+
   }));
  }
 };

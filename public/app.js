@@ -1,3 +1,5 @@
+import {reconcileAds} from './ads-reconcile.js';
+let adsStatus=null;
 import {renderMeetings,renderMeetingEditor,meetingFormChanged,saveMeetingFields} from './meetings.js';
 import {hasOutstandingMeetings} from './org-meeting-lifecycle.js';
 import {confirmMeetingPlan} from './meeting-confirmation-ui.js';
@@ -39,7 +41,7 @@ async function load(){
  const s=await api('session');configured=s.configured;setupAllowed=s.setupAllowed;storageKind=s.storage;hosted=s.hosted;
  if(!s.authenticated)return auth();
  [state,ig,amz,zoomStatus,calendarStatus]=await Promise.all([api('data'),api('instagram/status'),api('amazon/status'),api('zoom/status'),api('googlecalendar/status')]);
- conversations=(await api('instagram/conversations')).data;if(section==='team')team=await api('ai-team');site=null;if(section==='site')site=await api('site');render();
+ adsStatus=await api('amazonads/status');conversations=(await api('instagram/conversations')).data;if(section==='team')team=await api('ai-team');site=null;if(section==='site')site=await api('site');render();
  const q=new URLSearchParams(location.search);
  if(q.has('notifications')){section='settings';render();}
  if(q.has('instagram')){section='instagram';render();toast(q.get('instagram')==='connected'?'Instagramの認可が完了しました。「今すぐ同期」で読み取りを検証してください。':'Instagramの認可を完了できませんでした。設定・権限を確認して再接続してください。');}
@@ -224,13 +226,14 @@ function amazonView(){const c=amz?.cache;const o=c?.orders;const t=today();const
  ${renderFactorNotes(c,targetMonth)}
  <section class="panel"><h2>認可前・認可待ち・欠損期間の入力方法</h2><p>日次の売上・注文件数を手入力するか、CSV（日付・売上・注文件数の列）を取り込めます。同じ日付の記録は上書き登録（重複追加はされません）。Seller Centralの「レポート」→「ビジネスレポート」の日付別レポート（売上とトラフィック）をCSVでダウンロードし、取り込み時に列を選択してください。</p><div class="actions"><button class="secondary" id="csvopen">CSVから取り込む</button><button class="primary" data-new="metrics">＋ 売上を手入力</button></div></section>`;}
 function renderRoas(){
- const rows=[...state.adMetrics].sort((a,b)=>b.periodEnd.localeCompare(a.periodEnd));
+ const reconciled=reconcileAds(state.adMetrics,adsStatus?.rows||[]);const rows=[...reconciled.rows].sort((a,b)=>b.periodEnd.localeCompare(a.periodEnd));
  return `<section class="panel"><div class="panelhead"><h2>広告費用対効果</h2><button class="primary" data-new="adMetrics">＋ 広告実績を追加</button></div>
- <p class="note">ROAS = 広告経由売上 ÷ 広告費。ACOS = 広告費 ÷ 広告経由売上 × 100（%）。<b>総売上を広告費で割った値はROASとして表示していません。</b>広告費のみ入力され広告経由売上が未入力の場合、ROAS/ACOSは「計算不可」です。Amazon広告・Instagram広告は別々に記録し合算しません。Amazon Ads APIとの自動連携は未接続のため、すべて保存・再読込可能な手入力/CSVです。</p>
+ <p class="note">ROAS = 広告経由売上 ÷ 広告費。ACOS = 広告費 ÷ 広告経由売上 × 100（%）。<b>総売上を広告費で割った値はROASとして表示していません。</b>広告費のみ入力され広告経由売上が未入力の場合、ROAS/ACOSは「計算不可」です。Amazon広告・Instagram広告は別々に記録し合算しません。Sponsored Productsの日次自動同期はSP-APIとは別の認可が必要です。その他の広告種別は自動集計対象外です。</p>
+ <p role="status">Amazon Ads：${adsStatus?.connected?'プロフィール確認済み':'未接続・専用認可待ち'} / 最終成功：${esc(adsStatus?.lastSuccess||'未取得')} / 日本時間・JPY</p>${adsStatus?.error?`<p role="alert">${esc(adsStatus.error)}</p>`:''}${reconciled.conflicts?`<p role="alert">${reconciled.conflicts}件の自動取得行は手入力/CSVの期間と重複するため集計から除外しています。履歴は保全しています。</p>`:''}<button id="ads-sync" ${adsStatus?.configured?'':'disabled'}>広告データを同期・進捗確認</button><p>直近31日を再取得し遅延更新を反映します。売上帰属は出品者7日・ベンダー14日。未取得は0円にしません。</p>
  <div class="formfields"><label>媒体<select id="adplatformfilter"><option value="all" ${adUI.platform==='all'?'selected':''}>すべて</option>${['Amazon','Instagram'].map(p=>`<option value="${p}" ${adUI.platform===p?'selected':''}>${p}</option>`).join('')}</select></label>
  <label class="secondary filelabel">CSVから取り込む<input id="adcsvfile" class="sr-only" type="file" accept=".csv,text/csv"></label><button type="button" class="secondary" id="adcsvtemplate">ひな形をダウンロード</button></div>
  ${rows.filter(r=>adUI.platform==='all'||r.platform===adUI.platform).length?`<div class="records">${rows.filter(r=>adUI.platform==='all'||r.platform===adUI.platform).map(r=>{const roas=adRoas(r),acos=adAcos(r);
-  return `<article class="record"><div class="recordtop"><span class="badge">${esc(r.platform)}</span><button data-edit="adMetrics:${esc(r.id)}">編集</button></div><h3>${esc(r.periodStart)} 〜 ${esc(r.periodEnd)}</h3><p class="note">通貨: JPY${r.attributionWindowDays!==null?` · アトリビューション期間: ${r.attributionWindowDays}日`:' · アトリビューション期間: 未設定'} · 取得方法: ${r.source==='csv'?'CSV取込':'手入力'}</p>
+  return `<article class="record"><div class="recordtop"><span class="badge">${esc(r.platform)}</span>${r.source==='api'?'<span>API取得・編集不可</span>':`<button data-edit="adMetrics:${esc(r.id)}">編集</button>`}</div><h3>${esc(r.periodStart)} 〜 ${esc(r.periodEnd)}</h3><p class="note">通貨: JPY${r.attributionWindowDays!==null?` · アトリビューション期間: ${r.attributionWindowDays}日`:' · アトリビューション期間: 未設定'} · 取得方法: ${r.source==='api'?'Amazon Ads API (SP)':r.source==='csv'?'CSV取込':'手入力'}</p>
   <div class="metricmini"><span>広告費<b>${r.adCost===null?'未取得':yen(r.adCost)}</b></span><span>広告経由売上<b>${r.attributedSales===null?'未取得':yen(r.attributedSales)}</b></span><span>ROAS<b>${roas===null?'計算不可':roas+'倍'}</b></span><span>ACOS<b>${acos===null?'計算不可':acos+'%'}</b></span></div>
   ${r.campaign?`<p class="note">${esc(r.campaign)}</p>`:''}</article>`;}).join('')}</div>`:'<div class="empty"><div aria-hidden="true">＋</div><b>広告実績はまだ登録されていません。</b><p>手入力またはCSVで広告費・広告経由売上を登録できます。</p></div>'}</section>`;}
 function renderFactorNotes(c,targetMonth){
@@ -348,6 +351,7 @@ function bind(){bindMetricsPages();if(section==='team')bindTeam({model:team,api,
  const newOrgBtn=document.querySelector('[data-neworg]');if(newOrgBtn)newOrgBtn.onclick=()=>orgEditor(null);
  const orgQ=document.querySelector('#orgsearch');if(orgQ){const search=e=>{if(e.isComposing)return;const start=orgQ.selectionStart,end=orgQ.selectionEnd;orgUI={...orgUI,q:orgQ.value};render();const next=document.querySelector('#orgsearch');next?.focus();next?.setSelectionRange(start,end);};orgQ.oninput=search;orgQ.oncompositionend=search;}
  document.querySelectorAll('[data-restoreorg]').forEach(b=>b.onclick=async()=>{if(!confirm('削除済み団体を一覧へ戻します。会議は作成・取消せず、元の連携記録を保持します。復元しますか？'))return;b.disabled=true;try{await persist({...state,orgSales:state.orgSales.map(x=>x.id===b.dataset.restoreorg?{...x,deletedAt:null}:x)});toast('団体を復元しました。編集画面で会議の状態と取消を確認してください');}catch(e){toast(e.message);b.disabled=false;}});
+ const adsSync=document.querySelector('#ads-sync');if(adsSync)adsSync.onclick=async()=>{adsSync.disabled=true;try{adsStatus=await api('amazonads/sync','POST',{});render();}catch(e){toast(e.message);adsStatus=await api('amazonads/status');render();}};
  const meetingSelect=document.querySelector('#meetingselect');if(meetingSelect)meetingSelect.onsubmit=e=>{e.preventDefault();const values=new FormData(meetingSelect),id=values.get('orgId'),kind=values.get('kind');if(['initial','proposal'].includes(kind))meetingEditor(state.orgSales.find(o=>o.id===id),kind);};
  document.querySelectorAll('[data-meetingorg]').forEach(b=>b.onclick=()=>meetingEditor(state.orgSales.find(o=>o.id===b.dataset.meetingorg),b.dataset.meetingkind));
  document.querySelectorAll('[data-editorg]').forEach(b=>b.onclick=()=>orgEditor(state.orgSales.find(x=>x.id===b.dataset.editorg)));
@@ -382,6 +386,9 @@ function meetingEditor(record,kind='initial'){
  if(!record||record.deletedAt)return;
  const d=document.querySelector('#editor');
  d.innerHTML=renderMeetingEditor(record,kind,esc,{zoomConnected:!!zoomStatus?.connected,calendarConnected:!!calendarStatus?.connected,calendarIdentityReady:calendarStatus?.identityReady});d.showModal();
+ const noteAction=async(input,btn)=>{if(btn.disabled)return;btn.disabled=true;try{await api('meeting-notes','POST',{...input,orgId:record.id,kind,revision:state.revision});state=await api('data');render();meetingEditor(state.orgSales.find(o=>o.id===record.id),kind);}catch(e){d.querySelector('#editerror').textContent=e.message;btn.disabled=false;}};
+ const noteImport=d.querySelector('#note-import');noteImport.onclick=()=>noteAction({action:'import',source:d.querySelector('#note-source').value,meetingAt:d.querySelector('#note-at').value,body:d.querySelector('#note-body').value,summary:d.querySelector('#note-summary').value,consentConfirmed:d.querySelector('#note-consent').checked},noteImport);
+ d.querySelectorAll('[data-note-undo],[data-note-approve]').forEach(b=>b.onclick=()=>{const action=b.dataset.noteUndo?'undo':'approve',[noteId,index]=(b.dataset.noteUndo||b.dataset.noteApprove).split(':');const raw=action==='approve'?d.querySelector('#fact-'+noteId+'-'+index).value:null;if(action==='approve'&&raw===''){d.querySelector('#editerror').textContent='確認した数値を入力してください';return;}if(confirm(action==='undo'?'反映前の値へ戻しますか？後から変更された値は上書きしません。':'根拠と現在の値を確認しましたか？この項目を指定値で更新します。'))noteAction({action,noteId,index:Number(index),value:raw===null?undefined:Number(raw)},b);});
  d.querySelectorAll('[data-mtgsync]').forEach(btn=>btn.onclick=async()=>{
   if(btn.disabled)return;
   const [kind,action]=btn.dataset.mtgsync.split(':');
@@ -423,14 +430,14 @@ function orgEditor(record){const d=document.querySelector('#editor');
  document.querySelector('#close').onclick=document.querySelector('#cancel').onclick=()=>d.close();
  document.querySelector('#orgform').onsubmit=async e=>{e.preventDefault();const b=document.querySelector('#save');b.disabled=true;try{
   const vals=Object.fromEntries(new FormData(e.target));
-  const numFields=['sampleQty','sampleCost','shippingCost','trialUsers','paidQty','paidRevenue','paidCost'];
+  const numFields=['sampleQty','sampleCost','shippingCost','trialUsers','desiredQty','proposedQty','confirmedQty','paidQty','paidRevenue','paidCost'];
   for(const n of numFields)vals[n]=vals[n]===''?null:Number(vals[n]);
   const now=new Date().toISOString();
   const base=record||{...newOrg(),id:crypto.randomUUID()};
   const stageChanged=!record||record.stage!==vals.stage;
   const history=stageChanged?[...base.history,{stage:vals.stage,at:now,note:vals.stageNote||''}]:base.history;
-  const row={...base,name:vals.name,category:vals.category,size:vals.size,assignee:vals.assignee,contact:vals.contact,
-   stage:vals.stage,sampleQty:vals.sampleQty,sampleCost:vals.sampleCost,shippingCost:vals.shippingCost,trialUsers:vals.trialUsers,
+  const row={...base,name:vals.name,partyType:vals.partyType||base.partyType||'organization',category:vals.category,size:vals.size,assignee:vals.assignee,contact:vals.contact,
+   stage:vals.stage,sampleQty:vals.sampleQty,sampleCost:vals.sampleCost,shippingCost:vals.shippingCost,trialUsers:vals.trialUsers,desiredQty:vals.desiredQty,proposedQty:vals.proposedQty,confirmedQty:vals.confirmedQty,
    feedback:vals.feedback,proposal:vals.proposal,paidQty:vals.paidQty,paidRevenue:vals.paidRevenue,paidCost:vals.paidCost,
    lostReason:vals.lostReason,nextAction:vals.nextAction,nextDue:vals.nextDue,notes:vals.notes,updatedAt:now,history,deletedAt:base.deletedAt??null};
   const next={...state,orgSales:record?state.orgSales.map(x=>x.id===record.id?row:x):[...state.orgSales,row]};

@@ -1,3 +1,5 @@
+import * as amazonAds from '../integrations/amazon-ads.js';
+import {writeMeetingNote} from '../lib/meeting-notes-store.js';
 import {assertMeetingRecordsRetained} from '../public/org-meeting-lifecycle.js';
 import {previewMeeting,confirmMeeting} from '../lib/meeting-confirmation.js';
 import {readTeam,writeTeam,taskPacket,TeamError} from '../lib/ai-team.js';
@@ -105,6 +107,9 @@ export default async function handler(req,res){
  if(route==='/api/googlecalendar/connect'&&req.method==='POST')return json(res,200,{url:await googlecalendar.begin(store,sessionHash)});
  if(route==='/api/googlecalendar/callback'&&req.method==='GET'){try{await googlecalendar.connect(store,sessionHash,url);return redirect('/?googlecalendar=connected');}catch(e){console.error(JSON.stringify({event:'googlecalendar_callback',error:e instanceof googlecalendar.GoogleCalendarError?String(e.code):'authorization_failed'}));return redirect('/?googlecalendar=error');}}
  if(route==='/api/googlecalendar/disconnect'&&req.method==='POST')return json(res,200,await googlecalendar.disconnect(store));
+ if(route==='/api/amazonads/status'&&req.method==='GET')return json(res,200,await amazonAds.status(store));
+ if(route==='/api/amazonads/sync'&&req.method==='POST')return json(res,200,await amazonAds.sync(store));
+ if(route==='/api/meeting-notes'&&req.method==='POST')return json(res,200,await writeMeetingNote(store,await body(req)));
  if(route==='/api/orgsales/meeting-status'&&req.method==='GET')return json(res,200,await meetingSyncStatus(store));
  if(route==='/api/orgsales/meeting-preview'&&req.method==='POST')return json(res,200,await previewMeeting(store,await body(req)));
  if(route==='/api/orgsales/meeting'&&req.method==='POST'){
