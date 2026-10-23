@@ -1,3 +1,4 @@
+import {previewMeeting,confirmMeeting} from '../lib/meeting-confirmation.js';
 import {readTeam,writeTeam,taskPacket,TeamError} from '../lib/ai-team.js';
 import {runtime} from '../lib/runtime.js';
 import {getStore} from '../lib/runtime.js';
@@ -8,7 +9,7 @@ import * as instagram from '../integrations/instagram.js';
 import * as amazon from '../integrations/amazon.js';
 import * as zoom from '../integrations/zoom.js';
 import * as googlecalendar from '../integrations/googlecalendar.js';
-import {syncMeeting,status as meetingSyncStatus} from '../lib/meeting-sync.js';
+import {status as meetingSyncStatus} from '../lib/meeting-sync.js';
 import * as notifications from '../lib/notifications.js';
 import {emptySite,validateSite,publicView,DEFAULT_SITE_ORIGINS} from '../lib/site.js';
 
@@ -104,9 +105,10 @@ export default async function handler(req,res){
  if(route==='/api/googlecalendar/callback'&&req.method==='GET'){try{await googlecalendar.connect(store,sessionHash,url);return redirect('/?googlecalendar=connected');}catch(e){console.error(JSON.stringify({event:'googlecalendar_callback',error:e instanceof googlecalendar.GoogleCalendarError?String(e.code):'authorization_failed'}));return redirect('/?googlecalendar=error');}}
  if(route==='/api/googlecalendar/disconnect'&&req.method==='POST')return json(res,200,await googlecalendar.disconnect(store));
  if(route==='/api/orgsales/meeting-status'&&req.method==='GET')return json(res,200,await meetingSyncStatus(store));
+ if(route==='/api/orgsales/meeting-preview'&&req.method==='POST')return json(res,200,await previewMeeting(store,await body(req)));
  if(route==='/api/orgsales/meeting'&&req.method==='POST'){
   const b=await body(req);
-  const result=await syncMeeting(store,{orgId:String(b.orgId||''),kind:String(b.kind||''),action:String(b.action||''),revision:b.revision});
+  const result=await confirmMeeting(store,{orgId:String(b.orgId||''),kind:String(b.kind||''),action:String(b.action||''),revision:b.revision,confirmation:b.confirmation});
   return json(res,200,{ok:true,org:result.org,revision:result.revision,warnings:result.warnings||[]});
  }
  if(route==='/api/logout'&&req.method==='POST'){await store.query('DELETE FROM ss_sessions WHERE token=$1',[sessionHash]);res.setHeader('Set-Cookie',cookie('',0));return json(res,200,{ok:true});}

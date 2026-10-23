@@ -43,10 +43,10 @@ async function accessToken(store,p){
  return fresh.access_token;
 }
 export async function safeStatus(store){const p=await privateData(store);return {configured:config(),connected:!!p,email:p?.email||null,connectedAt:p?.connectedAt||null};}
-export async function createEvent(store,{summary,description,location,startIso,endIso,attendees}){
+export async function createEvent(store,{summary,description,location,startIso,endIso,attendees,calendarId='primary'}){
  const p=await privateData(store);if(!p)throw Error('Googleカレンダーを接続してください');
  const access=await accessToken(store,p);
- const r=await remote('create_event','https://www.googleapis.com/calendar/v3/calendars/primary/events',{method:'POST',headers:{Authorization:`Bearer ${access}`,'Content-Type':'application/json'},
+ const r=await remote('create_event','https://www.googleapis.com/calendar/v3/calendars/'+encodeURIComponent(calendarId)+'/events?sendUpdates=all',{method:'POST',headers:{Authorization:`Bearer ${access}`,'Content-Type':'application/json'},
   body:JSON.stringify({summary,description,location,start:{dateTime:startIso,timeZone:'Asia/Tokyo'},end:{dateTime:endIso,timeZone:'Asia/Tokyo'},attendees:(attendees||[]).map(email=>({email}))})});
  // remote()はHTTP応答自体は成功（2xx）でも、本文の読み取りが途中で失敗した場合はnullを返す。Googleは予定を
  // 作成済みの可能性が高いのに、ここでTypeErrorとして投げてしまうと、呼び出し元（lib/meeting-sync.js）は
@@ -56,17 +56,17 @@ export async function createEvent(store,{summary,description,location,startIso,e
   throw new GoogleCalendarError('response_body_unreadable','Googleからの応答本文を読み取れませんでした。予定が作成されている可能性があります','create_event');
  return {eventId:r.id,htmlLink:r.htmlLink||null};
 }
-export async function updateEvent(store,eventId,{summary,description,location,startIso,endIso}){
+export async function updateEvent(store,eventId,{summary,description,location,startIso,endIso,attendees,calendarId='primary'}){
  const p=await privateData(store);if(!p)throw Error('Googleカレンダーを接続してください');
  const access=await accessToken(store,p);
- await remote('update_event',`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`,{method:'PATCH',headers:{Authorization:`Bearer ${access}`,'Content-Type':'application/json'},
-  body:JSON.stringify({summary,description,location,start:{dateTime:startIso,timeZone:'Asia/Tokyo'},end:{dateTime:endIso,timeZone:'Asia/Tokyo'}})});
+ await remote('update_event',`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}?sendUpdates=all`,{method:'PATCH',headers:{Authorization:`Bearer ${access}`,'Content-Type':'application/json'},
+  body:JSON.stringify({summary,description,location,start:{dateTime:startIso,timeZone:'Asia/Tokyo'},end:{dateTime:endIso,timeZone:'Asia/Tokyo'},...(attendees?{attendees:attendees.map(email=>({email}))}:{})})});
  return {ok:true};
 }
-export async function deleteEvent(store,eventId){
+export async function deleteEvent(store,eventId,calendarId='primary'){
  const p=await privateData(store);if(!p)throw Error('Googleカレンダーを接続してください');
  const access=await accessToken(store,p);
- try{await remote('delete_event',`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`,{method:'DELETE',headers:{Authorization:`Bearer ${access}`}});}
+ try{await remote('delete_event',`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}?sendUpdates=all`,{method:'DELETE',headers:{Authorization:`Bearer ${access}`}});}
  catch(e){if(e instanceof GoogleCalendarError&&(e.code===410||e.code===404))return {ok:true,alreadyGone:true};throw e;}
  return {ok:true};
 }
@@ -91,3 +91,15 @@ export async function listToday(store,day){
  throw new GoogleCalendarError('incomplete','Googleカレンダーの予定を全件取得できませんでした。','list_events');
 }
 export async function disconnect(store){await store.query('DELETE FROM ss_documents WHERE name=$1',['googlecalendar-private']);return {ok:true};}
+
+// Approval and reauthorization are separate operations; no new scope requested here.
+export const identityScope='https://www.googleapis.com/auth/calendar.calendars.readonly';
+export async function verifyOrganizer(store,expected){
+ const p=await privateData(store);if(!p)throw Error('Googleカレンダーを接続してください');
+ const granted=String(p.scope||'').split(' ');
+ if(!granted.some(s=>[identityScope,'https://www.googleapis.com/auth/calendar.readonly','https://www.googleapis.com/auth/calendar'].includes(s)))throw Error('主催カレンダー確認には calendar.calendars.readonly の追加承認・再認可が必要です（未実施）');
+ const access=await accessToken(store,p);
+ const calendar=await remote('identity','https://www.googleapis.com/calendar/v3/calendars/primary',{headers:{Authorization:'Bearer '+access}});
+ if(typeof calendar?.id!=='string'||calendar.id.toLowerCase()!==expected.toLowerCase())throw Error('接続中の主カレンダーが指定した主催者と一致しません');
+ return {calendarId:calendar.id};
+}
