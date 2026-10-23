@@ -160,3 +160,9 @@ test('Web Push payload is signed, encrypted and decryptable with the subscriber 
  assert.equal(clear.at(-1),2);
  assert.equal(JSON.parse(new TextDecoder().decode(clear.slice(0,-1))).title,'配信テスト');
 });
+
+test('Edge WNS購読を限定許可し、偽装ホスト・認証情報・非HTTPSは拒否する',()=>{
+ const keys={p256dh:'B'+'A'.repeat(86),auth:'A'.repeat(22)};
+ assert.equal(validateSubscription({endpoint:'https://wns2-region.notify.windows.com/w/?token=dummy',keys}).endpoint,'https://wns2-region.notify.windows.com/w/?token=dummy');
+ for(const endpoint of ['https://evilnotify.windows.com/w/','https://wns.notify.windows.com.evil.invalid/w/','http://wns.notify.windows.com/w/','https://user:pass@wns.notify.windows.com/w/','https://wns.notify.windows.com:444/w/'])assert.throws(()=>validateSubscription({endpoint,keys}));
+});
