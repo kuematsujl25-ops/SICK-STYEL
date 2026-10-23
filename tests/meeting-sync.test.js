@@ -665,3 +665,15 @@ test('既存会議への同時「日程変更」と「取消」は、片方だ�
  if(sync===null){assert.equal(finalOrg.initialZoomUrl,'');}
  else{assert.equal(sync.status,'synced');assert.ok(sync.zoomMeetingId);assert.ok(sync.calendarEventId);}
 });
+test('初回Zoom作成中の日時・名前編集はIDを保持し古い内容のカレンダー作成を止める',async t=>{
+ const {withRuntime}=await import('../lib/runtime.js');const dir=await mkdtemp(path.join(tmpdir(),'ss-create-race-'));const store=await createStore({DATA_DIR:dir}),original=global.fetch;
+ t.after(async()=>{global.fetch=original;store.close();await rm(dir,{recursive:true,force:true});});
+ await withRuntime({TOKEN_ENCRYPTION_KEY:randomBytes(32).toString('base64'),ZOOM_CLIENT_ID:'qa',ZOOM_CLIENT_SECRET:'qa',GOOGLE_CLIENT_ID:'qa',GOOGLE_CLIENT_SECRET:'qa',APP_ORIGIN:'http://localhost'},async()=>{
+  for(const field of ['initialZoomAt','name']){
+   const org={...newOrg(),id:'org-1',name:'FC Example',updatedAt:new Date().toISOString(),deletedAt:null,history:[{stage:'DM送信',at:new Date().toISOString(),note:''}],initialZoomAt:'2026-10-28T14:00'};const revision=await seed(store,org);const fake=fakeFetch({});let calendarCreates=0;
+   global.fetch=async(u,o)=>{if(String(u).includes('/v2/users/me/meetings')&&o?.method==='POST'){const doc=await store.doc('workspace'),data=JSON.parse(doc.body);data.orgSales[0][field]=field==='name'?'Renamed':'2026-11-05T10:00';await store.put('workspace',data);}if(String(u).includes('/calendar/v3/calendars/primary/events')&&o?.method==='POST')calendarCreates++;return fake(u,o);};
+   await assert.rejects(syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision}),/変更しました/);
+   const saved=JSON.parse((await store.doc('workspace')).body).orgSales[0];assert.ok(saved.initialMeetingSync.zoomMeetingId);assert.equal(saved.initialMeetingSync.status,'zoom_only');assert.equal(calendarCreates,0);
+  }
+ });
+});
