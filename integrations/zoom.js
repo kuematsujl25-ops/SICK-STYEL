@@ -62,12 +62,14 @@ async function acquireRefreshLease(store){
  }
  throw new ZoomError('token_refresh_busy','Zoom接続の更新が他の処理と混み合っています。少し待って再試行してください','token_refresh');
 }
-async function releaseLease(store,leased,extra){
+// 交換前・交換失敗時のリース解放専用。保存されているトークン自体は変わっていないので、
+// 解放に失敗しても実害はなく、20秒のリース期限切れで自然に回収される（ベストエフォートでよい）。
+async function releaseLeaseOnly(store,leased){
  // store.query()はバックエンド（ローカルSQLiteは同期・本番Postgresは非同期）によって返り値の形が異なるため、
  // 必ずawaitしてからtry/catchで囲む（.catch()を直接チェーンしない）。
  try{await store.query('UPDATE ss_documents SET body=$1,revision=revision+1 WHERE name=$2 AND revision=$3',
-  [JSON.stringify({...leased,revision:undefined,refreshing:null,...extra}),'zoom-private',leased.revision]);}
- catch{/* リース解放に失敗しても20秒後の期限切れで自動的に回収される */}
+  [JSON.stringify({...leased,revision:undefined,refreshing:null}),'zoom-private',leased.revision]);}
+ catch{/* リース解放のみの失敗は無害 */}
 }
 async function accessToken(store){
  const auth='Basic '+Buffer.from(`${runtime().ZOOM_CLIENT_ID}:${runtime().ZOOM_CLIENT_SECRET}`).toString('base64');
@@ -76,9 +78,26 @@ async function accessToken(store){
  const form=new URLSearchParams({grant_type:'refresh_token',refresh_token:refresh});
  let fresh;
  try{fresh=await remote('token_refresh','https://zoom.us/oauth/token',{method:'POST',headers:{Authorization:auth,'Content-Type':'application/x-www-form-urlencoded'},body:form});}
- catch(e){await releaseLease(store,leased,{});throw e;}
- if(!fresh.access_token||!fresh.refresh_token){await releaseLease(store,leased,{});throw new ZoomError('token_response_incomplete','Zoomトークンの更新に失敗しました。再接続してください','token_refresh');}
- await releaseLease(store,leased,{encrypted:encrypt({refresh:fresh.refresh_token}),issuedAt:Date.now()});
+ catch(e){await releaseLeaseOnly(store,leased);throw e;}
+ if(!fresh.access_token||!fresh.refresh_token){await releaseLeaseOnly(store,leased);throw new ZoomError('token_response_incomplete','Zoomトークンの更新に失敗しました。再接続してください','token_refresh');}
+ // ここから先、Zoomは既にrefresh_tokenをローテーション済み（古いトークンはもう無効）。新しいトークンの
+ // 保存に失敗すると、次回の更新がDB上の古い（無効な）トークンで試みられ、接続が完全に壊れる。これは
+ // 「リース解放の失敗」として握りつぶしてはいけない（Codex独立レビュー指摘：以前は握りつぶしてaccess_token
+ // だけ返しており、20秒待っても失われた新トークンが戻ってくるわけではなかった）。保存を1回だけ再試行し、
+ // それでも失敗すれば、呼び出し元にこの処理自体を失敗させ、再接続が必要なことを明示する。
+ const newCredential=JSON.stringify({...leased,revision:undefined,refreshing:null,encrypted:encrypt({refresh:fresh.refresh_token}),issuedAt:Date.now()});
+ let saved=false;
+ for(let attempt=0;attempt<2&&!saved;attempt++){
+  if(attempt>0)await new Promise(r=>setTimeout(r,300));
+  try{
+   const rows=await store.query('UPDATE ss_documents SET body=$1,revision=revision+1 WHERE name=$2 AND revision=$3 RETURNING revision',[newCredential,'zoom-private',leased.revision]);
+   saved=rows.length>0;
+  }catch{}
+ }
+ if(!saved){
+  console.error(JSON.stringify({event:'zoom_token_persist_failed',note:'rotated refresh_token could not be saved; connection requires reconnect'}));
+  throw new ZoomError('token_persist_failed','Zoomの新しい認可情報を保存できませんでした。接続が壊れている可能性があるため、設定画面から「接続を解除」→再接続してください','token_refresh');
+ }
  return fresh.access_token;
 }
 // 管理者が明示的に実行する非破壊診断。認証コード/Zoomトークンは不要。

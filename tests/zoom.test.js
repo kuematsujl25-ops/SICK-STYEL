@@ -90,6 +90,35 @@ test('Zoomの認可コールバックは失敗段階ごとに区別できる安�
   assert.equal(await store.doc('zoom-private'),undefined,'スコープ不足のまま接続情報を保存してはいけない');}
 });
 
+test('ローテーション後の新しいrefresh_tokenの保存自体が失敗したら、黙って成功扱いにせず明示的に失敗させる（Codex独立レビュー指摘の回帰：P1）',async t=>{
+ const env={...process.env};process.env.ZOOM_CLIENT_ID='client-1';process.env.ZOOM_CLIENT_SECRET='secret-1';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-zoom-persist-fail-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
+ t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
+ global.fetch=async(url,options)=>{const u=new URL(url);
+  if(u.hostname==='zoom.us'&&u.pathname==='/oauth/token')return Response.json({access_token:'access-x',refresh_token:'refresh-x',scope:'meeting:write:meeting meeting:update:meeting meeting:delete:meeting user:read:user'});
+  if(u.pathname==='/v2/users/me')return Response.json({id:'u1',email:'owner@example.com'});
+  return new Response(null,{status:404});
+ };
+ const url=new URL(await begin(store,'s'));await connect(store,'s',new URL('http://localhost/api/zoom/callback?code=c&state='+url.searchParams.get('state')));
+ const before=JSON.parse((await store.doc('zoom-private')).body);
+ // zoom-private documentへのUPDATEのうち、1回目（＝リース取得）は通すが、それ以降（ローテーション後の
+ // 新トークンを書き込む本保存。1回だけの再試行を含む）はすべてD1障害として失敗させる。
+ const realQuery=store.query.bind(store);let zoomPrivateUpdateCount=0;
+ store.query=(text,values)=>{
+  if(text.includes('UPDATE ss_documents')&&String(values?.[1])==='zoom-private'){
+   zoomPrivateUpdateCount++;
+   if(zoomPrivateUpdateCount>=2)throw Error('simulated D1 write failure');
+  }
+  return realQuery(text,values);
+ };
+ await assert.rejects(createMeeting(store,{topic:'t',startIso:'2026-10-28T05:00:00.000Z',durationMin:45}),
+  e=>{assert.ok(e instanceof ZoomError);assert.equal(e.code,'token_persist_failed');assert.equal(e.stage,'token_refresh');return true;},
+  '新しいrefresh_tokenを保存できない場合、access_tokenだけ返して成功したふりをしてはいけない');
+ store.query=realQuery;
+ const after=JSON.parse((await store.doc('zoom-private')).body);
+ assert.deepEqual(decrypt(after.encrypted),decrypt(before.encrypted),'保存に失敗した以上、DB上のrefresh_tokenは古いまま（Zoom側では既に無効）であることが分かる');
+});
+
 test('同時に2件の会議を作成しても、refresh_tokenのローテーションで接続が壊れない（Codex独立レビュー指摘の回帰）',async t=>{
  const env={...process.env};process.env.ZOOM_CLIENT_ID='client-1';process.env.ZOOM_CLIENT_SECRET='secret-1';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
  const dir=await mkdtemp(path.join(tmpdir(),'ss-zoom-token-race-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
