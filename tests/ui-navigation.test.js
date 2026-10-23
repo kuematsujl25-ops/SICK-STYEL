@@ -71,6 +71,13 @@ test('広告CSV取込は、広告費・広告経由売上のセルが空欄で�
  assert.match(fn,/costCell\.invalid\|\|salesCell\.invalid/,'解析失敗したセルは行の除外条件(bad.push)に含まれる');
 });
 
+test('AI社員の依頼保存で「未運用→運用開始」のトグルが成功した直後に依頼作成が失敗しても、bindTeamに束縛されたmodelが更新され、以後の操作（トグル・再送信）が古いrevisionを使い続けない（Codex独立レビュー指摘の回帰）',()=>{
+ const aiTeamJs=readFileSync(new URL('../public/ai-team.js',import.meta.url),'utf8');
+ const toggleBlock=aiTeamJs.match(/if\(!model\.state\.enabled\)\{[\s\S]*?\n \}/)?.[0]||'';
+ assert.ok(toggleBlock,'トグル成功時の処理ブロックが見つかる');
+ assert.match(toggleBlock,/model=started/,'bindTeamに束縛されたmodel自体を更新する（setModel()はアプリ全体のstateしか更新しないため）');
+});
+
 test('CSV取込等でinstagramEntered:falseの売上記録も、renderSnsMetricsの一覧（metrics唯一の編集入口）から除外されず編集・削除できる（Codex独立レビュー指摘の回帰：ナビ整理後、取込済みの売上記録を直す・消す手段がどの画面にも無くなっていた）',()=>{
  const fn=js.match(/function renderSnsMetrics\(metrics,esc\)\{[\s\S]*?\n\}/)?.[0]||'';
  assert.ok(fn,'renderSnsMetrics関数が見つかる');

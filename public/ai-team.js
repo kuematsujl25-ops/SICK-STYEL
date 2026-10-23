@@ -26,7 +26,14 @@ export function bindTeam({model,api,setModel,render,toast}){
  const create=document.querySelector('#teamcreate');if(create)create.onsubmit=async e=>{e.preventDefault();const f=Object.fromEntries(new FormData(create));if(f.fact.trim()&&!f.source.trim()){toast('数値や事実を入力する場合は取得元・確認方法も入力してください。');return;}const facts=f.fact.trim()?[{id:'f1',label:'本人が確認したデータ',value:f.fact,unit:'text',source:f.source,observed_at:f.date+'T00:00:00+09:00',kind:'observed'}]:[];try{if(f.evidence_csv?.size){if(f.evidence_csv.size>100000)throw Error('CSVは100KB以内にしてください');facts.push(...parseTeamCSV(await f.evidence_csv.text()));}let revision=model.revision;
  if(!model.state.enabled){
    const started=await api('ai-team','POST',{revision,command:{action:'toggle',enabled:true}});
-   setModel(started);revision=started.revision;
+   // setModel()はアプリ全体のstateを更新するが、この関数の外側（bindTeamの引数）で束縛された
+   // modelはそれだけでは更新されない。直後のcreate呼び出しが失敗すると（例: objectiveにメール
+   // アドレスが含まれる等のバリデーション）、render()が呼ばれず再描画・再bindもされないため、
+   // トグルボタンや次回の依頼保存など、このbindTeam呼び出し内の全ての処理が古いrevisionを
+   // 使い続け、修正して再送してもrevision不一致で失敗し続ける（Codex独立レビュー指摘）。
+   // ここでmodel自体を更新することで、以後のすべての参照箇所（send()・toggleボタン等）が
+   // 最新のrevision・stateを見るようにする。
+   model=started;setModel(started);revision=started.revision;
  }
  const updated=await api('ai-team','POST',{revision,command:{action:'create',job:{role:f.role,title:f.title,objective:f.objective,facts}}});
  setModel(updated);render();
