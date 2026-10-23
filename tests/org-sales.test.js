@@ -120,6 +120,16 @@ test('cohort month uses JST, not UTC, for grouping the first history entry (Code
   assert.doesNotMatch(html, /<td>2026-10<\/td>/, 'UTCの日付(2026-10)では分類されない');
 });
 
+test('返信あり団体は「返信待ち」「保留」「失注」「連絡不要」への移動だけでは数えない（実際に前進した段階だけを返信とみなす、Codex独立レビュー指摘の回帰）', () => {
+  const waitingOnly = org({ id: 'w', stage: '返信待ち', history: [{ stage: 'DM送信', at: '2026-10-01T00:00:00.000Z', note: '' }, { stage: '返信待ち', at: '2026-10-02T00:00:00.000Z', note: '' }] });
+  const onHold = org({ id: 'h', stage: '保留', history: [{ stage: 'DM送信', at: '2026-10-01T00:00:00.000Z', note: '' }, { stage: '保留', at: '2026-10-02T00:00:00.000Z', note: '' }] });
+  const lostNoReply = org({ id: 'l', stage: '失注', history: [{ stage: 'DM送信', at: '2026-10-01T00:00:00.000Z', note: '' }, { stage: '失注', at: '2026-10-02T00:00:00.000Z', note: '' }] });
+  const noContact = org({ id: 'n', stage: '連絡不要', history: [{ stage: 'DM送信', at: '2026-10-01T00:00:00.000Z', note: '' }, { stage: '連絡不要', at: '2026-10-02T00:00:00.000Z', note: '' }] });
+  const actuallyReplied = org({ id: 'r', stage: '初回ZOOM予約', history: [{ stage: 'DM送信', at: '2026-10-01T00:00:00.000Z', note: '' }, { stage: '初回ZOOM予約', at: '2026-10-02T00:00:00.000Z', note: '' }] });
+  const k = computeOrgKPI([waitingOnly, onHold, lostNoReply, noContact, actuallyReplied], '', '');
+  assert.equal(k.repliedOrgs, 1, '実際に前進（初回ZOOM予約以降）した団体だけが返信ありとして数えられる');
+});
+
 test('cohort table renders a conversion rate with explicit denominator', () => {
   const o = org({ history: [{ stage: 'DM送信', at: '2026-10-01T00:00:00.000Z', note: '' }, { stage: '有償導入', at: '2026-10-05T00:00:00.000Z', note: '' }] });
   const html = renderOrgKPI([o], { start: '', end: '' }, esc);

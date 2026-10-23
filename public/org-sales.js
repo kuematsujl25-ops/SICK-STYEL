@@ -21,6 +21,11 @@ const jstDate=at=>new Date(at).toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'
 const jstMonth=at=>jstDate(at).slice(0,7);
 function stageDate(history,stage){const h=[...history].reverse().find(x=>x.stage===stage);return h?jstDate(h.at):null;}
 
+// DM送信より先の「前進」段階（初回ZOOM予約〜継続購入）だけが、実際に返信・応答があったことを意味する。
+// 返信待ち・保留・失注・連絡不要（ORG_SIDE_STAGES）は返信の有無を確定しない（連絡なしでも失注・連絡不要に
+// 移すことがある）ため、これらへの移動を「返信あり」として数えてはいけない（Codex独立レビュー指摘）。
+const REPLY_CONFIRMED_STAGES=new Set(ORG_STAGES.slice(1));
+
 const STALLED_DAYS=14;
 // 「停滞」= 失注・連絡不要・継続購入（最終段階）以外で、直近の段階変化から14日以上動きがない案件。
 function isStalled(o,today){
@@ -69,7 +74,7 @@ export function computeOrgKPI(orgs,start,end){
  }
  const paidQty=active.filter(o=>uniq['有償導入'].has(o.id)).reduce((n,o)=>n+(o.paidQty||0),0);
  const firstPurchase=active.filter(o=>uniq['有償導入'].has(o.id)).reduce((n,o)=>n+(o.paidRevenue||0),0);
- const repliedOrgs=new Set(active.filter(o=>o.history.some(h=>within(h.at)&&h.stage!=='DM送信')).map(o=>o.id));
+ const repliedOrgs=new Set(active.filter(o=>o.history.some(h=>within(h.at)&&REPLY_CONFIRMED_STAGES.has(h.stage))).map(o=>o.id));
  const dmUniqueOrgs=uniq['DM送信'].size;
  return {start:start||'（指定なし）',end:end||'（指定なし）',dmCount,dmUniqueOrgs,
   repliedOrgs:repliedOrgs.size,zoomSchedCount,zoomDoneCount,sampleSentCount,arrivedCount,trialCount,proposalCount,
@@ -81,7 +86,7 @@ function rate(num,den){return den>0?Math.round(num/den*1000)/10:null;}
 export function renderOrgKPI(orgs,period,esc){
  const k=computeOrgKPI(orgs,period.start,period.end);
  const funnel=[['DM送信（通数）',k.dmCount,null],['DM送信先ユニーク団体',k.dmUniqueOrgs,null],
-  ['返信あり団体（DM以外の段階に進んだ団体）',k.repliedOrgs,k.dmUniqueOrgs],
+  ['返信あり団体（返信待ち・保留等ではなく実際に前進した団体）',k.repliedOrgs,k.dmUniqueOrgs],
   ['初回ZOOM予約',k.zoomSchedCount,k.dmUniqueOrgs],['初回ZOOM実施',k.zoomDoneCount,k.zoomSchedCount],
   ['サンプル発送',k.sampleSentCount,k.dmUniqueOrgs],['到着確認',k.arrivedCount,k.sampleSentCount],['試用確認',k.trialCount,k.arrivedCount],
   ['活用法提案ZOOM実施',k.proposalCount,k.trialCount],['有償導入団体',k.paidOrgs,k.dmUniqueOrgs],['継続購入団体',k.repeatOrgs,k.paidOrgs]];
