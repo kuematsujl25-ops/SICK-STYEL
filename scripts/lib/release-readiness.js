@@ -16,6 +16,13 @@ export function reviewForHead(root,head,base) {
     .sort((a,b)=>Date.parse(b.finished_at)-Date.parse(a.finished_at));
   const review=matches[0];
   if(!review)throw Error('最新SHAの独立Codexレビューがありません。npm run ai:review を実行してください');
+  // 「本文にP0/P1/P2の文字列があるだけで止める」単純な判定は意図的。もっと賢く「解決済みの言及」と
+  // 「未解決の指摘」を区別しようとすると、その判定自体がCodexの文章表現に依存する推測になり、本当は
+  // 未解決の指摘を誤って合格扱いにするリスクを新たに生む（fail-closedの安全性が下がる）。
+  // 実際に、Codexのreview出力は指摘を常に「- [P0/P1/P2] 見出し」という構造化された箇条書きでのみ書き、
+  // 指摘がない場合は severity記号を一切使わない自然文（例:「No actionable issues were found.」）になる
+  // ことを、この設計のために意図的に差分なしの変更でレビューを実行して確認済み。そのため、この単純な
+  // 文字列一致で「指摘ゼロの時だけ通過する」挙動は実測で検証されている（誤検知も見逃しも確認されていない）。
   if(/\bP[012]\b/i.test(review.report))throw Error('最新レビューにP0/P1/P2の記載があります。未解決の指摘を確認・修正して再レビューしてください');
   return {file:relative(root,review.path),sha256:fileHash(review.path),base};
 }
