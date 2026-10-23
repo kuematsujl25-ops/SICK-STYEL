@@ -254,11 +254,46 @@ test('カレンダー作成の外部呼び出し中に、同じ団体のMTG日�
  // 保存される。例外を投げっぱなしにするよりも、既存のUI（再試行ボタン・エラー文言表示）にそのまま乗る。
  const retried=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision:created.revision});
  assert.notEqual(retried.org.initialMeetingSync.status,'synced','「同期済み」として誤って記録されていない（古い日時の成功を真実として保存しない）');
+ assert.notEqual(retried.org.initialMeetingSync.status,'creating','creating状態のまま固着していない（以後の操作がブロックされない、Codex指摘の回帰：P2）');
  assert.match(retried.org.initialMeetingSync.error,/変更したため、今回の同期結果は保存しませんでした/);
  assert.ok(retried.org.initialMeetingSync.zoomMeetingId,'Zoom会議のIDは保持され、再試行時に重複作成されない');
+ assert.ok(retried.org.initialMeetingSync.calendarEventId,'Googleカレンダーの作成自体は成功しているため、そのイベントIDも失われず保持される（Codex指摘の回帰：P2、以前は孤立イベントになっていた）');
  const finalOrg=JSON.parse((await store.doc('workspace')).body).orgSales[0];
  assert.notEqual(finalOrg.initialMeetingSync.status,'synced','「同期済み」として誤って記録されていない');
  assert.equal(finalOrg.initialZoomAt,'2026-11-05T10:00','変更後の日時そのものは失われていない');
+});
+
+test('既存カレンダー予定の更新中に同じ団体のMTG日時が別編集で変更された場合、creating状態のまま固着せず、既存のZoom・カレンダーIDも保持したまま再試行できる（Codex独立レビュー指摘の回帰：P2）',async t=>{
+ const env={...process.env};process.env.ZOOM_CLIENT_ID='c';process.env.ZOOM_CLIENT_SECRET='s';process.env.GOOGLE_CLIENT_ID='c';process.env.GOOGLE_CLIENT_SECRET='s';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-meeting-update-guard-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
+ t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
+ const org={...newOrg(),id:'org-1',name:'FC Example',updatedAt:new Date().toISOString(),deletedAt:null,history:[{stage:'DM送信',at:new Date().toISOString(),note:''}],initialZoomAt:'2026-10-28T14:00'};
+ const revision=await seed(store,org);
+ global.fetch=fakeFetch({});
+ const created=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision});
+ assert.equal(created.org.initialMeetingSync.status,'synced');
+ // 既存のカレンダー予定を更新中、GoogleへのPATCHが返る直前に、別操作がこの団体自身のMTG日時を変更したとする。
+ const okFetch=fakeFetch({});
+ global.fetch=async(u,o)=>{
+  const path=new URL(u).pathname;
+  if(/^\/calendar\/v3\/calendars\/primary\/events\/.+$/.test(path)&&o?.method==='PATCH'){
+   const doc=await store.doc('workspace');const data=JSON.parse(doc.body);
+   data.orgSales[0].initialZoomAt='2026-11-05T10:00';
+   await store.query('UPDATE ss_documents SET body=$1,revision=revision+1 WHERE name=$2 AND revision=$3',[JSON.stringify(data),'workspace',doc.revision]);
+  }
+  return okFetch(u,o);
+ };
+ await assert.rejects(syncMeeting(store,{orgId:'org-1',kind:'initial',action:'update',revision:created.revision}),/変更したため、今回の同期結果は保存しませんでした/);
+ const afterConflict=JSON.parse((await store.doc('workspace')).body).orgSales[0];
+ assert.notEqual(afterConflict.initialMeetingSync.status,'creating','creating状態のまま固着していない（以前は以後のcreate/update/cancelが全てブロックされていた）');
+ assert.equal(afterConflict.initialMeetingSync.status,'error');
+ assert.ok(afterConflict.initialMeetingSync.zoomMeetingId,'Zoom会議IDは保持される');
+ assert.ok(afterConflict.initialMeetingSync.calendarEventId,'既存のカレンダー予定IDも保持される');
+ // 固着していないことを実際に確認：次の取消操作がブロックされずに進む。
+ global.fetch=fakeFetch({});
+ const latest=await store.doc('workspace');
+ const cancelled=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'cancel',revision:latest.revision});
+ assert.equal(cancelled.org.initialMeetingSync,null,'固着していれば「会議を作成処理中です」で拒否されるはずの取消が正常に完了する');
 });
 
 test('同じ更新番号の2重送信で外部Zoom会議は1件しか作成しない',async t=>{
