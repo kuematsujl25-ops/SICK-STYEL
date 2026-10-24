@@ -2,19 +2,20 @@
 // 既存管理者の本人ログイン（セッションはメモリのみ）とClaude Code本人購読を使い、
 // 管理画面で保存された依頼を自動分析して既存のレビュー待ちへ取り込む。
 // サーバーに追加の実行権限や有料APIキーを登録しない。Macが停止中は自動実行されない。
-import {spawnSync} from 'node:child_process';
+import {spawn as spawnChild} from 'node:child_process';
 import {existsSync,mkdtempSync,mkdirSync,readdirSync,readFileSync,rmSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {resolve,join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {ask,secret,requireTerminal} from '../lib/prompt.js';
 import {checkSubscription} from './cli.js';
+import {randomUUID} from 'node:crypto';
 import {validateTaskPacket} from '../../lib/ai-team.js';
 
 const ROOT=resolve(fileURLToPath(new URL('../../',import.meta.url)));
 const DEFAULT_ORIGIN='https://sickstyle-manager.sickstyle-74h4.workers.dev';
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
-const log=s=>process.stdout.write(s+'\n');
+const log=s=>console.log(s);
 const fail=s=>{throw Error(s);};
 
 function argumentsFor(argv){
@@ -56,9 +57,9 @@ export async function api(cookie,path,{method='GET',data,origin=DEFAULT_ORIGIN,r
  return json;
 }
 export function proactiveAllowed(model,job){return !job?.proactiveSource||!!(model.proactive?.state?.enabled&&model.proactive.state.modelQueue&&model.proactive.state.permissions?.[job.proactiveSource]);}
-export function eligibleJob(model,seen=new Set()){
+export function eligibleJob(model,seen=new Set(),staffOnly=false){
  if(!model?.state?.enabled||!Array.isArray(model.state.jobs))return null;
- return model.state.jobs.find(j=>j.status==='queued'&&j.attempts<2&&!seen.has(j.id)&&proactiveAllowed(model,j))||null;
+ return model.state.jobs.find(j=>(!staffOnly||j.proactiveSource==='staffTasks')&&j.status==='queued'&&j.attempts<2&&(j.run_attempts||0)<2&&!j.intake&&!seen.has(j.id+':'+(j.run_attempts||0))&&!seen.has(j.id)&&proactiveAllowed(model,j))||null;
 }
 export function artifactAfter(before,jobId,resultDir){
  const names=readdirSync(resultDir).filter(f=>f.startsWith(jobId+'-')&&
@@ -66,7 +67,17 @@ export function artifactAfter(before,jobId,resultDir){
  if(names.length!==1)fail('成果物JSONを一意に確認できません。結果は管理画面から手動で取り込んでください');
  return join(resultDir,names[0]);
 }
-export function runClaude(packet,{spawn=spawnSync}={}){
+export function spawnAnalysis(command,args,options,signal){
+ return new Promise((resolve,reject)=>{
+  const child=spawnChild(command,args,{...options,stdio:'ignore',detached:true});
+  const stop=()=>{try{process.kill(-child.pid,'SIGKILL');}catch{}};
+  const timer=setTimeout(stop,205000);const abort=()=>stop();signal?.addEventListener('abort',abort,{once:true});if(signal?.aborted)stop();
+  child.once('error',finishError);child.once('close',code=>{cleanup();resolve({status:code});});
+  function cleanup(){clearTimeout(timer);signal?.removeEventListener('abort',abort);}
+  function finishError(e){cleanup();reject(e);}
+ });
+}
+export async function runClaude(packet,{spawn=spawnAnalysis,signal}={}){
  validateTaskPacket(packet);
  const temp=mkdtempSync(join(tmpdir(),'sickstyle-auto-runner-'));
  try{
@@ -75,8 +86,8 @@ export function runClaude(packet,{spawn=spawnSync}={}){
   const resultDir=resolve(ROOT,'data/ai-results');
   mkdirSync(resultDir,{recursive:true,mode:0o700});
   const before=new Set(readdirSync(resultDir));
-  const run=spawn(process.execPath,['scripts/ai-staff/run-task.js',input,'--provider','claude','--run'],
-   {cwd:ROOT,encoding:'utf8',timeout:205000,maxBuffer:1000000,env:{...process.env,WRANGLER_SEND_METRICS:'false'}});
+  const run=await spawn(process.execPath,['scripts/ai-staff/run-task.js',input,'--provider','claude','--run'],
+   {cwd:ROOT,encoding:'utf8',timeout:205000,maxBuffer:1000000,env:{...process.env,WRANGLER_SEND_METRICS:'false'}},signal);
   if(run.status!==0)fail('Claude Code分析が完了しませんでした。購読上限・本人ログイン・CLIバージョンを確認してください（再実行は自動では行いません）');
   const outputFile=artifactAfter(before,packet.job_id,resultDir);
   if(!existsSync(outputFile))fail('Claudeの成果物が見つかりません');
@@ -86,25 +97,51 @@ export function runClaude(packet,{spawn=spawnSync}={}){
   return {result,outputFile};
  }finally{rmSync(temp,{force:true,recursive:true});}
 }
-export async function oneCycle(cookie,seen,{run=runClaude,request=fetch}={}){
- const current=await api(cookie,'ai-team',{request});
- const job=eligibleJob(current,seen);
+export function validateStaffAggregate(packet){
+ const facts=packet.facts;
+ if(packet.role!=='coo'||packet.title!=='自動業務分析：期限超過タスク'||packet.objective!=='根拠の件数と未確認事項から、確認の優先順位・改善案・必要な追加データを提示してください。個別の事実や原因は未取得です。外部操作は実行しないでください。'||facts.length!==2)fail('匿名の期限超過集計以外は送信しません');
+ const [count,evidence]=facts;
+ if(count.id!=='count'||count.label!=='期限と状態に該当する記録数'||count.unit!=='件'||count.source!=='SICK STYLE 保存済み staffTasks'||count.kind!=='observed'||!Number.isSafeInteger(count.value)||count.value<=0||evidence.id!=='evidence'||evidence.label!=='対象根拠の識別ハッシュ'||evidence.unit!=='識別子'||evidence.source!=='保存データの期限・更新日時・状態'||evidence.kind!=='observed'||!/^([a-f0-9]{64})$/.test(evidence.value))fail('匿名集計の形式を確認できません');
+}
+export async function oneCycle(cookie,seen,{run=runClaude,request=fetch,heartbeatMs=30000,staffOnly=false,onLog=()=>{}}={}){
+ const current=await api(cookie,'ai-team',{request});const job=eligibleJob(current,seen,staffOnly);
  if(!job)return {processed:false};
- seen.add(job.id); // 失敗時の無限再実行・利用枠消費を防止
- const task=await api(cookie,'ai-team/task?job_id='+encodeURIComponent(job.id),{request});
- validateTaskPacket(task);
- log('依頼を受信しました: '+job.id.slice(0,8)+' — Claude Codeで分析します。');
- const {result,outputFile}=await run(task);
- const latest=await api(cookie,'ai-team',{request});
- const target=latest.state?.jobs?.find(x=>x.id===job.id);
- if(!latest.state?.enabled||!proactiveAllowed(latest,target)||target?.status!=='queued'||target?.input_hash!==task.input_hash){
-  log('依頼が更新/停止されました。結果はMacの '+outputFile+' に保管し、サーバーへの上書きを行いません。');
+ const claim_id=randomUUID();
+ // CAS claim is never retried blindly. Unknown responses leave a lease, not another model call.
+ await api(cookie,'ai-team',{method:'POST',data:{revision:current.revision,command:{action:'claim',job_id:job.id,claim_id}},request});
+ seen.add(job.id+':'+(job.run_attempts||0));
+ const controller=new AbortController();let timer,busy=false,heartbeatFailure=false,stage='model_failed';
+ const report=async(action,extra={})=>{
+  const latest=await api(cookie,'ai-team',{request});
+  return api(cookie,'ai-team',{method:'POST',data:{revision:latest.revision,command:{action,job_id:job.id,claim_id,...extra}},request});
+ };
+ try{
+  const task=await api(cookie,'ai-team/task?job_id='+encodeURIComponent(job.id)+'&claim_id='+claim_id,{request});validateTaskPacket(task);
+  if(staffOnly)validateStaffAggregate(task);
+  // Verify permission/lease immediately before inference, then periodically while the child runs.
+  await report('heartbeat');
+  timer=setInterval(async()=>{if(busy)return;busy=true;try{await report('heartbeat');}catch{heartbeatFailure=true;controller.abort();}finally{busy=false;}},heartbeatMs);
+  onLog('依頼を受信しました: '+job.id.slice(0,8)+' — Claude Codeで分析します。');
+  const {result,outputFile}=await run(task,{signal:controller.signal});
+  clearInterval(timer);
+  if(heartbeatFailure)throw Error('heartbeat_lost');
+  const latest=await api(cookie,'ai-team',{request});const target=latest.state?.jobs?.find(x=>x.id===job.id);
+  if(!latest.state?.enabled||!proactiveAllowed(latest,target)||target?.status!=='running'||target?.run?.claim_id!==claim_id||target?.input_hash!==task.input_hash){
+   stage='stopped';throw Error('stopped');
+  }
+  stage='import_failed';
+  await api(cookie,'ai-team',{method:'POST',data:{revision:latest.revision,command:{action:'import',job_id:task.job_id,claim_id,packet:result}},request});
+  onLog('成果物を保存しました。管理アプリのAI社員画面で人間レビュー待ちです。');return {processed:true,imported:true};
+ }catch{
+  controller.abort();clearInterval(timer);
+  // This also checks an uncertain import: completed imports must never be changed to failed.
+  try{const latest=await api(cookie,'ai-team',{request});const target=latest.state?.jobs?.find(x=>x.id===job.id);
+   if(['running','stopped'].includes(target?.status)&&target.run?.claim_id===claim_id)
+    await api(cookie,'ai-team',{method:'POST',data:{revision:latest.revision,command:{action:'run_failed',job_id:job.id,claim_id,reason:target.status==='stopped'?'stopped':heartbeatFailure?'connection_lost':stage}},request});
+   else if(target?.status==='in_review'&&target.run?.claim_id===claim_id)return {processed:true,imported:true};
+  }catch{/* Offline state remains stale, never reported as current or retried automatically. */}
   return {processed:true,imported:false};
- }
- await api(cookie,'ai-team',{method:'POST',data:{revision:latest.revision,
-  command:{action:'import',job_id:task.job_id,packet:result}},request});
- log('成果物を保存しました。管理アプリのAI社員画面で人間レビュー待ちです。');
- return {processed:true,imported:true};
+ }finally{clearInterval(timer);}
 }
 async function main(){
  const options=argumentsFor(process.argv.slice(2));
@@ -117,10 +154,11 @@ async function main(){
  if(!/^\S+@\S+\.\S+$/.test(email))fail('メールアドレスが正しくありません');
  let password=await secret('管理アプリのパスワード（非表示・保存しません）: ');
  const cookie=await signIn({email,password}); password='';
+ log('自動実行対象は匿名の期限超過タスク集計だけです。自由入力・他データ種別は送信しません。');
  log('認証しました。依頼が登録されたら約'+options.interval/1000+'秒ごとに確認します。終了はCtrl+C。');
  const seen=new Set();
  while(true){
-  try{await oneCycle(cookie,seen);}
+  try{await oneCycle(cookie,seen,{staffOnly:true,onLog:log});}
   catch(e){
    log('ランナー確認/実行失敗: '+e.message);
    if(/401|期限切れ/.test(e.message))break;

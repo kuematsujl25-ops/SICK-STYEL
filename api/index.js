@@ -4,7 +4,7 @@ import {writeMeetingNote} from '../lib/meeting-notes-store.js';
 import {assertMeetingRecordsRetained} from '../public/org-meeting-lifecycle.js';
 import {previewMeeting,confirmMeeting} from '../lib/meeting-confirmation.js';
 import {readProactive,configureProactive,runProactive} from '../lib/proactive-staff.js';
-import {readTeam,writeTeam,taskPacket,TeamError} from '../lib/ai-team.js';
+import {readTeam,writeTeam,taskPacket,TeamError,liveRun} from '../lib/ai-team.js';
 import {runtime} from '../lib/runtime.js';
 import {getStore} from '../lib/runtime.js';
 import {empty,validate,migrate} from '../lib/domain.js';
@@ -92,7 +92,8 @@ export default async function handler(req,res){
  if(route==='/api/ai-team'&&req.method==='POST'){try{const input=await body(req);const result=await writeTeam(store,input);if(['import','approve'].includes(input.command?.action)){const job=result.state.jobs.find(j=>j.id===input.command.job_id);if(job)try{await notifications.aiUpdated(store,job,job.status);}catch(e){console.error(JSON.stringify({event:'ai_notification_failed',type:e.name||'unknown'}));}}return json(res,200,result);}catch(e){if(e instanceof TeamError)return json(res,e.status,{error:e.message});throw e;}}
  if(route==='/api/ai-team/task'&&req.method==='GET'){
   const t=await readTeam(store);const job=t.state.jobs.find(j=>j.id===url.searchParams.get('job_id'));
-  if(!t.state.enabled||!job||!['queued','rejected'].includes(job.status)||job.attempts>=2)return json(res,409,{error:'AI社員の停止状態・依頼状態を確認してください'});
+  if(!t.state.enabled||!job||!['queued','rejected','running'].includes(job.status)||job.attempts>=2)return json(res,409,{error:'AI社員の停止状態・依頼状態を確認してください'});
+  if(job.run?.claim_id&&(job.status!=='running'||url.searchParams.get('claim_id')!==job.run.claim_id||!liveRun(job)))return json(res,409,{error:'実行権が停止または期限切れです'});
   if(job.proactiveSource){const auto=(await readProactive(store)).state;if(!auto.enabled||!auto.modelQueue||!auto.permissions?.[job.proactiveSource])return json(res,409,{error:'能動モデル分析は停止中、またはデータ利用が許可されていません'});}
   return json(res,200,taskPacket(job));
  }
