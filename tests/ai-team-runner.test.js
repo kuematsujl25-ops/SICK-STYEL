@@ -118,3 +118,7 @@ test('API timeout bounds stalled requests and stalled response bodies',async()=>
  assert.equal(signal.aborted,true);
  await assert.rejects(api(cookie,'ai-team',{timeoutMs:5,request:async()=>({ok:true,text:()=>new Promise(()=>{})})}),/タイムアウト/);
 });
+test('running jobs remain protected against duplicate legacy requests',()=>{
+ const f=fixture(),j=f.model.state.jobs[0];const s=transitionTeam(f.model.state,{action:'claim',job_id:j.id,claim_id:'44444444-4444-4444-8444-444444444444'});
+ assert.throws(()=>transitionTeam(s,{action:'create',job:{role:j.role,title:j.title,objective:j.objective,facts:j.facts}}),/未完了/);
+});

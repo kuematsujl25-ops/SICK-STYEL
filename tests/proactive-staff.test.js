@@ -129,3 +129,8 @@ test('optional model capacity does not discard rules or retain uncommitted job l
  const team=await readTeam(store);team.state.jobs=Array.from({length:200},(_,i)=>({id:'old-'+i,status:'completed',created_at:'2026-10-20T00:00:00Z'}));await store.put('ai-team-sickstyle-v1',team.state);
  const result=await runProactive(store,{now});assert.equal(result.state.runs.at(-1).status,'completed');assert.match(result.state.runs.at(-1).modelStatus,/保留/);assert.equal(result.state.tasks.length,3);assert.ok(result.state.tasks.every(t=>!t.modelJobId));assert.equal((await readTeam(store)).state.jobs.length,200);
 });
+test('legacy manual queue cannot starve approved staff aggregate requests',async t=>{
+ const {readTeam,writeTeam}=await import('../lib/ai-team.js');const store=await fixture(t);await store.put('workspace',workspace);await enableModelQueue(store);
+ for(const title of ['旧依頼A','旧依頼B']){const current=await readTeam(store);await writeTeam(store,{revision:current.revision,command:{action:'create',job:{role:'coo',title,objective:'ローカル試験',facts:[]}}});}
+ await runProactive(store,{now});const team=await readTeam(store);assert.equal(team.state.jobs.filter(j=>j.proactiveSource==='staffTasks').length,1);assert.equal(team.state.jobs.filter(j=>!j.proactiveSource).length,2);
+});
