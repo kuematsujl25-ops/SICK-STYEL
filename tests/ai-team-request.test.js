@@ -9,7 +9,9 @@ const esc=s=>String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;');
 
 test('stopped AI team shows actionable first request submission, not a disabled button',()=>{
  const html=renderTeam({state:emptyTeam(),catalog:TEAM_CATALOG},esc);
- assert.match(html,/手動運用を開始して依頼を保存/);
+ assert.match(html,/受け付けて振り分ける/);
+ assert.doesNotMatch(html,/id="teamcreate"/);
+ assert.match(html,/自由入力はClaudeへ送信しません/);
  assert.doesNotMatch(html,/<button class="primary" disabled>依頼を保存/);
  assert.match(html,/Mac上のAIランナーを起動していればClaude Codeが自動で分析/);
 });
