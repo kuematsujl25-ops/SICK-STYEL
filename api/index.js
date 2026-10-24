@@ -1,17 +1,28 @@
+import {MeetingNoteError} from '../lib/meeting-notes.js';
+import * as amazonAds from '../integrations/amazon-ads.js';
+import {writeMeetingNote} from '../lib/meeting-notes-store.js';
+import {assertMeetingRecordsRetained} from '../public/org-meeting-lifecycle.js';
+import {previewMeeting,confirmMeeting} from '../lib/meeting-confirmation.js';
+import {readProactive,configureProactive,runProactive} from '../lib/proactive-staff.js';
+import {readTeam,writeTeam,taskPacket,TeamError,liveRun} from '../lib/ai-team.js';
 import {runtime} from '../lib/runtime.js';
 import {getStore} from '../lib/runtime.js';
-import {empty,validate} from '../lib/domain.js';
+import {empty,validate,migrate} from '../lib/domain.js';
 import {hash,token,equal} from '../lib/security.js';
 import {hashPassword,verifyPassword} from '../lib/password.js';
 import * as instagram from '../integrations/instagram.js';
 import * as amazon from '../integrations/amazon.js';
+import * as zoom from '../integrations/zoom.js';
+import * as googlecalendar from '../integrations/googlecalendar.js';
+import {status as meetingSyncStatus} from '../lib/meeting-sync.js';
+import * as notifications from '../lib/notifications.js';
 import {emptySite,validateSite,publicView,DEFAULT_SITE_ORIGINS} from '../lib/site.js';
 
 function json(res,status,value){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(value));}
 export async function rawBody(req){if(req._sickstyleRaw)return req._sickstyleRaw;let n=0;const chunks=[];for await(const c of req){const b=Buffer.from(c);n+=b.length;if(n>2_000_000)throw Error('データが大きすぎます');chunks.push(b);}return req._sickstyleRaw=Buffer.concat(chunks);}
 async function body(req){return JSON.parse((await rawBody(req)).toString()||'{}');}
 const cookie=(value,seconds)=>`session=${value}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${seconds}${(runtime().CLOUDFLARE&&runtime().CF_LOCAL_DEV!=='true')||runtime().VERCEL||runtime().COOKIE_SECURE==='true'?'; Secure':''}`;
-const revisionOf=async store=>{const r=await store.doc('workspace');return {...(r?JSON.parse(r.body):empty()),revision:r?.revision||0};};
+const revisionOf=async store=>{const r=await store.doc('workspace');return {...migrate(r?JSON.parse(r.body):empty()),revision:r?.revision||0};};
 export default async function handler(req,res){
  res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('Cache-Control','no-store');
  try{
@@ -31,7 +42,7 @@ export default async function handler(req,res){
   const o=req.headers.origin;if(o&&origins.includes(o)){res.setHeader('Access-Control-Allow-Origin',o);res.setHeader('Vary','Origin');}
   if(req.method==='OPTIONS'){res.setHeader('Access-Control-Allow-Methods','GET');res.writeHead(204);return res.end();}
   if(!['GET','HEAD'].includes(req.method))return json(res,405,{error:'読み取り専用です'});
-  const r=await store.doc('site-public');const body=r?r.body:JSON.stringify({version:1,publishedAt:null,products:[],news:[],philosophy:null,links:null});
+  const r=await store.doc('site-public');const body=r?r.body:JSON.stringify({version:1,publishedAt:null,products:[],news:[],players:[],philosophy:null,links:null});
   res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'public, max-age=60, s-maxage=300','X-Content-Type-Options':'nosniff'});return res.end(req.method==='HEAD'?undefined:body);
  }
  if(!['GET','HEAD'].includes(req.method)){
@@ -67,18 +78,56 @@ export default async function handler(req,res){
   const t=token();await store.transaction([['DELETE FROM ss_sessions WHERE expires<$1',[Date.now()]],['DELETE FROM ss_attempts WHERE key=$1',['email:'+hash(email)]],['INSERT INTO ss_sessions(token,expires) VALUES ($1,$2)',[hash(t),Date.now()+86400000]]]);res.setHeader('Set-Cookie',cookie(t,86400));return json(res,200,{ok:true});
  }
  const redirect=location=>{res.writeHead(303,{Location:location,'Cache-Control':'no-store'});res.end();};
- if(['/api/amazon/login','/api/amazon/callback','/api/instagram/callback'].includes(route)&&req.method==='GET'&&!authorized)return redirect('/?auth=required');
+ if(['/api/amazon/login','/api/amazon/callback','/api/instagram/callback','/api/zoom/callback','/api/googlecalendar/callback'].includes(route)&&req.method==='GET'&&!authorized)return redirect('/?auth=required');
  if(!authorized)return json(res,401,{error:'ログインしてください'});
+ if(route==='/api/notifications/status'&&req.method==='GET')return json(res,200,await notifications.status(store));
+ if(route==='/api/notifications'&&req.method==='GET')return json(res,200,{items:await notifications.listNotifications(store)});
+ if(route==='/api/notifications/subscribe'&&req.method==='POST')return json(res,200,await notifications.subscribe(store,(await body(req)).subscription));
+ if(route==='/api/notifications/unsubscribe'&&req.method==='POST')return json(res,200,await notifications.unsubscribe(store,(await body(req)).endpoint));
+ if(route==='/api/notifications/read'&&req.method==='POST')return json(res,200,await notifications.markRead(store,(await body(req)).id));
+ if(route==='/api/notifications/test'&&req.method==='POST')return json(res,200,await notifications.testDelivery(store));
+ if(route==='/api/ai-proactive'&&req.method==='GET')return json(res,200,await readProactive(store));
+ if(route==='/api/ai-proactive'&&req.method==='POST'){try{const input=await body(req);return json(res,200,input.action==='run'?await runProactive(store):await configureProactive(store,input));}catch(e){if(e instanceof TeamError)return json(res,e.status,{error:e.message});throw e;}}
+ if(route==='/api/ai-team'&&req.method==='GET')return json(res,200,{...await readTeam(store),proactive:await readProactive(store)});
+ if(route==='/api/ai-team'&&req.method==='POST'){try{const input=await body(req);const result=await writeTeam(store,input);if(['import','approve'].includes(input.command?.action)){const job=result.state.jobs.find(j=>j.id===input.command.job_id);if(job)try{await notifications.aiUpdated(store,job,job.status);}catch(e){console.error(JSON.stringify({event:'ai_notification_failed',type:e.name||'unknown'}));}}return json(res,200,result);}catch(e){if(e instanceof TeamError)return json(res,e.status,{error:e.message});throw e;}}
+ if(route==='/api/ai-team/task'&&req.method==='GET'){
+  const t=await readTeam(store);const job=t.state.jobs.find(j=>j.id===url.searchParams.get('job_id'));
+  if(!t.state.enabled||!job||!['queued','rejected','running'].includes(job.status)||job.attempts>=2)return json(res,409,{error:'AI社員の停止状態・依頼状態を確認してください'});
+  if(job.run?.claim_id&&(job.status!=='running'||url.searchParams.get('claim_id')!==job.run.claim_id||!liveRun(job)))return json(res,409,{error:'実行権が停止または期限切れです'});
+  if(job.proactiveSource){const auto=(await readProactive(store)).state;if(!auto.enabled||!auto.modelQueue||!auto.permissions?.[job.proactiveSource])return json(res,409,{error:'能動モデル分析は停止中、またはデータ利用が許可されていません'});}
+  return json(res,200,taskPacket(job));
+ }
+ if(route==='/api/ai-team/export'&&req.method==='GET'){res.setHeader('Content-Disposition','attachment; filename="sickstyle-ai-team-backup.json"');return json(res,200,await readTeam(store));}
  if(route==='/api/amazon/status'&&req.method==='GET')return json(res,200,await amazon.safeStatus(store));
  if(route==='/api/amazon/connect'&&req.method==='POST')return json(res,200,{url:await amazon.begin(store,sessionHash)});
  if(route==='/api/amazon/login'&&req.method==='GET'){try{return redirect(await amazon.login(store,sessionHash,url));}catch(e){console.error(JSON.stringify({event:'amazon_login',error:'invalid_request'}));return redirect('/?amazon=error');}}
  if(route==='/api/amazon/callback'&&req.method==='GET'){try{await amazon.connect(store,sessionHash,url);return redirect('/?amazon=connected');}catch(e){console.error(JSON.stringify({event:'amazon_callback',error:e instanceof amazon.AmazonError?String(e.code):'authorization_failed'}));return redirect('/?amazon=error');}}
  if(route==='/api/amazon/sync'&&req.method==='POST'){try{await amazon.sync(store);}catch(e){return json(res,502,{error:e.message,status:await amazon.safeStatus(store)});}return json(res,200,await amazon.safeStatus(store));}
  if(route==='/api/amazon/disconnect'&&req.method==='POST')return json(res,200,await amazon.disconnect(store));
+ if(route==='/api/zoom/status'&&req.method==='GET')return json(res,200,await zoom.safeStatus(store));
+ if(route==='/api/zoom/storage-diagnostics'&&req.method==='POST')return json(res,200,await zoom.storageDiagnostics(store));
+ if(route==='/api/zoom/connect'&&req.method==='POST')return json(res,200,{url:await zoom.begin(store,sessionHash)});
+ if(route==='/api/zoom/callback'&&req.method==='GET'){try{await zoom.connect(store,sessionHash,url);return redirect('/?zoom=connected');}catch(e){const stage=e instanceof zoom.ZoomError&&/^[a-z_]{1,30}$/.test(String(e.stage||''))?e.stage:'unknown';const code=e instanceof zoom.ZoomError&&/^[a-zA-Z0-9_-]{1,40}$/.test(String(e.code))?String(e.code):'authorization_failed';console.error(JSON.stringify({event:'zoom_callback',code,stage,message:e instanceof zoom.ZoomError?e.message:undefined}));return redirect('/?zoom=error&zoom_stage='+encodeURIComponent(stage)+'&zoom_code='+encodeURIComponent(code));}}
+ if(route==='/api/zoom/disconnect'&&req.method==='POST')return json(res,200,await zoom.disconnect(store));
+ if(route==='/api/googlecalendar/status'&&req.method==='GET')return json(res,200,await googlecalendar.safeStatus(store));
+ if(route==='/api/googlecalendar/connect'&&req.method==='POST')return json(res,200,{url:await googlecalendar.begin(store,sessionHash)});
+ if(route==='/api/googlecalendar/callback'&&req.method==='GET'){try{await googlecalendar.connect(store,sessionHash,url);return redirect('/?googlecalendar=connected');}catch(e){console.error(JSON.stringify({event:'googlecalendar_callback',error:e instanceof googlecalendar.GoogleCalendarError?String(e.code):'authorization_failed'}));return redirect('/?googlecalendar=error');}}
+ if(route==='/api/googlecalendar/disconnect'&&req.method==='POST')return json(res,200,await googlecalendar.disconnect(store));
+ if(route==='/api/amazonads/status'&&req.method==='GET')return json(res,200,await amazonAds.status(store));
+ if(route==='/api/amazonads/sync'&&req.method==='POST')return json(res,200,await amazonAds.sync(store));
+ if(route==='/api/meeting-notes'&&req.method==='POST')return json(res,200,await writeMeetingNote(store,await body(req)));
+ if(route==='/api/orgsales/meeting-status'&&req.method==='GET')return json(res,200,await meetingSyncStatus(store));
+ if(route==='/api/orgsales/meeting-preview'&&req.method==='POST')return json(res,200,await previewMeeting(store,await body(req)));
+ if(route==='/api/orgsales/meeting'&&req.method==='POST'){
+  const b=await body(req);
+  const result=await confirmMeeting(store,{orgId:String(b.orgId||''),kind:String(b.kind||''),action:String(b.action||''),revision:b.revision,confirmation:b.confirmation});
+  return json(res,200,{ok:true,org:result.org,revision:result.revision,warnings:result.warnings||[]});
+ }
  if(route==='/api/logout'&&req.method==='POST'){await store.query('DELETE FROM ss_sessions WHERE token=$1',[sessionHash]);res.setHeader('Set-Cookie',cookie('',0));return json(res,200,{ok:true});}
  if(route==='/api/data'&&req.method==='GET')return json(res,200,await revisionOf(store));
  if(route==='/api/data'&&req.method==='PUT'){
   const b=await body(req);const d=validate(b);if(!Number.isSafeInteger(b.revision)||b.revision<0)return json(res,400,{error:'更新バージョンが必要です'});
+  assertMeetingRecordsRetained(await revisionOf(store),d);
   await store.query('INSERT INTO ss_documents(name,body,revision) VALUES ($1,$2,0) ON CONFLICT(name) DO NOTHING',['workspace',JSON.stringify(empty())]);
   const rows=await store.query('UPDATE ss_documents SET body=$1,revision=revision+1 WHERE name=$2 AND revision=$3 RETURNING revision',[JSON.stringify(d),'workspace',b.revision]);if(!rows.length)return json(res,409,{error:'他の端末で更新されました。再読み込みしてから編集してください'});return json(res,200,{ok:true,revision:rows[0].revision});
  }
@@ -86,13 +135,14 @@ export default async function handler(req,res){
  if(route==='/api/restore'&&req.method==='POST'){
   const b=await body(req);if(b.version!==1)throw Error('対応していないバックアップです');const data=validate(b.data);
   if(!Number.isSafeInteger(b.revision))return json(res,400,{error:'現在の更新バージョンが必要です'});
+  assertMeetingRecordsRetained(await revisionOf(store),data,{restoreNotes:true});
   const result=await store.transaction([
    ['INSERT INTO ss_documents(name,body,revision) VALUES ($1,$2,0) ON CONFLICT(name) DO NOTHING',['workspace',JSON.stringify(empty())]],
    ['INSERT INTO ss_documents(name,body) SELECT $1,body FROM ss_documents WHERE name=$2 AND revision=$3 ON CONFLICT(name) DO UPDATE SET body=excluded.body,revision=ss_documents.revision+1',['before-restore','workspace',b.revision]],
    ['UPDATE ss_documents SET body=$1,revision=revision+1 WHERE name=$2 AND revision=$3 RETURNING revision',[JSON.stringify(data),'workspace',b.revision]]]);
   if(!result[2].length)return json(res,409,{error:'他の端末で更新されました。再読み込み後に復元してください'});return json(res,200,{ok:true});
  }
- if(route==='/api/site'&&req.method==='GET'){const d=await store.doc('site-draft');const p=await store.doc('site-public');return json(res,200,{draft:d?JSON.parse(d.body):emptySite(),revision:d?.revision||0,published:p?JSON.parse(p.body):null});}
+ if(route==='/api/site'&&req.method==='GET'){const d=await store.doc('site-draft');const p=await store.doc('site-public');return json(res,200,{draft:d?{...emptySite(),...JSON.parse(d.body)}:emptySite(),revision:d?.revision||0,published:p?JSON.parse(p.body):null});}
  if(route==='/api/site'&&req.method==='PUT'){
   const b=await body(req);const d=validateSite(b.draft);if(!Number.isSafeInteger(b.revision)||b.revision<0)return json(res,400,{error:'更新バージョンが必要です'});
   await store.query('INSERT INTO ss_documents(name,body,revision) VALUES ($1,$2,0) ON CONFLICT(name) DO NOTHING',['site-draft',JSON.stringify(emptySite())]);
@@ -101,7 +151,10 @@ export default async function handler(req,res){
  if(route==='/api/site/publish'&&req.method==='POST'){
   const b=await body(req);const d=await store.doc('site-draft');if(!d)return json(res,400,{error:'下書きがありません'});
   if(b.revision!==d.revision)return json(res,409,{error:'下書きが更新されています。再読み込みして内容を確認してから公開してください'});
-  const view=publicView(JSON.parse(d.body),new Date().toISOString());
+  // players等、後から追加された項目が無い旧いsite-draft（一度も再保存されていない保留中の下書き）でも
+  // publicView()が落ちないよう、GET /api/site と同じ方法でemptySite()の既定値を補って正規化する
+  // （Codex独立レビュー指摘）。
+  const view=publicView({...emptySite(),...JSON.parse(d.body)},new Date().toISOString());
   const prev=await store.doc('site-public');
   await store.transaction([...(prev?[['INSERT INTO ss_documents(name,body) VALUES ($1,$2) ON CONFLICT(name) DO UPDATE SET body=excluded.body,revision=ss_documents.revision+1',['site-public-previous',prev.body]]]:[]),['INSERT INTO ss_documents(name,body) VALUES ($1,$2) ON CONFLICT(name) DO UPDATE SET body=excluded.body,revision=ss_documents.revision+1',['site-public',JSON.stringify(view)]]]);
   return json(res,200,{ok:true,published:view});
@@ -124,5 +177,11 @@ export default async function handler(req,res){
  }
  if(route==='/api/instagram/resolve'&&req.method==='POST'){const b=await body(req);await instagram.resolveConversation(store,String(b.peer||''));return json(res,200,{ok:true});}
  return json(res,404,{error:'見つかりません'});
- }catch(e){const validation=/掲載|下書き|データ|形式|バックアップ|認可|Instagram|Meta|Amazon|同期|トークン|アカウント|キー|コード/.test(e.message);console.error(JSON.stringify({event:'api_error',type:e.name,code:e instanceof instagram.MetaError?e.code:undefined}));return json(res,validation?400:503,{error:validation?e.message:'サービスに接続できません。管理者はデータベース設定を確認してください。'});}
+ }catch(e){
+  if(e instanceof MeetingNoteError)return json(res,400,{error:e.message});
+  if(e.conflict)return json(res,409,{error:e.message});
+  const validation=/掲載|下書き|データ|形式|バックアップ|認可|Instagram|Meta|Amazon|Zoom|Google|カレンダー|MTG|団体|同期|トークン|アカウント|キー|コード|種別|操作|更新バージョン/.test(e.message);
+  console.error(JSON.stringify({event:'api_error',type:e.name,code:e instanceof instagram.MetaError?e.code:undefined}));
+  return json(res,validation?400:503,{error:validation?e.message:'サービスに接続できません。管理者はデータベース設定を確認してください。'});
+ }
 }

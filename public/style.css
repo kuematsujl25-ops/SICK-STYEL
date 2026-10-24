@@ -28,13 +28,14 @@ code{background:var(--surface-3);border:1px solid var(--line);padding:1px 6px;bo
 .brandmark small{display:block;font-size:10px;letter-spacing:.2em;color:var(--muted);font-weight:600}
 /* レイアウト */
 #app{display:flex;min-height:100vh}
-aside{width:248px;position:fixed;inset:0 auto 0 0;background:#000;border-right:1px solid var(--line);padding:28px 16px;display:flex;flex-direction:column;z-index:3}
-nav{display:flex;flex-direction:column;gap:4px;margin-top:34px}
-nav button{display:flex;align-items:center;gap:12px;text-align:left;color:var(--text-2);font-size:14px;white-space:nowrap;width:100%}
+aside{width:248px;position:fixed;inset:0 auto 0 0;max-height:100vh;max-height:100dvh;overflow:hidden;background:#000;border-right:1px solid var(--line);padding:28px 16px;display:flex;flex-direction:column;z-index:3}
+.brandtop{flex:0 0 auto}
+nav{display:flex;flex:1 1 auto;min-height:0;flex-direction:column;gap:4px;margin-top:20px;padding:4px 4px 8px 0;overflow-y:auto;overscroll-behavior-y:contain;scrollbar-width:thin;scrollbar-color:var(--line-strong) transparent}
+nav button{display:flex;flex:0 0 auto;align-items:center;gap:12px;text-align:left;color:var(--text-2);font-size:14px;white-space:nowrap;width:100%}
 nav button span{width:22px;text-align:center;font-size:16px;color:var(--silver-2)}
 nav button.active{background:var(--surface-2);color:var(--white);font-weight:700;border-color:var(--line-strong)}
 nav button.active span{color:var(--white)}
-.sidebottom{margin-top:auto;padding-top:16px;border-top:1px solid var(--line);display:flex;align-items:center;gap:10px;font-size:12px;color:var(--text-2)}
+.sidebottom{flex:0 0 auto;margin-top:12px;padding-top:16px;border-top:1px solid var(--line);display:flex;align-items:center;gap:10px;font-size:12px;color:var(--text-2)}
 .sidebottom small{display:block;color:var(--muted);font-size:11px}
 .sidebottom button{margin-left:auto}
 main{margin-left:248px;width:calc(100% - 248px);min-width:0}
@@ -92,9 +93,11 @@ progress::-moz-progress-bar{background:var(--silver)}
 .badge.ok{color:var(--ok);border-color:#3f5a45}
 .badge.warn,.badge.danger{background:var(--danger-bg);color:var(--danger);border-color:#5a2e28}
 .listrow{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}
+.listrow[hidden]{display:none}
 .listrow b{font-size:14px;overflow-wrap:anywhere}
 .listrow small{display:block;font-size:12px;color:var(--muted);margin-top:2px}
 .listrow input[type=checkbox]{width:22px;height:22px;accent-color:var(--silver);flex-shrink:0}
+.listrow select{width:auto;min-height:36px;flex-shrink:0}
 .grow{flex:1;min-width:0}
 .done b{text-decoration:line-through;color:var(--muted)}
 .red{color:var(--danger)!important}
@@ -174,17 +177,25 @@ dialog::backdrop{background:#000b;backdrop-filter:blur(3px)}
 #toast{position:fixed;bottom:calc(20px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);background:var(--white);color:#000;border-radius:10px;padding:12px 20px;z-index:10;box-shadow:0 8px 30px #0008;font-weight:600;max-width:92vw}
 #toast:empty{display:none}
 .igstats{grid-template-columns:repeat(3,minmax(0,1fr));margin-top:18px}
+.sectiondivider{margin:28px 0 12px;font-size:15px;color:var(--text-2);border-top:1px solid var(--line);padding-top:20px}
+.barchart{display:flex;align-items:flex-end;gap:3px;height:120px;margin:14px 0;padding:0 2px}
+.bar{flex:1 1 0;min-width:2px;background:var(--silver-2);border-radius:2px 2px 0 0}
+.bar.today{background:var(--white)}
+.bar.missing{height:8%;background:transparent;border:1px dashed var(--text-2);border-radius:2px}
+/* CSPのstyle-src 'self'はインラインstyle属性を許可しないため、高さは5%刻みのクラスで表現する。 */
+.bar.h0{height:2%}.bar.h1{height:5%}.bar.h2{height:10%}.bar.h3{height:15%}.bar.h4{height:20%}.bar.h5{height:25%}.bar.h6{height:30%}.bar.h7{height:35%}.bar.h8{height:40%}.bar.h9{height:45%}.bar.h10{height:50%}
+.bar.h11{height:55%}.bar.h12{height:60%}.bar.h13{height:65%}.bar.h14{height:70%}.bar.h15{height:75%}.bar.h16{height:80%}.bar.h17{height:85%}.bar.h18{height:90%}.bar.h19{height:95%}.bar.h20{height:100%}
 /* タブレット */
 @media(max-width:1100px){aside{width:212px}main{margin-left:212px;width:calc(100% - 212px)}.content{padding:24px 20px}.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.dashboardgrid,.settingsgrid{grid-template-columns:1fr}}
 /* スマートフォン */
 @media(max-width:720px){
  :root{font-size:15px}
  #app{display:block}
- aside{position:sticky;top:0;width:100%;height:auto;padding:10px 12px 0;border-right:0;border-bottom:1px solid var(--line);background:rgba(0,0,0,.96);backdrop-filter:blur(8px)}
+ aside{position:sticky;top:0;width:100%;height:auto;max-height:none;overflow:visible;padding:10px 12px 0;border-right:0;border-bottom:1px solid var(--line);background:rgba(0,0,0,.96);backdrop-filter:blur(8px)}
  aside .brandtop{display:flex;align-items:center;justify-content:space-between}
  .brandmark img{height:28px}.brandmark b{font-size:14px}.brandmark small{display:none}
  .sidebottom{display:none}
- nav{flex-direction:row;overflow-x:auto;gap:6px;margin:8px -12px 0;padding:0 12px 10px;scrollbar-width:none;scroll-snap-type:x proximity}
+ nav{flex:0 0 auto;flex-direction:row;overflow-x:auto;overflow-y:hidden;gap:6px;margin:8px -12px 0;padding:0 12px 10px;scrollbar-width:none;scroll-snap-type:x proximity}
  nav::-webkit-scrollbar{display:none}
  nav button{width:auto;padding:8px 12px;font-size:13px;gap:6px;border:1px solid var(--line);scroll-snap-align:start}
  nav button span{width:auto;font-size:14px}
@@ -213,3 +224,56 @@ dialog::backdrop{background:#000b;backdrop-filter:blur(3px)}
 @media(max-width:720px){nav{scroll-padding-inline:12px}}
 .inlinecheck{width:22px!important;height:22px;min-height:auto!important;vertical-align:middle;accent-color:var(--silver);margin-right:6px}
 #siteform label:has(.inlinecheck){grid-column:1/-1;color:var(--text)}
+
+/* 利益ワークスペース：既存のモノクロブランドと操作体系を継承 */
+.financehero{display:flex;justify-content:space-between;align-items:center;gap:24px;padding:32px;border:1px solid var(--line-strong);border-radius:var(--radius);background:linear-gradient(125deg,#242427,#101012);margin-bottom:16px}
+.financehero h2{font-size:clamp(20px,2.4vw,30px);margin-top:12px;letter-spacing:.02em}
+.financehero .filelabel{flex-shrink:0;margin:0;cursor:pointer}
+.financeempty{min-height:240px;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;gap:12px}
+.financestats{grid-template-columns:repeat(3,minmax(0,1fr));margin-top:22px}
+.financetable{width:100%;overflow-x:auto;margin-top:16px}
+.financetable table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:13px}
+.financetable th,.financetable td{padding:16px 12px;border-bottom:1px solid var(--line);text-align:right}
+.financetable th:first-child{text-align:left;max-width:220px;overflow:hidden;text-overflow:ellipsis}
+.financetable thead{color:var(--muted);font-size:12px}
+.financetable tr[hidden]{display:none}
+@media(max-width:760px){.financehero{align-items:flex-start;flex-direction:column;padding:22px}.financestats{grid-template-columns:1fr}.financetable{max-width:100%}.financehero .filelabel{width:100%;text-align:center}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
+
+.financehero .filelabel:focus-within{outline:3px solid var(--focus);outline-offset:3px}
+
+.teamroles{margin:20px 0}.teamroles .record{display:flex;flex-direction:column;gap:8px}.teamroles .record button{margin-top:auto}.teamoutput{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;max-height:500px;overflow:auto}#teamcreate{display:grid;gap:14px;margin-top:18px}#teamcreate textarea{min-height:90px}
+
+/* 団体営業6段階フロー・商談予定 */
+.orgpipeline{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:16px 0}.orgphase{border:1px solid var(--line-strong);border-radius:8px;background:var(--surface-2);padding:7px 10px;font-size:13px;font-weight:600}.orgarrow{color:var(--silver-2)}.orgmeeting{grid-column:1/-1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;border:1px solid var(--line);padding:14px;border-radius:10px}.orgmeeting h3,.orgmeeting p{grid-column:1/-1}.orgmeeting>a{width:fit-content;max-width:100%}@media(max-width:720px){.orgmeeting{grid-template-columns:minmax(0,1fr)}.orgphase{font-size:12px}}
+
+.meetingsync{grid-column:1/-1;display:flex;flex-direction:column;gap:8px;padding:10px;border:1px dashed var(--line-strong);border-radius:8px}.meetingsync .actions{flex-wrap:wrap}
+
+/* 選手調査カード：写真は権利確認済みURLのみ読み込む */
+.playerprofile{display:flex;align-items:flex-start;gap:14px;margin:12px 0}.playerprofile h3{margin:0}.playerprofile>div:last-child{min-width:0}.playerphoto{width:72px;height:88px;flex:0 0 72px;object-fit:cover;object-position:top center;border-radius:9px;background:var(--surface-3);border:1px solid var(--line-strong)}.playerplaceholder{display:flex;align-items:center;justify-content:center;font-size:25px;color:var(--silver-2)}@media(max-width:720px){.playerphoto{width:58px;height:72px;flex-basis:58px}}
+/* Preserve the original black / white / silver identity across the new workspace. */
+:root{--radius:10px}
+.pageheading{margin-bottom:24px}
+h1{font-weight:750;letter-spacing:-.025em}
+.panelhead{padding-bottom:12px;margin-bottom:16px;border-bottom:1px solid var(--line)}
+.stats article::before{height:1px;opacity:.8}
+.primary{font-weight:700}
+.secondary{border-color:var(--line-strong)}
+.metricmini b{font-variant-numeric:tabular-nums}
+.notes-panel{margin-top:24px;padding:18px;background:var(--surface-2);border:1px solid var(--line-strong);border-top:2px solid var(--silver);border-radius:8px;color:var(--text)}
+.notes-panel label{display:block;margin:12px 0}
+.notes-panel input:not([type=checkbox]),.notes-panel textarea{width:100%}
+.notes-panel textarea{min-height:100px}
+.note-body{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;line-height:1.8;max-height:320px;overflow:auto}
+.notes-panel blockquote{margin:12px 0;padding-left:12px;border-left:2px solid var(--silver-2);overflow-wrap:anywhere;color:var(--text-2)}
+#meetingselect{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:16px;align-items:end}
+#meetingselect select{width:100%}
+main:not(.auth) details>summary,dialog details>summary{min-height:44px;cursor:pointer;padding:8px 0}
+@media(max-width:720px){
+ #meetingselect{grid-template-columns:minmax(0,1fr)}
+ .notes-panel{padding:14px}
+ .dialogactions{flex-wrap:wrap}
+ main:not(.auth) .record{padding:16px}
+ h1{font-size:25px}
+ .panelhead{gap:12px}
+}

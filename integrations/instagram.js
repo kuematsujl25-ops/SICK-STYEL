@@ -1,4 +1,5 @@
 import {runtime} from '../lib/runtime.js';
+import {connectionReadiness} from '../public/integration-status.js';
 import {createHmac} from 'node:crypto';
 import {encrypt,decrypt,equal,token,hash} from '../lib/security.js';
 export const scopes=['instagram_business_basic','instagram_business_manage_insights'];
@@ -41,7 +42,7 @@ export async function connect(store,session,url){
 async function privateData(store){const r=await store.doc('instagram-private');return r?JSON.parse(r.body):null;}
 export async function safeStatus(store){const p=await privateData(store);const r=await store.doc('instagram-cache');const cache=r?JSON.parse(r.body):null;
  let dm=null;if(p?.dmStartedAt){const rows=await store.query('SELECT peer,MAX(CASE WHEN incoming=1 THEN ts ELSE 0 END) AS received,MAX(CASE WHEN incoming=0 THEN ts ELSE 0 END) AS replied FROM ss_events GROUP BY peer');dm=rows.filter(r=>Number(r.received)>Number(r.replied)).length;}
- return {configured:config(),connected:!!p,username:p?.username||null,expiresAt:p?.expiresAt||null,granted:p?.granted||[],dmStartedAt:p?.dmStartedAt||null,dmPending:dm,dmDefinition:'集計開始以降に受信Webhookで観測し、送信イベントまたは手動で対応済みにしていない会話数。Instagramの未読件数や受信箱全体ではありません。',webhookError:p?.webhookError||null,cache,apiVersion:version()};
+ const status={configured:config(),connected:!!p,username:p?.username||null,expiresAt:p?.expiresAt||null,granted:p?.granted||[],dmStartedAt:p?.dmStartedAt||null,dmPending:dm,dmDefinition:'集計開始以降に受信Webhookで観測し、送信イベントまたは手動で対応済みにしていない会話数。Instagramの未読件数や受信箱全体ではありません。',webhookError:p?.webhookError||null,cache,apiVersion:version()};return {...status,readiness:connectionReadiness(status,'instagram')};
 }
 export function breakdownValues(response,name){const m=response.data?.find(x=>x.name===name);const rows=m?.total_value?.breakdowns?.[0]?.results;if(!Array.isArray(rows))return null;const out={};for(const r of rows){const k=String(r.dimension_values?.[0]||'');if(typeof r.value==='number')out[k]=r.value;}return out;}
 export function metricValue(response,name){const m=response.data?.find(x=>x.name===name);const n=m?.total_value?.value??m?.values?.[0]?.value;return typeof n==='number'&&Number.isFinite(n)?n:null;}
@@ -82,6 +83,7 @@ export async function sync(store){
   try{const r=await call(`${p.id}/insights`,access,{metric:'follows_and_unfollows',period:'day',metric_type:'total_value',breakdown:'follow_type',since:String(since),until:String(until)});const fb=breakdownValues(r,'follows_and_unfollows');if(fb){account.follows=fb.FOLLOWER??null;account.unfollows=fb.NON_FOLLOWER??null;}}catch(e){warnings.push('フォロー/フォロー解除（30日）: '+e.message);}
   try{const r=await call(`${p.id}/insights`,access,{metric:'reach,views,accounts_engaged,total_interactions',period:'day',metric_type:'total_value',since:String(since),until:String(until)});for(const n of ['reach','views','accounts_engaged','total_interactions'])account[n]=metricValue(r,n);}catch(e){warnings.push('アカウント指標（30日）: '+e.message);}
   const media=await call(`${p.id}/media`,access,{fields:'id,caption,media_product_type,timestamp,permalink',limit:'25'});
+  if(!Array.isArray(media?.data))throw new MetaError('invalid_response');
   const reels=[]; // Limit the visible scope honestly to the latest 25 media, avoiding unbounded sync work.
   const source=(media.data||[]).filter(x=>x.media_product_type==='REELS');
   for(let offset=0;offset<source.length;offset+=5){const group=await Promise.all(source.slice(offset,offset+5).map(async m=>{
@@ -92,8 +94,10 @@ export async function sync(store){
   }));reels.push(...group);}
   const dm=p.granted?.includes('instagram_business_manage_messages')?await pendingConversations(call,access,{ids:[p.id,p.scopedId].filter(Boolean).map(String),username:p.username},()=>45-used,warnings):null;
   const day=new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'});const history=(cache.history||[]).filter(x=>x.date!==day);const previous=history.at(-1);if(followers!==null)history.push({date:day,followers});
-  const next={syncedAt:new Date().toISOString(),attemptedAt:new Date().toISOString(),error:null,warnings,followers,delta:followers!==null&&previous?followers-previous.followers:null,deltaSince:previous?.date||null,history:history.slice(-730),reels,dm,account,scope:'最新25件のメディアに含まれるリール（Instagramのオーガニック実績・累計）',hasMore:!!media.paging?.next};await store.put('instagram-cache',next);return next;
- }catch(e){if(await privateData(store))await store.put('instagram-cache',{...cache,error:e.message,attemptedAt:new Date().toISOString()});throw e;}finally{await release();}
+  const stamp=new Date().toISOString();const insightsVerified=['reach','views','accounts_engaged','total_interactions','follows','unfollows'].some(k=>Number.isFinite(account[k]))||reels.some(r=>Object.values(r.values).some(Number.isFinite));
+  const syncVerified=Number.isFinite(followers)&&insightsVerified;
+  const next={syncedAt:syncVerified?stamp:cache.syncedAt??null,attemptedAt:stamp,syncVerified,profileSyncedAt:Number.isFinite(followers)?stamp:null,insightsSyncedAt:insightsVerified?stamp:null,error:null,warnings,followers,delta:followers!==null&&previous?followers-previous.followers:null,deltaSince:previous?.date||null,history:history.slice(-730),reels,dm,account,scope:'最新25件のメディアに含まれるリール（Instagramのオーガニック実績・累計）',hasMore:!!media.paging?.next};await store.put('instagram-cache',next);return next;
+ }catch(e){if(await privateData(store))await store.put('instagram-cache',{...cache,syncVerified:false,error:e.message,attemptedAt:new Date().toISOString()});throw e;}finally{await release();}
 }
 export async function disconnect(store){const release=await acquireConnectionLease(store);try{const p=await privateData(store);let revokeError=null;if(p){try{await graph(`${p.id}/permissions`,decrypt(p.encrypted).access,{},'DELETE');}catch{revokeError='ローカル接続は解除しました。Meta側の認可取消に失敗したため、Instagramの「アプリとウェブサイト」からも削除してください。';}}
  await store.transaction([['DELETE FROM ss_documents WHERE name IN ($1,$2)',['instagram-private','instagram-cache']],['DELETE FROM ss_events'],['DELETE FROM ss_oauth']]);return {ok:true,warning:revokeError};}finally{await release();}}
