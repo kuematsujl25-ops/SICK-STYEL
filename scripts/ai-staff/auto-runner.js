@@ -42,10 +42,13 @@ export async function signIn({origin=DEFAULT_ORIGIN,email,password,request=fetch
  if(!res.ok)fail('管理アプリにログインできませんでした（HTTP '+res.status+'）。管理者情報と回数制限を確認してください');
  return sessionCookie(res.headers.get('set-cookie'));
 }
-export async function api(cookie,path,{method='GET',data,origin=DEFAULT_ORIGIN,request=fetch}={}){
+export async function api(cookie,path,{method='GET',data,origin=DEFAULT_ORIGIN,request=fetch,timeoutMs=10000}={}){
+ const controller=new AbortController();let timeout;
+ try{return await Promise.race([apiRequest(),new Promise((_,reject)=>{timeout=setTimeout(()=>{controller.abort();reject(Error('管理アプリAPIの通信がタイムアウトしました'));},timeoutMs);})]);}finally{clearTimeout(timeout);controller.abort();}
+ async function apiRequest(){
  if(origin!==DEFAULT_ORIGIN)fail('接続先が許可されていません');
  const response=await request(origin+'/api/'+path,{
-  method,
+  method,signal:controller.signal,
   headers:{Cookie:cookie,'Origin':origin,...(data?{'Content-Type':'application/json'}:{})},
   body:data?JSON.stringify(data):undefined
  });
@@ -55,6 +58,7 @@ export async function api(cookie,path,{method='GET',data,origin=DEFAULT_ORIGIN,r
   (response.status===401?'セッションが期限切れです。ランナーを再起動してログインしてください。':
    response.status===409?'他端末で更新されています。再読み込みが必要です。':'管理者画面の状態を確認してください。'));error.status=response.status;throw error;}
  return json;
+ }
 }
 export function proactiveAllowed(model,job){return !job?.proactiveSource||!!(model.proactive?.state?.enabled&&model.proactive.state.modelQueue&&model.proactive.state.permissions?.[job.proactiveSource]);}
 export function eligibleJob(model,seen=new Set(),staffOnly=false){

@@ -112,3 +112,9 @@ test('heartbeat revision conflict rechecks claim and retries without duplicate m
  const outcome=await oneCycle(cookie,new Set(),{request,run:async p=>{calls++;return {result:artifact(p),outputFile:'/tmp/mock.json'};}});
  assert.equal(outcome.imported,true);assert.equal(calls,1);assert.equal(f.model.state.jobs[0].run_attempts,1);
 });
+test('API timeout bounds stalled requests and stalled response bodies',async()=>{
+ let signal;
+ await assert.rejects(api(cookie,'ai-team',{timeoutMs:5,request:async(_url,options)=>{signal=options.signal;return new Promise(()=>{});}}),/タイムアウト/);
+ assert.equal(signal.aborted,true);
+ await assert.rejects(api(cookie,'ai-team',{timeoutMs:5,request:async()=>({ok:true,text:()=>new Promise(()=>{})})}),/タイムアウト/);
+});
