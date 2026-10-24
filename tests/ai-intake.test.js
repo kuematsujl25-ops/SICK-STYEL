@@ -1,6 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {routeRequest} from '../lib/ai-routing.js';
-import {emptyTeam,transitionTeam,taskPacket,writeTeam,readTeam} from '../lib/ai-team.js';
+import {emptyTeam,transitionTeam,taskPacket,writeTeam,readTeam,digest} from '../lib/ai-team.js';
 import {eligibleJob} from '../scripts/ai-staff/auto-runner.js';
 import {createStore} from '../lib/store.js';import {mkdtempSync,rmSync} from 'node:fs';import {tmpdir} from 'node:os';import {join} from 'node:path';
 const now='2026-10-24T09:00:00Z';
@@ -23,6 +23,10 @@ test('ambiguous intake requires explicit local routing without changing executio
  let s=transitionTeam(emptyTeam(),{action:'intake',job:{title:'広告と在庫',objective:'改善したい'}},now);const id=s.jobs[0].id;
  assert.equal(s.jobs[0].status,'awaiting_routing');s=transitionTeam(s,{action:'route',job_id:id,primary:'marketing',collaborators:['profit_inventory']},now);
  assert.equal(s.jobs[0].status,'awaiting_permission');assert.equal(s.jobs[0].routing.confirmed,true);assert.equal(s.audit.at(-1).action,'routing_confirmed');
+ const initial=s.audit.at(-1);assert.equal(initial.details.previous.primary,null);assert.equal(initial.details.next.primary,'marketing');
+ s=transitionTeam(s,{action:'route',job_id:id,primary:'profit_inventory',collaborators:['marketing']},now);
+ const entry=s.audit.at(-1);assert.equal(entry.details.previous.primary,'marketing');assert.deepEqual(entry.details.previous.collaborators,['profit_inventory']);assert.equal(entry.details.next.primary,'profit_inventory');assert.deepEqual(initial.details.next.collaborators,['profit_inventory']);
+ const {hash,...hashed}=entry;assert.equal(hash,digest(hashed));assert.equal(entry.previous,initial.hash);
  assert.throws(()=>transitionTeam(s,{action:'route',job_id:id,primary:'marketing',collaborators:['marketing']},now));
 });
 test('intake validation rejects secrets/contact and preserves original jobs on failed writes',()=>{
