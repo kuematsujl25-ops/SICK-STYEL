@@ -27,66 +27,98 @@ test('runner sees queued tasks only if manual operation enabled',()=>{
  assert.equal(eligibleJob({state:{enabled:true,jobs:[job]}},new Set()).id,'id-1');
 });
 
-test('runner fetches task, runs injected Claude implementation once and saves for human review',async()=>{
- const id='11111111-1111-4111-8111-111111111111';
- const job={id,status:'queued',attempts:0,input_hash:'hash'};
- const record={revision:4,state:{enabled:true,jobs:[job]}};
- // oneCycle validates canonical task, so use a valid envelope derived from createJob.
- const {createJob,taskPacket}=await import('../lib/ai-team.js');
- const created=createJob({role:'market',title:'検証用の調査',objective:'入力データの不足項目を整理',facts:[]},new Date().toISOString());
- const pending={...created,status:'queued'};
- const state={revision:4,state:{enabled:true,jobs:[pending]}};
- const task=taskPacket(pending);
- const artifact={version:1,job_id:task.job_id,input_hash:task.input_hash,business_unit:'sickstyle',
-  provider:'claude',execution_id:'01234567-89ab-4def-8abc-0123456789ab',
-  started_at:new Date().toISOString(),finished_at:new Date().toISOString(),
-  output:{summary:'未取得情報を特定',fact_ids:[],missing_data:['試行数'],hypotheses:[],
-   recommendations:[],approvals_required:[],limitations:['調査用の入力に統計値なし']}};
- let n=0,imported=null,runCount=0;
- const request=async(url,opt)=>{
-  const path=new URL(url).pathname;
-  assert.equal(opt.headers.Cookie,cookie);
-  if(path==='/api/ai-team'&&opt.method==='POST'){imported=JSON.parse(opt.body);return result({state:{},revision:5});}
-  if(path==='/api/ai-team'){n++;return result(state);}
-  if(path==='/api/ai-team/task')return result(task);
-  throw Error('Unexpected route '+path);
- };
- const seen=new Set();
- const processed=await oneCycle(cookie,seen,{request,run:async(p)=>{
-  runCount++;assert.equal(p.job_id,task.job_id);
-  return {result:artifact,outputFile:'/tmp/fixture.json'};
- }});
- assert.equal(processed.imported,true);
- assert.equal(runCount,1);
- assert.equal(n,2);
- assert.equal(imported.revision,4);
- assert.equal(imported.command.action,'import');
- assert.equal(imported.command.job_id,task.job_id);
- const twice=await oneCycle(cookie,seen,{request,run:async()=>{throw Error('unexpected duplicate execution');}});
- assert.equal(twice.processed,false);
-});
-
-test('do not import if job was already changed during inference',async()=>{
- const {createJob,taskPacket}=await import('../lib/ai-team.js');
- const j=createJob({role:'market',title:'検証用',objective:'状況を整理',facts:[]},new Date().toISOString());
- const task=taskPacket(j);
- let n=0,imports=0;
- const request=async(url,opt)=>{
-  const path=new URL(url).pathname;
-  if(path==='/api/ai-team'&&opt.method==='POST'){imports++;return result({});}
-  if(path==='/api/ai-team'){n++;return result({revision:n, state:{enabled:true,jobs:[n===1?j:{...j,status:'completed'}]}});}
-  if(path==='/api/ai-team/task')return result(task);
-  throw Error('unknown path');
- };
- const outcome=await oneCycle(cookie,new Set(),{request,run:async()=>({result:{},outputFile:'/tmp/local.json'})});
- assert.equal(outcome.imported,false);
- assert.equal(imports,0);
-});
-
 test('installed runner command and browser text make online requirement explicit',()=>{
  const p=JSON.parse(readFileSync(new URL('../package.json',import.meta.url),'utf8'));
  assert.equal(p.scripts['ai:runner'],'node scripts/ai-staff/auto-runner.js');
  const ui=readFileSync(new URL('../public/ai-team.js',import.meta.url),'utf8');
  assert.match(ui,/npm run ai:runner/);
  assert.match(ui,/ランナー停止中/);
+});
+
+import {emptyTeam,transitionTeam,createJob,taskPacket} from '../lib/ai-team.js';
+function fixture(){
+ const state=emptyTeam();state.enabled=true;state.jobs=[createJob({role:'market',title:'検証用',objective:'不足を整理',facts:[]},new Date().toISOString())];
+ const f={model:{state,revision:0},offline:false};
+ f.request=async(url,opt)=>{
+  if(f.offline)throw Error('network down');
+  if(new URL(url).pathname.endsWith('/task'))return result(taskPacket(f.model.state.jobs[0]));
+  if(opt.method==='POST'){
+   const body=JSON.parse(opt.body);if(body.revision!==f.model.revision)return result({},409);
+   try{f.model={state:transitionTeam(f.model.state,body.command),revision:f.model.revision+1};}catch{return result({},409);}
+  }
+  return result(f.model);
+ };return f;
+}
+function artifact(p){const at=new Date().toISOString();return {version:1,job_id:p.job_id,input_hash:p.input_hash,business_unit:'sickstyle',provider:'claude',execution_id:'fixture-run',started_at:at,finished_at:at,output:{summary:'不足を確認',fact_ids:[],missing_data:[],hypotheses:[],recommendations:[],approvals_required:[],limitations:['模擬試験']}};}
+test('claimed runner persists heartbeat and imports once into review',async()=>{
+ const f=fixture(),seen=new Set();let calls=0;
+ const out=await oneCycle(cookie,seen,{request:f.request,run:async p=>{calls++;assert.equal(f.model.state.jobs[0].status,'running');return {result:artifact(p),outputFile:'/tmp/fixture.json'};}});
+ assert.equal(out.imported,true);assert.equal(f.model.state.jobs[0].status,'in_review');assert.equal(f.model.state.jobs[0].run_attempts,1);
+ assert.equal((await oneCycle(cookie,seen,{request:f.request})).processed,false);assert.equal(calls,1);
+});
+test('failed runner requires explicit retry and persists cap across process restarts',async()=>{
+ const f=fixture(),run=async()=>{throw Error('sensitive provider details must not persist');};
+ await oneCycle(cookie,new Set(),{request:f.request,run});assert.equal(f.model.state.jobs[0].status,'failed');assert.equal(f.model.state.jobs[0].run.failure_reason,'model_failed');
+ assert.equal((await oneCycle(cookie,new Set(),{request:f.request,run})).processed,false);
+ f.model.state=transitionTeam(f.model.state,{action:'retry',job_id:f.model.state.jobs[0].id});
+ await oneCycle(cookie,new Set(),{request:f.request,run});assert.equal(f.model.state.jobs[0].run_attempts,2);
+ assert.throws(()=>transitionTeam(f.model.state,{action:'retry',job_id:f.model.state.jobs[0].id}));
+});
+test('stop during model run aborts child through heartbeat and cannot import',async()=>{
+ const f=fixture();
+ const out=await oneCycle(cookie,new Set(),{request:f.request,heartbeatMs:5,run:async(p,{signal})=>{
+  f.model.state=transitionTeam(f.model.state,{action:'toggle',enabled:false});f.model.revision++;
+  await new Promise(resolve=>signal.addEventListener('abort',resolve,{once:true}));throw Error('cancelled');
+ }});
+ assert.equal(out.imported,false);assert.equal(f.model.state.jobs[0].status,'stopped');assert.equal(f.model.state.jobs[0].run.failure_reason,'stopped');
+});
+test('network loss leaves an expiring lease and never automatically repeats inference',async()=>{
+ const f=fixture();
+ await oneCycle(cookie,new Set(),{request:f.request,heartbeatMs:5,run:async(p,{signal})=>{
+  f.offline=true;await new Promise(resolve=>signal.addEventListener('abort',resolve,{once:true}));throw Error('network');
+ }});
+ assert.equal(f.model.state.jobs[0].status,'running');f.offline=false;
+ assert.equal((await oneCycle(cookie,new Set(),{request:f.request,run:()=>assert.fail()})).processed,false);
+});
+test('concurrent runners only one can claim the same request',async()=>{
+ const f=fixture();let calls=0;const run=async p=>{calls++;return {result:artifact(p),outputFile:'/tmp/fixture.json'};};
+ await Promise.allSettled([oneCycle(cookie,new Set(),{request:f.request,run}),oneCycle(cookie,new Set(),{request:f.request,run})]);assert.equal(calls,1);
+});
+test('two live claims maximum; expired claim needs explicit retry and cannot heartbeat/import',()=>{
+ const f=fixture();const now='2026-10-24T09:00:00Z';let s=f.model.state;
+ s.jobs.push({...s.jobs[0],id:'22222222-2222-4222-8222-222222222222'},{...s.jobs[0],id:'33333333-3333-4333-8333-333333333333'});
+ const claim='44444444-4444-4444-8444-444444444444';
+ for(const j of s.jobs.slice(0,2))s=transitionTeam(s,{action:'claim',job_id:j.id,claim_id:claim},now);
+ assert.throws(()=>transitionTeam(s,{action:'claim',job_id:s.jobs[2].id,claim_id:claim},now));
+ const late='2026-10-24T09:11:00Z';assert.throws(()=>transitionTeam(s,{action:'heartbeat',job_id:s.jobs[0].id,claim_id:claim},late));
+ assert.throws(()=>transitionTeam(s,{action:'import',job_id:s.jobs[0].id,claim_id:claim,packet:{}},late));
+ s=transitionTeam(s,{action:'retry',job_id:s.jobs[0].id},late);assert.equal(s.jobs[0].status,'queued');
+});
+test('production runner allowlist rejects free text and other source kinds',async()=>{
+ const {validateStaffAggregate}=await import('../scripts/ai-staff/auto-runner.js');
+ const f=fixture();assert.equal(eligibleJob(f.model,new Set(),true),null);
+ assert.throws(()=>validateStaffAggregate(taskPacket(f.model.state.jobs[0])));
+});
+test('analysis child shutdown installs and removes process cleanup handlers',async()=>{
+ const {spawnAnalysis}=await import('../scripts/ai-staff/auto-runner.js');
+ const before=process.listenerCount('SIGINT'),controller=new AbortController();
+ const pending=spawnAnalysis(process.execPath,['-e','setInterval(()=>{},1000)'],{},controller.signal);
+ assert.equal(process.listenerCount('SIGINT'),before+1);controller.abort();
+ assert.notEqual((await pending).status,0);assert.equal(process.listenerCount('SIGINT'),before);
+});
+test('heartbeat revision conflict rechecks claim and retries without duplicate model invocation',async()=>{
+ const f=fixture();let raced=false,calls=0;
+ const request=async(url,opt)=>{if(opt.method==='POST'&&JSON.parse(opt.body).command.action==='heartbeat'&&!raced){raced=true;f.model.revision++;return result({},409);}return f.request(url,opt);};
+ const outcome=await oneCycle(cookie,new Set(),{request,run:async p=>{calls++;return {result:artifact(p),outputFile:'/tmp/mock.json'};}});
+ assert.equal(outcome.imported,true);assert.equal(calls,1);assert.equal(f.model.state.jobs[0].run_attempts,1);
+});
+test('API timeout bounds stalled requests and stalled response bodies',async()=>{
+ let signal;
+ await assert.rejects(api(cookie,'ai-team',{timeoutMs:5,request:async(_url,options)=>{signal=options.signal;return new Promise(()=>{});}}),/タイムアウト/);
+ assert.equal(signal.aborted,true);
+ await assert.rejects(api(cookie,'ai-team',{timeoutMs:5,request:async()=>({ok:true,text:()=>new Promise(()=>{})})}),/タイムアウト/);
+});
+test('running jobs remain protected against duplicate legacy requests',()=>{
+ const f=fixture(),j=f.model.state.jobs[0];const s=transitionTeam(f.model.state,{action:'claim',job_id:j.id,claim_id:'44444444-4444-4444-8444-444444444444'});
+ assert.throws(()=>transitionTeam(s,{action:'create',job:{role:j.role,title:j.title,objective:j.objective,facts:j.facts}}),/未完了/);
 });
