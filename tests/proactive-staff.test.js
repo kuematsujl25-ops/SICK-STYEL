@@ -78,7 +78,7 @@ async function enableModelQueue(store){
 test('proactive facts become model requests and mock runner imports results without real model calls',async t=>{
  const {readTeam,writeTeam,taskPacket}=await import('../lib/ai-team.js');const {oneCycle}=await import('../scripts/ai-staff/auto-runner.js');
  const store=await fixture(t);await store.put('workspace',workspace);await enableModelQueue(store);await runProactive(store,{now});
- let team=await readTeam(store);assert.equal(team.state.jobs.length,2);assert.ok(team.state.jobs.every(j=>j.proactiveSource));
+ let team=await readTeam(store);assert.equal(team.state.jobs.length,1);assert.ok(team.state.jobs.every(j=>j.proactiveSource));
  assert.ok(!JSON.stringify(team).includes('試験団体')); // Aggregate facts only; no customer titles.
  const response=value=>({ok:true,status:200,text:async()=>JSON.stringify(value)});
  const request=async(url,opts)=>{
@@ -90,11 +90,11 @@ test('proactive facts become model requests and mock runner imports results with
  };
  let calls=0;const seen=new Set();
  const run=async p=>{calls++;const at=new Date().toISOString();return {outputFile:'/tmp/mock-proactive.json',result:{version:1,job_id:p.job_id,input_hash:p.input_hash,business_unit:'sickstyle',provider:'claude',execution_id:'mock-'+p.job_id,started_at:at,finished_at:at,output:{summary:'期限超過の原因確認を提案',fact_ids:['count'],missing_data:['個別の進捗'],hypotheses:[],recommendations:[{title:'進捗確認',steps:['担当者の進捗を確認'],kpi:'未確認件数',estimated_profit_jpy:null,cost_jpy:null,effort_hours:null,evidence_ids:['count'],risks:['原因は未確認']}],approvals_required:['外部への連絡'],limitations:['集計情報のみ。個別事情は未確認']}}};};
- assert.equal((await oneCycle('mock',seen,{request,run})).imported,true);
+ assert.equal((await oneCycle('mock',seen,{request,run,staffOnly:true})).imported,true);
  team=await readTeam(store);assert.equal(team.state.jobs[0].status,'in_review');assert.equal(team.state.jobs[0].output.fact_ids[0],'count');
  const c=await readProactive(store);await configureProactive(store,{revision:c.revision,action:'configure',enabled:false,modelQueue:true,permissions});
- assert.equal((await oneCycle('mock',seen,{request,run})).processed,false);assert.equal(calls,1);
- await assert.rejects(writeTeam(store,{revision:team.revision,command:{action:'import',job_id:team.state.jobs[1].id,packet:{}}}),/停止中/);
+ assert.equal((await oneCycle('mock',seen,{request,run,staffOnly:true})).processed,false);assert.equal(calls,1);
+ await assert.rejects(writeTeam(store,{revision:team.revision,command:{action:'import',job_id:team.state.jobs[0].id,packet:{}}}),/停止中/);
 });
 test('team edit racing with queue commit preserves team and discards generated requests',async t=>{
  const {readTeam,writeTeam}=await import('../lib/ai-team.js');const store=await fixture(t);await store.put('workspace',workspace);await enableModelQueue(store);

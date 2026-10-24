@@ -71,9 +71,10 @@ export function spawnAnalysis(command,args,options,signal){
  return new Promise((resolve,reject)=>{
   const child=spawnChild(command,args,{...options,stdio:'ignore',detached:true});
   const stop=()=>{try{process.kill(-child.pid,'SIGKILL');}catch{}};
+  const shutdown=()=>{stop();process.exit(130);};process.once('SIGINT',shutdown);process.once('SIGTERM',shutdown);process.once('exit',stop);
   const timer=setTimeout(stop,205000);const abort=()=>stop();signal?.addEventListener('abort',abort,{once:true});if(signal?.aborted)stop();
   child.once('error',finishError);child.once('close',code=>{cleanup();resolve({status:code});});
-  function cleanup(){clearTimeout(timer);signal?.removeEventListener('abort',abort);}
+  function cleanup(){clearTimeout(timer);signal?.removeEventListener('abort',abort);process.removeListener('SIGINT',shutdown);process.removeListener('SIGTERM',shutdown);process.removeListener('exit',stop);}
   function finishError(e){cleanup();reject(e);}
  });
 }

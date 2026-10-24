@@ -99,3 +99,10 @@ test('production runner allowlist rejects free text and other source kinds',asyn
  const f=fixture();assert.equal(eligibleJob(f.model,new Set(),true),null);
  assert.throws(()=>validateStaffAggregate(taskPacket(f.model.state.jobs[0])));
 });
+test('analysis child shutdown installs and removes process cleanup handlers',async()=>{
+ const {spawnAnalysis}=await import('../scripts/ai-staff/auto-runner.js');
+ const before=process.listenerCount('SIGINT'),controller=new AbortController();
+ const pending=spawnAnalysis(process.execPath,['-e','setInterval(()=>{},1000)'],{},controller.signal);
+ assert.equal(process.listenerCount('SIGINT'),before+1);controller.abort();
+ assert.notEqual((await pending).status,0);assert.equal(process.listenerCount('SIGINT'),before);
+});
