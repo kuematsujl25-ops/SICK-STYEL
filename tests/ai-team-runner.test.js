@@ -106,3 +106,9 @@ test('analysis child shutdown installs and removes process cleanup handlers',asy
  assert.equal(process.listenerCount('SIGINT'),before+1);controller.abort();
  assert.notEqual((await pending).status,0);assert.equal(process.listenerCount('SIGINT'),before);
 });
+test('heartbeat revision conflict rechecks claim and retries without duplicate model invocation',async()=>{
+ const f=fixture();let raced=false,calls=0;
+ const request=async(url,opt)=>{if(opt.method==='POST'&&JSON.parse(opt.body).command.action==='heartbeat'&&!raced){raced=true;f.model.revision++;return result({},409);}return f.request(url,opt);};
+ const outcome=await oneCycle(cookie,new Set(),{request,run:async p=>{calls++;return {result:artifact(p),outputFile:'/tmp/mock.json'};}});
+ assert.equal(outcome.imported,true);assert.equal(calls,1);assert.equal(f.model.state.jobs[0].run_attempts,1);
+});

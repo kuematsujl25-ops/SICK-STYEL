@@ -51,9 +51,9 @@ export async function api(cookie,path,{method='GET',data,origin=DEFAULT_ORIGIN,r
  });
  const txt=await response.text();
  let json;try{json=JSON.parse(txt);}catch{fail('API応答がJSONではありません（HTTP '+response.status+'）');}
- if(!response.ok)fail('管理アプリAPI '+path+' がHTTP '+response.status+'を返しました。'+
+ if(!response.ok){const error=new Error('管理アプリAPI '+path+' がHTTP '+response.status+'を返しました。'+
   (response.status===401?'セッションが期限切れです。ランナーを再起動してログインしてください。':
-   response.status===409?'他端末で更新されています。再読み込みが必要です。':'管理者画面の状態を確認してください。'));
+   response.status===409?'他端末で更新されています。再読み込みが必要です。':'管理者画面の状態を確認してください。'));error.status=response.status;throw error;}
  return json;
 }
 export function proactiveAllowed(model,job){return !job?.proactiveSource||!!(model.proactive?.state?.enabled&&model.proactive.state.modelQueue&&model.proactive.state.permissions?.[job.proactiveSource]);}
@@ -113,8 +113,13 @@ export async function oneCycle(cookie,seen,{run=runClaude,request=fetch,heartbea
  seen.add(job.id+':'+(job.run_attempts||0));
  const controller=new AbortController();let timer,busy=false,heartbeatFailure=false,stage='model_failed';
  const report=async(action,extra={})=>{
-  const latest=await api(cookie,'ai-team',{request});
-  return api(cookie,'ai-team',{method:'POST',data:{revision:latest.revision,command:{action,job_id:job.id,claim_id,...extra}},request});
+  for(let attempt=0;attempt<3;attempt++){
+   const latest=await api(cookie,'ai-team',{request});const target=latest.state?.jobs?.find(x=>x.id===job.id);
+   if(target?.run?.claim_id!==claim_id||!['running','stopped'].includes(target.status))throw Error('claim_lost');
+   if(action!=='run_failed'&&(!latest.state.enabled||target.status!=='running'||!proactiveAllowed(latest,target)))throw Error('stopped');
+   try{return await api(cookie,'ai-team',{method:'POST',data:{revision:latest.revision,command:{action,job_id:job.id,claim_id,...extra}},request});}
+   catch(e){if(e.status!==409||attempt===2)throw e;}
+  }
  };
  try{
   const task=await api(cookie,'ai-team/task?job_id='+encodeURIComponent(job.id)+'&claim_id='+claim_id,{request});validateTaskPacket(task);
@@ -131,7 +136,7 @@ export async function oneCycle(cookie,seen,{run=runClaude,request=fetch,heartbea
    stage='stopped';throw Error('stopped');
   }
   stage='import_failed';
-  await api(cookie,'ai-team',{method:'POST',data:{revision:latest.revision,command:{action:'import',job_id:task.job_id,claim_id,packet:result}},request});
+  await report('import',{packet:result});
   onLog('成果物を保存しました。管理アプリのAI社員画面で人間レビュー待ちです。');return {processed:true,imported:true};
  }catch{
   controller.abort();clearInterval(timer);
