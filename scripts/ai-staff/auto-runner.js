@@ -55,9 +55,10 @@ export async function api(cookie,path,{method='GET',data,origin=DEFAULT_ORIGIN,r
    response.status===409?'他端末で更新されています。再読み込みが必要です。':'管理者画面の状態を確認してください。'));
  return json;
 }
+export function proactiveAllowed(model,job){return !job?.proactiveSource||!!(model.proactive?.state?.enabled&&model.proactive.state.modelQueue&&model.proactive.state.permissions?.[job.proactiveSource]);}
 export function eligibleJob(model,seen=new Set()){
  if(!model?.state?.enabled||!Array.isArray(model.state.jobs))return null;
- return model.state.jobs.find(j=>j.status==='queued'&&j.attempts<2&&!seen.has(j.id))||null;
+ return model.state.jobs.find(j=>j.status==='queued'&&j.attempts<2&&!seen.has(j.id)&&proactiveAllowed(model,j))||null;
 }
 export function artifactAfter(before,jobId,resultDir){
  const names=readdirSync(resultDir).filter(f=>f.startsWith(jobId+'-')&&
@@ -96,7 +97,7 @@ export async function oneCycle(cookie,seen,{run=runClaude,request=fetch}={}){
  const {result,outputFile}=await run(task);
  const latest=await api(cookie,'ai-team',{request});
  const target=latest.state?.jobs?.find(x=>x.id===job.id);
- if(!latest.state?.enabled||target?.status!=='queued'||target?.input_hash!==task.input_hash){
+ if(!latest.state?.enabled||!proactiveAllowed(latest,target)||target?.status!=='queued'||target?.input_hash!==task.input_hash){
   log('依頼が更新/停止されました。結果はMacの '+outputFile+' に保管し、サーバーへの上書きを行いません。');
   return {processed:true,imported:false};
  }
