@@ -3,6 +3,7 @@ import * as amazonAds from '../integrations/amazon-ads.js';
 import {writeMeetingNote} from '../lib/meeting-notes-store.js';
 import {assertMeetingRecordsRetained} from '../public/org-meeting-lifecycle.js';
 import {previewMeeting,confirmMeeting} from '../lib/meeting-confirmation.js';
+import {readProactive,configureProactive,runProactive} from '../lib/proactive-staff.js';
 import {readTeam,writeTeam,taskPacket,TeamError} from '../lib/ai-team.js';
 import {runtime} from '../lib/runtime.js';
 import {getStore} from '../lib/runtime.js';
@@ -85,6 +86,8 @@ export default async function handler(req,res){
  if(route==='/api/notifications/unsubscribe'&&req.method==='POST')return json(res,200,await notifications.unsubscribe(store,(await body(req)).endpoint));
  if(route==='/api/notifications/read'&&req.method==='POST')return json(res,200,await notifications.markRead(store,(await body(req)).id));
  if(route==='/api/notifications/test'&&req.method==='POST')return json(res,200,await notifications.testDelivery(store));
+ if(route==='/api/ai-proactive'&&req.method==='GET')return json(res,200,await readProactive(store));
+ if(route==='/api/ai-proactive'&&req.method==='POST'){try{const input=await body(req);return json(res,200,input.action==='run'?await runProactive(store):await configureProactive(store,input));}catch(e){if(e instanceof TeamError)return json(res,e.status,{error:e.message});throw e;}}
  if(route==='/api/ai-team'&&req.method==='GET')return json(res,200,await readTeam(store));
  if(route==='/api/ai-team'&&req.method==='POST'){try{const input=await body(req);const result=await writeTeam(store,input);if(['import','approve'].includes(input.command?.action)){const job=result.state.jobs.find(j=>j.id===input.command.job_id);if(job)try{await notifications.aiUpdated(store,job,job.status);}catch(e){console.error(JSON.stringify({event:'ai_notification_failed',type:e.name||'unknown'}));}}return json(res,200,result);}catch(e){if(e instanceof TeamError)return json(res,e.status,{error:e.message});throw e;}}
  if(route==='/api/ai-team/task'&&req.method==='GET'){
