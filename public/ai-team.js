@@ -21,7 +21,7 @@ export function renderKnowledge(state,esc){
 }
 export function bindTeam({model,api,setModel,render,toast}){
  if(!model)return;
- bindProactive({model:model.proactive,api,update:proactive=>{model={...model,proactive};setModel(model);render();},toast});
+ bindProactive({model:model.proactive,api,update:async()=>{model=await api('ai-team');setModel(model);render();},toast});
  const send=async command=>{const updated=await api('ai-team','POST',{revision:model.revision,command});setModel({...updated,proactive:model.proactive});render();return updated;};
  const toggle=document.querySelector('#teamtoggle');if(toggle)toggle.onclick=async()=>{try{await send({action:'toggle',enabled:!model.state.enabled});}catch(e){toast(e.message);}};
  document.querySelectorAll('[data-team-role]').forEach(b=>b.onclick=()=>{document.querySelector('#teamcreate select').value=b.dataset.teamRole;document.querySelector('#teamcreate').scrollIntoView({behavior:'smooth'});});

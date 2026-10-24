@@ -112,3 +112,14 @@ test('queue stays off by default and repeated analysis cannot duplicate linked m
  await runProactive(store,{now});const first=await readTeam(store);
  await runProactive(store,{now:'2026-10-25T09:00:00.000Z'});assert.deepEqual((await readTeam(store)).state.jobs,first.state.jobs);
 });
+
+test('manual proactive run refreshes model jobs and revision before the next team action',async()=>{
+ const {bindTeam}=await import('../public/ai-team.js');const previous=globalThis.document;const run={},toggle={},updates=[],calls=[];
+ globalThis.document={querySelector:s=>s==='#proactive-run'?run:s==='#teamtoggle'?toggle:null,querySelectorAll:()=>[]};
+ try{
+ const fresh={state:{enabled:true,jobs:[{id:'generated'}]},revision:8,proactive:{revision:5,state:{}}};
+ bindTeam({model:{state:{enabled:true,jobs:[]},revision:7,proactive:{revision:3,state:{}}},api:async(path,method,body)=>{calls.push({path,method,body});return path==='ai-proactive'?fresh.proactive:fresh;},setModel:m=>updates.push(m),render:()=>{},toast:e=>assert.fail(e)});
+ await run.onclick();await toggle.onclick();
+ assert.equal(updates[0],fresh);assert.equal(calls[1].path,'ai-team');assert.equal(calls[2].body.revision,8);
+ }finally{globalThis.document=previous;}
+});

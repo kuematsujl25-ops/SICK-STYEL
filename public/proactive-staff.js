@@ -18,7 +18,7 @@ export function renderProactive(model,esc,teamState){
 export function bindProactive({model,api,update,toast}){
  if(!model)return;
  let busy=false;
- const send=async data=>{if(busy)return;busy=true;try{const next=await api('ai-proactive','POST',{...data,revision:model.revision});update(next);if(next.skipped)toast(next.skipped);}catch(e){toast(e.message);try{update(await api('ai-proactive'));}catch{} }finally{busy=false;}};
+ const send=async data=>{if(busy)return;busy=true;try{const next=await api('ai-proactive','POST',{...data,revision:model.revision});await update(next);if(next.skipped)toast(next.skipped);}catch(e){toast(e.message);try{await update(await api('ai-proactive'));}catch{} }finally{busy=false;}};
  const settings=document.querySelector('#proactive-settings');
  if(settings)settings.onsubmit=e=>{e.preventDefault();const f=new FormData(settings);send({action:'configure',enabled:f.has('enabled'),modelQueue:f.has('modelQueue'),permissions:Object.fromEntries(Object.keys(labels).map(k=>[k,f.has(k)]))});};
  const run=document.querySelector('#proactive-run');if(run)run.onclick=()=>send({action:'run'});
