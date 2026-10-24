@@ -57,3 +57,16 @@ test('UI distinguishes rule execution and keeps warnings visible with details cl
  const store=await fixture(t);const html=renderProactive(await readProactive(store),x=>String(x).replaceAll('<','&lt;'));
  assert.match(html,/モデル未実行/);assert.match(html,/未接続/);assert.match(html,/<details><summary>使い方/);assert.doesNotMatch(html,/<details open/);
 });
+
+test('first model request retains proactive controls through automatic team enable',async()=>{
+ const {bindTeam}=await import('../public/ai-team.js');
+ const previousDocument=globalThis.document,previousFormData=globalThis.FormData;
+ const form={},updates=[],proactive={state:{enabled:false,permissions:{}},revision:3};
+ globalThis.document={querySelector:selector=>selector==='#teamcreate'?form:null,querySelectorAll:()=>[]};
+ globalThis.FormData=class{*[Symbol.iterator](){yield* Object.entries({role:'coo',title:'試験',objective:'確認',fact:'',source:'',date:'2026-10-24'});}};
+ try{
+  bindTeam({model:{state:{enabled:false},revision:0,proactive},api:async(_path,_method,body)=>({state:{enabled:true,jobs:[]},revision:body.command.action==='toggle'?1:2}),setModel:m=>updates.push(m),render:()=>{},toast:()=>{}});
+  await form.onsubmit({preventDefault(){}});
+  assert.equal(updates.length,2);assert.ok(updates.every(m=>m.proactive===proactive));
+ }finally{globalThis.document=previousDocument;globalThis.FormData=previousFormData;}
+});

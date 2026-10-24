@@ -35,7 +35,7 @@ export function bindTeam({model,api,setModel,render,toast}){
    // 使い続け、修正して再送してもrevision不一致で失敗し続ける（Codex独立レビュー指摘）。
    // ここでmodel自体を更新することで、以後のすべての参照箇所（send()・toggleボタン等）が
    // 最新のrevision・stateを見るようにする。
-   model=started;setModel(started);revision=started.revision;
+   started.proactive=model.proactive;model=started;setModel(started);revision=started.revision;
  }
  const updated=await api('ai-team','POST',{revision,command:{action:'create',job:{role:f.role,title:f.title,objective:f.objective,facts}}});
  setModel({...updated,proactive:model.proactive});render();
