@@ -35,7 +35,8 @@ export function bindTeam({model,api,setModel,render,toast}){
  if(typeof window!=='undefined')freshnessTimer=setTimeout(async()=>{
   if(!document.querySelector('#teamintake'))return;
   try{
-   const latest=await api('ai-team');model=latest;setModel(latest);
+   const latest=await api('ai-team'); // Status-only polling: preserve displayed controls and their revision.
+   // Mutations use the displayed snapshot; concurrent edits fail CAS rather than invert an unseen toggle.
    for(const j of latest.state.jobs){
     const badge=document.querySelector(`[data-job-status="${j.id}"]`);
     if(badge)badge.textContent=j.status==='running'&&Date.now()-Date.parse(j.run?.heartbeat_at)>90000?'通信途絶・状態未確認':states[j.status];
