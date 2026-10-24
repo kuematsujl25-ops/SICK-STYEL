@@ -37,7 +37,7 @@ function fakeFetch(behavior){
   }
   if(u.pathname==='/calendar/v3/calendars/primary/events'&&options.method==='POST'){
    if(behavior.calendarNetworkFails)throw Error('network');
-   if(behavior.calendarFails)return new Response(JSON.stringify({error:{code:500,message:'fail'}}),{status:500});
+   if(behavior.calendarFails)return new Response(JSON.stringify({error:{code:400,message:'fail'}}),{status:400});
    return Response.json({id:'evt-'+(zoomMeetingSeq),htmlLink:'https://calendar.google.com/x'});
   }
   if(/^\/calendar\/v3\/calendars\/primary\/events\/.+$/.test(u.pathname)&&options.method==='PATCH')return behavior.calendarUpdateFails?new Response(null,{status:500}):new Response(null,{status:204});
@@ -677,4 +677,25 @@ test('初回Zoom作成中の日時・名前編集はIDを保持し古い内容�
    const saved=JSON.parse((await store.doc('workspace')).body).orgSales[0];assert.ok(saved.initialMeetingSync.zoomMeetingId);assert.equal(saved.initialMeetingSync.status,'zoom_only');assert.equal(calendarCreates,0);
   }
  });
+});
+
+for(const provider of ['zoom','calendar'])for(const status of [500,502,504])test(`${provider} create ${status} after provider acceptance is uncertain and cannot duplicate on retry/reload`,async t=>{
+ const env={...process.env};Object.assign(process.env,{ZOOM_CLIENT_ID:'c',ZOOM_CLIENT_SECRET:'s',GOOGLE_CLIENT_ID:'c',GOOGLE_CLIENT_SECRET:'s',APP_ORIGIN:'http://127.0.0.1:3000',TOKEN_ENCRYPTION_KEY:randomBytes(32).toString('base64')});
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-5xx-'));let store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
+ t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
+ const org={...newOrg(),id:'org-1',name:'FC Example',updatedAt:new Date().toISOString(),deletedAt:null,history:[{stage:'DM送信',at:new Date().toISOString(),note:''}],initialZoomAt:'2026-10-28T14:00'};const revision=await seed(store,org);
+ let accepted=0,posts=0;const normal=fakeFetch({});
+ global.fetch=async(url,options)=>{
+  const p=new URL(url).pathname;
+  if(options?.method==='POST'&&(p==='/v2/users/me/meetings'||p==='/calendar/v3/calendars/primary/events'))posts++;
+  if(options?.method==='POST'&&p===(provider==='zoom'?'/v2/users/me/meetings':'/calendar/v3/calendars/primary/events')){accepted++;return Response.json(provider==='zoom'?{code:123,message:'upstream error'}:{error:{code:123,message:'upstream error'}},{status});}
+  return normal(url,options);
+ };
+ const outcomes=await Promise.allSettled([syncMeeting(store,{orgId:org.id,kind:'initial',action:'create',revision}),syncMeeting(store,{orgId:org.id,kind:'initial',action:'create',revision})]);
+ assert.equal(accepted,1);if(provider==='zoom'){const error=outcomes.find(x=>x.status==='rejected'&&x.reason.httpStatus===status)?.reason;assert.equal(error?.stage,'create_meeting');}
+ store.close();store=await createStore({DATA_DIR:dir});const saved=await store.doc('workspace'),record=JSON.parse(saved.body).orgSales[0];
+ assert.equal(record.initialMeetingSync.status,'uncertain');if(provider==='calendar')assert.ok(record.initialMeetingSync.zoomMeetingId);
+ const before=posts;for(const action of ['create','update','prepare'])await assert.rejects(syncMeeting(store,{orgId:org.id,kind:'initial',action,revision:saved.revision}),/作成結果が不明/);
+ assert.equal(posts,before);assert.equal(accepted,1);
+ const html=renderMeetingEditor(record,'initial',String,{zoomConnected:true,calendarConnected:true});assert.doesNotMatch(html,/data-mtgsync="initial:create"/);assert.match(html,/不明|要確認/);
 });

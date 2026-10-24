@@ -9,11 +9,11 @@ const callback=()=>new URL('/api/googlecalendar/callback',runtime().APP_ORIGIN).
 // stage: 失敗した処理段階（token_exchange/token_refresh/create_event/update_event/delete_event/list_events）。
 // lib/meeting-sync.jsが「予定の作成リクエスト自体が送られた後の失敗（曖昧・uncertain）」と「それより前の
 // 段階（トークン更新等、作成リクエスト未送信で確実に未作成）」を区別するために使う（Codex独立レビュー指摘）。
-export class GoogleCalendarError extends Error{constructor(code,message,stage){super(message||`Googleカレンダー API エラー (${code})。権限・期限を確認してください。`);this.code=code;this.stage=stage||null;}}
+export class GoogleCalendarError extends Error{constructor(code,message,stage,httpStatus=null){super(message||`Googleカレンダー API エラー (${code})。権限・期限を確認してください。`);this.code=code;this.stage=stage||null;this.httpStatus=httpStatus;}}
 async function remote(stage,url,options={}){let response;try{response=await fetch(url,{...options,signal:AbortSignal.timeout(12000)});}catch{throw new GoogleCalendarError('通信失敗',undefined,stage);}
  if(response.status===204)return {};
  let b=null;try{b=await response.json();}catch{}
- if(!response.ok){const code=b?.error?.code||response.status;const hint=response.status===401?'認可が失効しています。再接続してください。':response.status===403?'権限不足、または認可が取り消されています。':response.status===429?'Googleの呼び出し上限です。しばらくして再試行してください。':'';throw new GoogleCalendarError(code,b?.error?.message?`Googleカレンダー API エラー (${code}): ${b.error.message}。${hint}`:undefined,stage);}
+ if(!response.ok){const code=b?.error?.code||response.status;const hint=response.status===401?'認可が失効しています。再接続してください。':response.status===403?'権限不足、または認可が取り消されています。':response.status===429?'Googleの呼び出し上限です。しばらくして再試行してください。':'';throw new GoogleCalendarError(code,b?.error?.message?`Googleカレンダー API エラー (${code}): ${b.error.message}。${hint}`:undefined,stage,response.status);}
  return b;
 }
 async function privateData(store){const r=await store.doc('googlecalendar-private');return r?JSON.parse(r.body):null;}

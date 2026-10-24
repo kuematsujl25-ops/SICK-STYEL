@@ -8,10 +8,10 @@ const callback=()=>new URL('/api/zoom/callback',runtime().APP_ORIGIN).href;
 // code: Zoom自身のエラーコード/HTTPステータス、またはローカル検証で判定した安全な識別子（秘密値は含まない）。
 // stage: 失敗した処理段階（state_validation/callback_params/token_exchange/profile/scope_check/storage/create_meeting等）。
 // どちらもログ・画面表示用で、Client Secret・認可コード・アクセストークン・Cookieは一切含めない。
-export class ZoomError extends Error{constructor(code,message,stage){super(message||`Zoom API エラー (${code})。権限・期限を確認してください。`);this.code=code;this.stage=stage||null;}}
+export class ZoomError extends Error{constructor(code,message,stage,httpStatus=null){super(message||`Zoom API エラー (${code})。権限・期限を確認してください。`);this.code=code;this.stage=stage||null;this.httpStatus=httpStatus;}}
 async function remote(stage,url,options={}){let response;try{response=await fetch(url,{...options,signal:AbortSignal.timeout(12000)});}catch{throw new ZoomError('network_error','Zoom APIへの通信に失敗しました（ネットワークまたはタイムアウト）',stage);}
  let b=null;try{b=await response.json();}catch{}
- if(!response.ok){const sourceCode=b?.code;const code=typeof sourceCode==='number'&&Number.isSafeInteger(sourceCode)?sourceCode:typeof sourceCode==='string'&&/^[a-zA-Z0-9_-]{1,40}$/.test(sourceCode)?sourceCode:response.status;const hint=response.status===401?'認可が失効しています。再接続してください。':response.status===429?'Zoomの呼び出し上限です。しばらくして再試行してください。':'';throw new ZoomError(code,`Zoom API エラー (${code}、HTTP ${response.status})。${hint}`,stage);}
+ if(!response.ok){const sourceCode=b?.code;const code=typeof sourceCode==='number'&&Number.isSafeInteger(sourceCode)?sourceCode:typeof sourceCode==='string'&&/^[a-zA-Z0-9_-]{1,40}$/.test(sourceCode)?sourceCode:response.status;const hint=response.status===401?'認可が失効しています。再接続してください。':response.status===429?'Zoomの呼び出し上限です。しばらくして再試行してください。':'';throw new ZoomError(code,`Zoom API エラー (${code}、HTTP ${response.status})。${hint}`,stage,response.status);}
  return b;
 }
 async function privateData(store){const r=await store.doc('zoom-private');return r?{...JSON.parse(r.body),revision:r.revision}:null;}
