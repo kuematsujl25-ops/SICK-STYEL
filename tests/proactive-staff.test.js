@@ -123,3 +123,9 @@ test('manual proactive run refreshes model jobs and revision before the next tea
  assert.equal(updates[0],fresh);assert.equal(calls[1].path,'ai-team');assert.equal(calls[2].body.revision,8);
  }finally{globalThis.document=previous;}
 });
+
+test('optional model capacity does not discard rules or retain uncommitted job links',async t=>{
+ const {readTeam}=await import('../lib/ai-team.js');const store=await fixture(t);await store.put('workspace',workspace);await enableModelQueue(store);
+ const team=await readTeam(store);team.state.jobs=Array.from({length:200},(_,i)=>({id:'old-'+i,status:'completed',created_at:'2026-10-20T00:00:00Z'}));await store.put('ai-team-sickstyle-v1',team.state);
+ const result=await runProactive(store,{now});assert.equal(result.state.runs.at(-1).status,'completed');assert.match(result.state.runs.at(-1).modelStatus,/保留/);assert.equal(result.state.tasks.length,3);assert.ok(result.state.tasks.every(t=>!t.modelJobId));assert.equal((await readTeam(store)).state.jobs.length,200);
+});
