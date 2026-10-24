@@ -1,3 +1,4 @@
+import {runProactive} from '../lib/proactive-staff.js';
 import * as amazonAds from '../integrations/amazon-ads.js';
 import {createServer} from 'node:http';
 import {httpServerHandler} from 'cloudflare:node';
@@ -33,6 +34,7 @@ export default {
    const store=createD1Store(env.DB);
    // Cron Triggers are UTC. 09:00 / 20:00 / 22:00 Asia/Tokyo = 00:00 / 11:00 / 13:00 UTC.
    const kind=scheduledKind(event.cron);
+   if(kind==='analysis'){try{await runProactive(store,{trigger:'scheduled'});}catch{console.error(JSON.stringify({event:'proactive_analysis_failed'}));}}
    if(event.cron==='10 0 * * *'||['sales','analysis'].includes(kind)) {
     try{if((await amazon.safeStatus(store)).connected)await amazon.sync(store);}
     catch{console.error(JSON.stringify({event:'scheduled_sync_failed',service:'amazon'}));}

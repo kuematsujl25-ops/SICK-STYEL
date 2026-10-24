@@ -33,8 +33,8 @@ export async function mountNotifications(){
  const registration=supports?await withTimeout(navigator.serviceWorker.ready,4000):null;
  const current=registration?await withTimeout(registration.pushManager.getSubscription(),4000):null;
  const permission=supports?Notification.permission:'unsupported';
- ref.innerHTML='<p>毎朝9時：今日の予定 ／ 20時：売上速報 ／ 22時：売上データ分析 ／ AI社員：分析完了・レビュー承認の通知</p>'+
-  '<p class="note">日本時間で通知します。未取得の売上は0円として扱いません。iPhoneではSafariから「ホーム画面に追加」したSICKSTYLEアプリを開き、通知を許可してください。</p>'+
+ ref.innerHTML='<p class="note">通知時刻は日本時間。未取得の売上は0円として扱いません。</p><details><summary>通知スケジュール・iPhoneの設定方法</summary><p>毎朝9時：今日の予定 ／ 20時：売上速報 ／ 22時：売上データ分析 ／ AI社員：分析完了・レビュー承認の通知</p>'+
+  '<p class="note">日本時間で通知します。未取得の売上は0円として扱いません。iPhoneではSafariから「ホーム画面に追加」したSICKSTYLEアプリを開き、通知を許可してください。</p></details>'+
   '<div class="actions"><button class="primary" id="notification-enable" '+(!status.configured||!supports||permission==='denied'||current?'disabled':'')+'>この端末で通知を有効にする</button>'+
   '<button class="secondary" id="notification-disable" '+(!current?'disabled':'')+'>この端末への通知を停止</button>'+ '<button class="secondary" id="notification-test" '+(!current?'disabled':'')+'>テスト通知を送信</button></div>'+
   '<p class="note">通知の状態：'+(current?'この端末で登録済み':permission==='denied'?'通知が拒否されています（端末の設定から許可してください）':!supports?'この表示環境ではプッシュ通知が利用できません':!status.configured?'配信用キーの本番設定待ち':'端末で未登録')+
