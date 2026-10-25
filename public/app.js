@@ -1,3 +1,4 @@
+import {createOverdueMonitor,overdueSummary,renderOverdue} from './overdue.js';
 import {reconcileAds} from './ads-reconcile.js';
 let adsStatus=null;
 import {renderMeetings,renderMeetingEditor,meetingFormChanged,saveMeetingFields} from './meetings.js';
@@ -35,8 +36,37 @@ const yen=v=>'¥'+Math.round(Number(v||0)).toLocaleString('ja-JP');
 const num=v=>typeof v==='number'&&Number.isFinite(v)?v.toLocaleString('ja-JP'):'未取得';
 const fmtTime=v=>v?esc(new Date(v).toLocaleString('ja-JP',{timeZone:'Asia/Tokyo'})):'未取得';
 const LOGO='<img src="/logo-mark.png" alt="" width="506" height="335">';
-async function api(url,method='GET',data){const r=await fetch('/api/'+url,{method,headers:data?{'Content-Type':'application/json'}:{},body:data?JSON.stringify(data):undefined,credentials:'same-origin'});let b={};try{b=await r.json();}catch{}if(!r.ok){if(r.status===401){state=null;ig=null;amz=null;auth();}const e=Error(b.error||('通信エラー ('+r.status+')'));e.body=b;throw e;}return b;}
+async function api(url,method='GET',data,signal){const r=await fetch('/api/'+url,{signal,method,headers:data?{'Content-Type':'application/json'}:{},body:data?JSON.stringify(data):undefined,credentials:'same-origin'});let b={};try{b=await r.json();}catch{}if(!r.ok){if(r.status===401){state=null;ig=null;amz=null;auth();}const e=Error(b.error||('通信エラー ('+r.status+')'));e.body=b;throw e;}return b;}
 let toastTimer;function toast(s){const t=document.querySelector('#toast');t.textContent=s;clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.textContent='',4500);}
+const overdue=createOverdueMonitor({fetchData:()=>api('data','GET',undefined,AbortSignal.timeout(15000)),changed:updateOverdue});
+let overdueSource=null,overdueOpenRequest=0;
+function updateOverdue(){
+ const dateLabel=document.querySelector('.pageheading .date');if(dateLabel)dateLabel.textContent=today().replaceAll('-',' / ');
+ const snapshot=overdue.snapshot();
+ document.querySelectorAll('[data-overdue-summary]').forEach(el=>el.textContent=overdueSummary(snapshot));
+ const panel=document.querySelector('#overdue-content');
+ if(!panel)return;
+ const focus=document.activeElement;
+ const attribute=['data-overdue-retry','data-overdue-read','data-overdue-target'].find(a=>focus?.hasAttribute(a));
+ const value=attribute?focus.getAttribute(attribute):null;
+ panel.innerHTML=renderOverdue(snapshot,esc);
+ panel.querySelector('[data-overdue-retry]').onclick=()=>overdue.refresh();
+ const read=panel.querySelector('[data-overdue-read]');if(read)read.onclick=()=>overdue.read();
+ panel.querySelectorAll('[data-overdue-target]').forEach(b=>b.onclick=async()=>{
+  const [key,id]=JSON.parse(b.dataset.overdueTarget);b.disabled=true;
+  const source=state,request=++overdueOpenRequest;
+  const current=()=>state===source&&section==='overdue'&&document.contains(panel)&&request===overdueOpenRequest;
+  try{const latest=await api('data','GET',undefined,AbortSignal.timeout(15000));
+   // A response must not reopen business data after logout or replace another screen/editor.
+   if(!current())return;
+   state=latest;section=key;render();const item=state[key].find(x=>x.id===id&&!x.deletedAt);if(item)editor(key,item);else toast('対象は削除されています');}
+  catch(e){if(current()){toast(e.message);b.disabled=false;}}
+ });
+ if(attribute){const next=[...panel.querySelectorAll('['+attribute+']')].find(el=>el.getAttribute(attribute)===value);if(next&&!next.disabled)next.focus();else panel.querySelector('[data-overdue-retry]')?.focus();}
+}
+setInterval(()=>{if(state&&!document.hidden)overdue.refresh();},60000);
+document.addEventListener('visibilitychange',()=>{if(state&&!document.hidden)overdue.refresh();});
+window.addEventListener('focus',()=>{if(state)overdue.refresh();});
 async function load(){
  const s=await api('session');configured=s.configured;setupAllowed=s.setupAllowed;storageKind=s.storage;hosted=s.hosted;
  if(!s.authenticated)return auth();
@@ -57,6 +87,7 @@ function setupGuide(){
  return `<div class="guide"><b>公開版の最初の管理者は、PCのターミナルで作成します</b><ol><li>Cloudflareにログイン済みのMacで「ターミナル」を開きます。</li><li><code>cd ~/Sites/SICK-STYEL</code> を実行します。</li><li><code>npm run admin:create:remote</code> を実行し、メールアドレスとパスワード（このアプリ専用）を入力します。</li><li>完了後、この画面を再読み込みしてログインします。</li></ol><p class="note">Web上の新規登録は、第三者による乗っ取りを防ぐため公開していません。</p></div>`;
 }
 function auth(){
+ overdueSource=null;overdue.clear();
  team=null;
  financeReport=null;
  const setupForm=!configured&&setupAllowed;const showForm=configured||setupForm;
@@ -75,18 +106,19 @@ function auth(){
 // 団体営業・集める数字・購入実験・選手候補・利益在庫はメニューから削除（データ・コードは保持、いつでも復元可能）。
 // リール分析・参考アカウント・売上SNS実績（SNS側）はInstagram画面へ、売上SNS実績（Amazon側）・利益在庫の広告費のみAmazon画面へ統合。
 const nav=[['overview','◈','ダッシュボード'],['goals','◎','目標'],['tasks','☑','タスク'],['staffTasks','▤','担当タスク'],['shipments','▣','発送管理'],['team','♙','AI社員'],['meetings','▦','会議'],['amazon','◆','Amazon連携'],['instagram','◉','Instagram連携'],['site','◇','サイト掲載'],['brand','✳','ブランド'],['settings','⚙','設定・バックアップ']];
-const names={...Object.fromEntries(nav.map(([id,,name])=>[id,name])),orgSales:'団体営業・会議'};
+const names={...Object.fromEntries(nav.map(([id,,name])=>[id,name])),orgSales:'団体営業・会議',overdue:'期限超過の通知'};
 const rate=g=>Math.min(100,Math.max(0,Math.round(Number(g.current||0)/Number(g.target||1)*100)));
 function render(){
+ if(state!==overdueSource){overdueSource=state;overdue.set(state);}
  const previousNav=document.querySelector('#app aside nav');
  const navScrollTop=previousNav?.scrollTop||0,navScrollLeft=previousNav?.scrollLeft||0;
- const views={team:()=>renderTeam(team,esc),finance:()=>renderFinance(financeReport,esc),overview,instagram:instagramView,amazon:amazonView,brand,settings,site:siteView,staffTasks:()=>renderStaffTasks(state.staffTasks,staffUI,esc,today()),meetings:()=>renderMeetings(state.orgSales,esc),orgSales:orgSalesView,collectionTasks:()=>renderCollectionTasks(state.collectionTasks,collectUI,esc),
+ const views={overdue:()=>'<div id="overdue-content"></div>',team:()=>renderTeam(team,esc),finance:()=>renderFinance(financeReport,esc),overview,instagram:instagramView,amazon:amazonView,brand,settings,site:siteView,staffTasks:()=>renderStaffTasks(state.staffTasks,staffUI,esc,today()),meetings:()=>renderMeetings(state.orgSales,esc),orgSales:orgSalesView,collectionTasks:()=>renderCollectionTasks(state.collectionTasks,collectUI,esc),
  reelPosts:()=>renderReels(state.reelPosts,reelUI,esc,today()),growthExperiments:()=>renderExperiments(state.growthExperiments,experimentUI,esc),competitorAccounts:()=>renderAccounts(state.competitorAccounts,accountUI,esc),playerCandidates:()=>renderPlayers(state.playerCandidates,playerUI,esc)};
  app.innerHTML=`<aside><div class="brandtop"><a href="#" class="brandmark" data-nav="overview">${LOGO}<span><b>SICKSTYLE</b><small>管理アプリ</small></span></a><span class="mobileonly"><button id="mrefresh" aria-label="最新データに更新">↻</button><button id="mlogout" aria-label="ログアウト">ログアウト</button></span></div><nav aria-label="メニュー">${nav.map(([id,icon,name])=>`<button data-nav="${id}" class="${section===id?'active':''}" ${section===id?'aria-current="page"':''}><span aria-hidden="true">${icon}</span>${name}</button>`).join('')}</nav><div class="sidebottom"><div>管理者<small>${esc(storageKind==='d1'?'クラウド保存（Cloudflare D1）':'このPCに保存（SQLite）')}</small></div><button id="logout">ログアウト</button></div></aside>
  <main><header><div class="breadcrumb">SICKSTYLE<span>/ ${names[section]}</span></div><div class="headeractions"><span class="live">保存先: ${storageKind==='d1'?'クラウド':'このPC'}</span><button id="refresh" aria-label="最新データに更新" title="最新データに更新">↻ 更新</button></div></header>
- <div class="content"><div class="pageheading"><div><h1>${names[section]}</h1></div><span class="date">${today().replaceAll('-',' / ')}</span></div>${(views[section]||(()=>collection(section)))()}</div>
+ <div class="content"><div class="overdue-entry"><button data-nav="overdue" aria-label="期限超過の通知を開く"><span aria-hidden="true">!</span> <span data-overdue-summary></span></button></div><div class="pageheading"><div><h1>${names[section]}</h1></div><span class="date">${today().replaceAll('-',' / ')}</span></div>${(views[section]||(()=>collection(section)))()}</div>
  <footer><span>SICKSTYLE 管理アプリ</span><a href="/privacy.html">プライバシー</a></footer></main><dialog id="editor"></dialog>`;
- bind();
+ bind();updateOverdue();
  const currentNav=document.querySelector('#app aside nav');
  if(currentNav){currentNav.scrollTop=navScrollTop;currentNav.scrollLeft=navScrollLeft;}
 }

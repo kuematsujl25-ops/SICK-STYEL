@@ -277,3 +277,10 @@ main:not(.auth) details>summary,dialog details>summary{min-height:44px;cursor:po
  h1{font-size:25px}
  .panelhead{gap:12px}
 }
+
+/* In-app deadline notifications stay visible on both desktop and mobile. */
+.overdue-entry{display:flex;justify-content:flex-end;margin-bottom:18px;position:sticky;top:70px;z-index:1;pointer-events:none}
+.overdue-entry button{pointer-events:auto;background:var(--surface);border-color:var(--danger);color:var(--danger);min-height:44px;white-space:normal;text-align:left}
+#overdue-content .record h3{overflow-wrap:anywhere}
+#overdue-content .panelhead{flex-wrap:wrap;gap:12px}
+@media(max-width:720px){.overdue-entry{top:8px;justify-content:stretch}.overdue-entry button{width:100%}}
