@@ -226,7 +226,7 @@ function barDiv(dateOrMonth,value,max,extraClass){
  return `<div class="bar h${step} ${extraClass||''}" title="${esc(dateOrMonth)}: ${yen(value)}"></div>`;
 }
 function amazonView(){const c=amz?.cache;const o=c?.orders;const t=today();const targetMonth=amzUI.month||month();const isCurrent=targetMonth===month();
- return `<section class="panel"><div class="panelhead"><h2>接続状態</h2>${statusBadge(amz)}</div><p>Amazon公式の Selling Partner API（SP-API）で接続します。対象は ${esc(amz?.marketplace||'Amazon.co.jp (A1VC38T7YXB528)')} です。Amazonのパスワードはこのアプリに入力・保存しません。</p>
+ return `<section class="panel"><h2>自社発送・配送先</h2><p>準備中（実データ機能は無効）</p><p>管理者の個別ID・MFA、Amazonの住所閲覧/発送通知ロール、暗号化・削除・監査の確認後に有効化を判断します。現在は配送先取得・Amazonへの発送通知はできません。</p></section><section class="panel"><div class="panelhead"><h2>接続状態</h2>${statusBadge(amz)}</div><p>Amazon公式の Selling Partner API（SP-API）で接続します。対象は ${esc(amz?.marketplace||'Amazon.co.jp (A1VC38T7YXB528)')} です。Amazonのパスワードはこのアプリに入力・保存しません。</p>
 
  <details class="guide" ${!amz?.connected?'open':''}><summary><b>Amazon SP-API連携の手順（5ステップ）</b></summary><ol>
  <li><a href="https://sellercentral.amazon.co.jp/" target="_blank" rel="noopener noreferrer">Amazon Seller Central ↗</a>に既存の大口出品アカウントのプライマリユーザーでログインします。新たな有料アップグレードは行いません。</li>

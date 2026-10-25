@@ -1,3 +1,4 @@
+import {fulfillmentReadiness} from '../lib/amazon-fulfillment-gate.js';
 import {MeetingNoteError} from '../lib/meeting-notes.js';
 import * as amazonAds from '../integrations/amazon-ads.js';
 import {writeMeetingNote} from '../lib/meeting-notes-store.js';
@@ -80,6 +81,8 @@ export default async function handler(req,res){
  const redirect=location=>{res.writeHead(303,{Location:location,'Cache-Control':'no-store'});res.end();};
  if(['/api/amazon/login','/api/amazon/callback','/api/instagram/callback','/api/zoom/callback','/api/googlecalendar/callback'].includes(route)&&req.method==='GET'&&!authorized)return redirect('/?auth=required');
  if(!authorized)return json(res,401,{error:'ログインしてください'});
+ // Shared sessions cannot authorize PII. All operations remain closed, including forged admin claims.
+ if(route==='/api/amazon/fulfillment'||route.startsWith('/api/amazon/fulfillment/'))return json(res,403,fulfillmentReadiness());
  if(route==='/api/notifications/status'&&req.method==='GET')return json(res,200,await notifications.status(store));
  if(route==='/api/notifications'&&req.method==='GET')return json(res,200,{items:await notifications.listNotifications(store)});
  if(route==='/api/notifications/subscribe'&&req.method==='POST')return json(res,200,await notifications.subscribe(store,(await body(req)).subscription));
