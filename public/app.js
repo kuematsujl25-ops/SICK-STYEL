@@ -229,7 +229,7 @@ function barDiv(dateOrMonth,value,max,extraClass){
  return `<div class="bar h${step} ${extraClass||''}" title="${esc(dateOrMonth)}: ${yen(value)}"></div>`;
 }
 function amazonView(){const c=amz?.cache;const o=c?.orders;const t=today();const targetMonth=amzUI.month||month();const isCurrent=targetMonth===month();
- return `<section class="panel"><h2>自社発送・配送先</h2><p>準備中（実データ機能は無効）</p><p>配送先の閲覧には、管理者の個別ID・MFA、住所閲覧のRestrictedロール、暗号化・削除・監査の確認が必要です。現在は住所を取得しません。Amazonへの発送通知は無効のままです。</p></section><section class="panel"><div class="panelhead"><h2>接続状態</h2>${statusBadge(amz)}</div><p>Amazon公式の Selling Partner API（SP-API）で接続します。対象は ${esc(amz?.marketplace||'Amazon.co.jp (A1VC38T7YXB528)')} です。Amazonのパスワードはこのアプリに入力・保存しません。</p>
+ return `<section class="panel"><h2>Amazon審査・配送先の利用状況</h2><p>SP-API開発者プロフィール：承認通知を確認済み（2026年10月21日、本人提供画像による確認）。現在の個別ロール・認可の有効性を保証するものではありません。</p><p>住所閲覧のRestrictedロール：未確認。Amazon Ads API承認：未確認。配送先住所の実データ機能は無効です。</p><p>配送先の閲覧には、管理者の個別ID・MFA、住所閲覧のRestrictedロール、暗号化・削除・監査の確認が必要です。現在は住所を取得しません。Amazonへの発送通知は無効のままです。</p></section><section class="panel"><div class="panelhead"><h2>接続状態</h2>${statusBadge(amz)}</div><p>Amazon公式の Selling Partner API（SP-API）で接続します。対象は ${esc(amz?.marketplace||'Amazon.co.jp (A1VC38T7YXB528)')} です。Amazonのパスワードはこのアプリに入力・保存しません。</p>
 
  <details class="guide" ${!amz?.connected?'open':''}><summary><b>Amazon SP-API連携の手順（5ステップ）</b></summary><ol>
  <li><a href="https://sellercentral.amazon.co.jp/" target="_blank" rel="noopener noreferrer">Amazon Seller Central ↗</a>に既存の大口出品アカウントのプライマリユーザーでログインします。新たな有料アップグレードは行いません。</li>
