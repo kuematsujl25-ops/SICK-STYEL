@@ -1,3 +1,4 @@
+import {renderAdInsights,renderOrderInsights} from './amazon-insights.js';
 import {createOverdueMonitor,overdueSummary,renderOverdue} from './overdue.js';
 import {reconcileAds} from './ads-reconcile.js';
 let adsStatus=null;
@@ -36,7 +37,8 @@ const yen=v=>'¥'+Math.round(Number(v||0)).toLocaleString('ja-JP');
 const num=v=>typeof v==='number'&&Number.isFinite(v)?v.toLocaleString('ja-JP'):'未取得';
 const fmtTime=v=>v?esc(new Date(v).toLocaleString('ja-JP',{timeZone:'Asia/Tokyo'})):'未取得';
 const LOGO='<img src="/logo-mark.png" alt="" width="506" height="335">';
-async function api(url,method='GET',data,signal){const r=await fetch('/api/'+url,{signal,method,headers:data?{'Content-Type':'application/json'}:{},body:data?JSON.stringify(data):undefined,credentials:'same-origin'});let b={};try{b=await r.json();}catch{}if(!r.ok){if(r.status===401){state=null;ig=null;amz=null;auth();}const e=Error(b.error||('通信エラー ('+r.status+')'));e.body=b;throw e;}return b;}
+let authEpoch=0;
+async function api(url,method='GET',data,signal){const epoch=authEpoch;const r=await fetch('/api/'+url,{signal,method,headers:data?{'Content-Type':'application/json'}:{},body:data?JSON.stringify(data):undefined,credentials:'same-origin'});let b={};try{b=await r.json();}catch{}if(epoch!==authEpoch)throw Error('認証状態が変わりました。再度読み込んでください');if(!r.ok){if(r.status===401){state=null;ig=null;amz=null;auth();}const e=Error(b.error||('通信エラー ('+r.status+')'));e.body=b;throw e;}return b;}
 let toastTimer;function toast(s){const t=document.querySelector('#toast');t.textContent=s;clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.textContent='',4500);}
 const overdue=createOverdueMonitor({fetchData:()=>api('data','GET',undefined,AbortSignal.timeout(15000)),changed:updateOverdue});
 let overdueSource=null,overdueOpenRequest=0;
@@ -87,6 +89,7 @@ function setupGuide(){
  return `<div class="guide"><b>公開版の最初の管理者は、PCのターミナルで作成します</b><ol><li>Cloudflareにログイン済みのMacで「ターミナル」を開きます。</li><li><code>cd ~/Sites/SICK-STYEL</code> を実行します。</li><li><code>npm run admin:create:remote</code> を実行し、メールアドレスとパスワード（このアプリ専用）を入力します。</li><li>完了後、この画面を再読み込みしてログインします。</li></ol><p class="note">Web上の新規登録は、第三者による乗っ取りを防ぐため公開していません。</p></div>`;
 }
 function auth(){
+ authEpoch++;state=null;ig=null;amz=null;adsStatus=null;
  overdueSource=null;overdue.clear();
  team=null;
  financeReport=null;
@@ -226,7 +229,7 @@ function barDiv(dateOrMonth,value,max,extraClass){
  return `<div class="bar h${step} ${extraClass||''}" title="${esc(dateOrMonth)}: ${yen(value)}"></div>`;
 }
 function amazonView(){const c=amz?.cache;const o=c?.orders;const t=today();const targetMonth=amzUI.month||month();const isCurrent=targetMonth===month();
- return `<section class="panel"><h2>自社発送・配送先</h2><p>準備中（実データ機能は無効）</p><p>管理者の個別ID・MFA、Amazonの住所閲覧/発送通知ロール、暗号化・削除・監査の確認後に有効化を判断します。現在は配送先取得・Amazonへの発送通知はできません。</p></section><section class="panel"><div class="panelhead"><h2>接続状態</h2>${statusBadge(amz)}</div><p>Amazon公式の Selling Partner API（SP-API）で接続します。対象は ${esc(amz?.marketplace||'Amazon.co.jp (A1VC38T7YXB528)')} です。Amazonのパスワードはこのアプリに入力・保存しません。</p>
+ return `<section class="panel"><h2>自社発送・配送先</h2><p>準備中（実データ機能は無効）</p><p>配送先の閲覧には、管理者の個別ID・MFA、住所閲覧のRestrictedロール、暗号化・削除・監査の確認が必要です。現在は住所を取得しません。Amazonへの発送通知は無効のままです。</p></section><section class="panel"><div class="panelhead"><h2>接続状態</h2>${statusBadge(amz)}</div><p>Amazon公式の Selling Partner API（SP-API）で接続します。対象は ${esc(amz?.marketplace||'Amazon.co.jp (A1VC38T7YXB528)')} です。Amazonのパスワードはこのアプリに入力・保存しません。</p>
 
  <details class="guide" ${!amz?.connected?'open':''}><summary><b>Amazon SP-API連携の手順（5ステップ）</b></summary><ol>
  <li><a href="https://sellercentral.amazon.co.jp/" target="_blank" rel="noopener noreferrer">Amazon Seller Central ↗</a>に既存の大口出品アカウントのプライマリユーザーでログインします。新たな有料アップグレードは行いません。</li>
@@ -254,6 +257,8 @@ function amazonView(){const c=amz?.cache;const o=c?.orders;const t=today();const
    return `<div class="barchart" role="img" aria-label="月別売上の棒グラフ（直近12か月）">${rows.map(r=>barDiv(r.month,r.value,max,r.month===month()?'today':'')).join('')}</div><p class="note">右端が今月（進行中・未完了月）です。データが揃っていない過去月は「未取得」（点線）で、0円として扱っていません。</p>`;})()}
  </section>
  <section class="panel"><h2>注文・発送状況</h2><p>${esc(amz?.ordersDefinition||'')}</p>${o?`<div class="tablewrap"><table class="data"><thead><tr><th>状況</th><th>件数</th></tr></thead><tbody>${Object.entries(o.counts).map(([k,v])=>`<tr><td>${esc(statusJa[k]||k)}</td><td>${v}</td></tr>`).join('')}</tbody></table></div>${o.open.length?`<h3>未発送の注文（古い順）</h3>${o.open.map(x=>`<div class="listrow"><div class="grow"><b>${esc(x.orderId)}</b><small>${fmtTime(x.createdTime)} · ${esc(statusJa[x.status]||x.status)} · ${x.fulfilledBy==='AMAZON'?'FBA':'自己発送'} · ${x.items}点</small></div></div>`).join('')}`:''}`:'<p class="note">未取得（Orders API未同期）</p>'}</section>
+ ${renderOrderInsights(amz)}
+ ${renderAdInsights(adsStatus)}
  ${renderRoas()}
  ${renderFactorNotes(c,targetMonth)}
  <section class="panel"><h2>認可前・認可待ち・欠損期間の入力方法</h2><p>日次の売上・注文件数を手入力するか、CSV（日付・売上・注文件数の列）を取り込めます。同じ日付の記録は上書き登録（重複追加はされません）。Seller Centralの「レポート」→「ビジネスレポート」の日付別レポート（売上とトラフィック）をCSVでダウンロードし、取り込み時に列を選択してください。</p><div class="actions"><button class="secondary" id="csvopen">CSVから取り込む</button><button class="primary" data-new="metrics">＋ 売上を手入力</button></div></section>`;}
@@ -261,7 +266,7 @@ function renderRoas(){
  const reconciled=reconcileAds(state.adMetrics,adsStatus?.rows||[]);const rows=[...reconciled.rows].sort((a,b)=>b.periodEnd.localeCompare(a.periodEnd));
  return `<section class="panel"><div class="panelhead"><h2>広告費用対効果</h2><button class="primary" data-new="adMetrics">＋ 広告実績を追加</button></div>
  <p class="note">ROAS = 広告経由売上 ÷ 広告費。ACOS = 広告費 ÷ 広告経由売上 × 100（%）。<b>総売上を広告費で割った値はROASとして表示していません。</b>広告費のみ入力され広告経由売上が未入力の場合、ROAS/ACOSは「計算不可」です。Amazon広告・Instagram広告は別々に記録し合算しません。Sponsored Productsの日次自動同期はSP-APIとは別の認可が必要です。その他の広告種別は自動集計対象外です。</p>
- <p role="status">Amazon Ads：${adsStatus?.connected?'プロフィール確認済み':'未接続・専用認可待ち'} / 最終成功：${esc(adsStatus?.lastSuccess||'未取得')} / 日本時間・JPY</p>${adsStatus?.error?`<p role="alert">${esc(adsStatus.error)}</p>`:''}${reconciled.conflicts?`<p role="alert">${reconciled.conflicts}件の自動取得行は手入力/CSVの期間と重複するため集計から除外しています。履歴は保全しています。</p>`:''}<button id="ads-sync" ${adsStatus?.configured?'':'disabled'}>広告データを同期・進捗確認</button><p>直近31日を再取得し遅延更新を反映します。売上帰属は出品者7日・ベンダー14日。未取得は0円にしません。</p>
+ <p role="status">Amazon Ads：${adsStatus?.connected?'プロフィール確認済み':adsStatus?.configured?'プロフィール未確認':'未連携（承認状態は未確認）'} / 最終成功：${esc(adsStatus?.lastSuccess||'未取得')} / 日本時間・JPY</p>${adsStatus?.error?`<p role="alert">${esc(adsStatus.error)}</p>`:''}${reconciled.conflicts?`<p role="alert">${reconciled.conflicts}件の自動取得行は手入力/CSVの期間と重複するため集計から除外しています。履歴は保全しています。</p>`:''}<button id="ads-sync" ${adsStatus?.configured?'':'disabled'}>広告データを同期・進捗確認</button><p>直近31日を再取得し遅延更新を反映します。売上帰属は出品者7日・ベンダー14日。未取得は0円にしません。</p>
  <div class="formfields"><label>媒体<select id="adplatformfilter"><option value="all" ${adUI.platform==='all'?'selected':''}>すべて</option>${['Amazon','Instagram'].map(p=>`<option value="${p}" ${adUI.platform===p?'selected':''}>${p}</option>`).join('')}</select></label>
  <label class="secondary filelabel">CSVから取り込む<input id="adcsvfile" class="sr-only" type="file" accept=".csv,text/csv"></label><button type="button" class="secondary" id="adcsvtemplate">ひな形をダウンロード</button></div>
  ${rows.filter(r=>adUI.platform==='all'||r.platform===adUI.platform).length?`<div class="records">${rows.filter(r=>adUI.platform==='all'||r.platform===adUI.platform).map(r=>{const roas=adRoas(r),acos=adAcos(r);
@@ -287,7 +292,7 @@ function renderFactorNotes(c,targetMonth){
  <ul class="note"><li>値引き・セールを実施していないか（「購入実験」「団体営業」等で記録）</li><li>在庫切れで販売機会を逃していないか（在庫・発送管理で確認）</li><li>曜日・連休などの季節性</li><li>他の広告・他社キャンペーンとの重複時期</li></ul>
  ${!hasMeasured&&!monthAds.length&&!reels.length?'<p class="note">データ不足のため、この期間の要因分析はできません。広告実績・リール投稿・購入実験のいずれかを記録してください。</p>':''}</section>`;}
 function bindAmazon(){const c=document.querySelector('#amzconnect');if(c)c.onclick=async()=>{c.disabled=true;try{location.assign((await api('amazon/connect','POST',{})).url);}catch(e){toast(e.message);c.disabled=false;}};
- const s=document.querySelector('#amzsync');if(s)s.onclick=async()=>{s.disabled=true;s.textContent='同期しています…';try{amz=await api('amazon/sync','POST',{});render();toast(syncMessage(amz));}catch(e){if(e.body?.status)amz=e.body.status;render();toast(e.message);}};
+ const s=document.querySelector('#amzsync');if(s)s.onclick=async()=>{s.disabled=true;s.textContent='同期しています…';try{const result=await api('amazon/sync','POST',{});if(!state)return;amz=result;render();toast(syncMessage(amz));}catch(e){if(!state)return;if(e.body?.status)amz=e.body.status;render();toast(e.message);}};
  const d=document.querySelector('#amzdisconnect');if(d)d.onclick=async()=>{if(!confirm('Amazon接続を解除し、保存した認可トークンと取得データを削除しますか？手入力データは残ります。'))return;try{const r=await api('amazon/disconnect','POST',{});amz=await api('amazon/status');render();toast(r.warning||'接続を解除しました');}catch(e){toast(e.message);}};
  const m=document.querySelector('#amzmonth');if(m)m.onchange=()=>{if(m.value)amzUI={...amzUI,month:m.value};render();};
  document.querySelectorAll('[data-amzchart]').forEach(b=>b.onclick=()=>{amzUI={...amzUI,chartMode:b.dataset.amzchart};render();});
@@ -383,7 +388,7 @@ function bind(){bindMetricsPages();if(section==='team')bindTeam({model:team,api,
  const newOrgBtn=document.querySelector('[data-neworg]');if(newOrgBtn)newOrgBtn.onclick=()=>orgEditor(null);
  const orgQ=document.querySelector('#orgsearch');if(orgQ){const search=e=>{if(e.isComposing)return;const start=orgQ.selectionStart,end=orgQ.selectionEnd;orgUI={...orgUI,q:orgQ.value};render();const next=document.querySelector('#orgsearch');next?.focus();next?.setSelectionRange(start,end);};orgQ.oninput=search;orgQ.oncompositionend=search;}
  document.querySelectorAll('[data-restoreorg]').forEach(b=>b.onclick=async()=>{if(!confirm('削除済み団体を一覧へ戻します。会議は作成・取消せず、元の連携記録を保持します。復元しますか？'))return;b.disabled=true;try{await persist({...state,orgSales:state.orgSales.map(x=>x.id===b.dataset.restoreorg?{...x,deletedAt:null}:x)});toast('団体を復元しました。編集画面で会議の状態と取消を確認してください');}catch(e){toast(e.message);b.disabled=false;}});
- const adsSync=document.querySelector('#ads-sync');if(adsSync)adsSync.onclick=async()=>{adsSync.disabled=true;try{adsStatus=await api('amazonads/sync','POST',{});render();}catch(e){toast(e.message);adsStatus=await api('amazonads/status');render();}};
+ const adsSync=document.querySelector('#ads-sync');if(adsSync)adsSync.onclick=async()=>{adsSync.disabled=true;try{const result=await api('amazonads/sync','POST',{});if(!state)return;adsStatus=result;render();}catch(e){if(!state)return;toast(e.message);try{const result=await api('amazonads/status');if(!state)return;adsStatus=result;render();}catch(error){if(state)toast(error.message);}}};
  const meetingSelect=document.querySelector('#meetingselect');if(meetingSelect)meetingSelect.onsubmit=e=>{e.preventDefault();const values=new FormData(meetingSelect),id=values.get('orgId'),kind=values.get('kind');if(['initial','proposal'].includes(kind))meetingEditor(state.orgSales.find(o=>o.id===id),kind);};
  document.querySelectorAll('[data-meetingorg]').forEach(b=>b.onclick=()=>meetingEditor(state.orgSales.find(o=>o.id===b.dataset.meetingorg),b.dataset.meetingkind));
  document.querySelectorAll('[data-editorg]').forEach(b=>b.onclick=()=>orgEditor(state.orgSales.find(x=>x.id===b.dataset.editorg)));
