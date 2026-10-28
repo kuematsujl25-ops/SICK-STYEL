@@ -17,7 +17,7 @@
 
 |対象|確認したこと|必要な次の判断・操作|
 |---|---|---|
-|Notta|指定ワークスペースはPremium表示・1,800分枠。2026-10-28再確認ではGoogle Calendar接続済み、Zoom未接続。ZapierはBusiness表示。公開の直接API/webhook利用資格は確認できていない|公式提供経路・プラン差額・利用条件を確認後、対象録音/議事録・宛先・保持期間と参加者告知/同意を決めて承認。Businessへの変更、Zapier永続アクセス、Zoom/Calendar接続は未実行|
+|Notta|Premium。Google Calendar接続済み、Zoom未接続。自動参加はCalendar/Zoomともオフ。TXT/AI要約出力はPremium対応。公式CLI/MCP取得経路も確認|Premiumを維持。対象Zoomアカウントと実際の許諾権限を照合して別承認。CLIの最小権限と利用資格は接続前に確認。詳細は[接続準備](integrations/notta-readiness.md)。Business/Zapier変更は対象外|
 |Amazon Ads|SP-APIと独立したDeveloperアクセス申請・LwA認可・広告profileが必要。実広告アカウントと利用資格は未検証|対象広告アカウント、JP profile、SPのみで足りるか確認後、アプリ認可と以下の秘密値登録を別承認。広告配信/予算変更は不要・未実装|
 |Google|既存の主催者照合・再認可警告を維持|本人の認可完了待ち。警告回避や追加スコープ変更をしない|
 
