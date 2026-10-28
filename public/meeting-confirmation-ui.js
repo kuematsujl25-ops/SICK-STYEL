@@ -13,7 +13,7 @@ export function confirmMeetingPlan(plan){
   const notta=document.createElement('p');notta.textContent=(plan.nottaRouting?NOTTA_NOTICE+' ':'')+'Notta参加予約はこのアプリでは確認できません。作成・変更・取消後はNottaの対象予定を確認してください。識別タグはNotta側の許可リスト設定後に対象判定に使われます。';dialog.append(notta);
   let externalCheck;
   if(plan.requiresExternalCheck){
-   const label=document.createElement('label');externalCheck=document.createElement('input');externalCheck.type='checkbox';externalCheck.checked=false;
+   const label=document.createElement('label');externalCheck=document.createElement('input');externalCheck.type='checkbox';externalCheck.checked=false;externalCheck.style.width='20px';externalCheck.style.height='20px';externalCheck.style.minHeight='20px';externalCheck.style.flexShrink='0';label.style.display='flex';label.style.alignItems='flex-start';label.style.gap='8px';
    const note=document.createElement('span');note.textContent=plan.action==='recover'?'元の操作が停止していることを確認した。復旧後も外部結果を手動確認するまで再作成しない':'Zoomとカレンダーを手動で確認し、ID未保存を含む結果不明の会議・予定を解決済み。記録されたIDの取消を実行する';
    label.append(externalCheck,note);dialog.append(label);
   }
