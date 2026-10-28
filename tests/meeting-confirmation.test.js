@@ -36,9 +36,9 @@ test('確認→Zoomのみ作成→URL確認→ゲスト招待・更新・取消�
  const {store,calls,revision}=await setup(t);
  let input={orgId:'example',kind:'initial',action:'prepare',revision};
  let plan=await previewMeeting(store,input,policy);
- assert.equal(plan.summary,'Example Club｜商品説明');assert.equal(plan.zoomHost,'zoom@example.com');assert.equal(plan.calendarId,policy.organizer);assert.equal(plan.zoomUrl,null);
+ assert.equal(plan.summary,'[SSM-NOTTA-7C4F2A] Example Club｜商品説明');assert.equal(plan.zoomHost,'zoom@example.com');assert.equal(plan.calendarId,policy.organizer);assert.equal(plan.zoomUrl,null);
  let result=await confirmMeeting(store,{...input,confirmation:plan.confirmation},policy);
- assert.equal(result.org.initialMeetingSync.status,'zoom_only');
+ assert.equal(result.org.initialMeetingSync.status,'zoom_only');assert.equal(result.org.initialMeetingSync.nottaRouting,'calendar-title-v1');
  assert.equal(calls.filter(c=>c.path.endsWith('/events')&&c.method==='POST').length,0);
  await assert.rejects(confirmMeeting(store,{...input,confirmation:plan.confirmation},policy),/再読み込み/);
  input={...input,action:'create',revision:result.revision};plan=await previewMeeting(store,input,policy);
@@ -46,11 +46,13 @@ test('確認→Zoomのみ作成→URL確認→ゲスト招待・更新・取消�
  result=await confirmMeeting(store,{...input,confirmation:plan.confirmation},policy);
  assert.equal(result.org.initialMeetingSync.status,'synced');
  const event=calls.find(c=>c.path.endsWith('/events')&&c.method==='POST');
+ assert.match(JSON.parse(event.body).summary,/^\[SSM-NOTTA-7C4F2A\]/);assert.match(JSON.parse(event.body).description,/同意を確認/);
  assert.match(event.path,/organizer@example.com/);assert.equal(event.query,'?sendUpdates=all');
  assert.deepEqual(JSON.parse(event.body).attendees,policy.guests.map(email=>({email})));
  for(const action of ['update','cancel']){
   input={...input,action,revision:result.revision};plan=await previewMeeting(store,input,policy);
   result=await confirmMeeting(store,{...input,confirmation:plan.confirmation},policy);
+  if(action==='update')assert.equal(result.org.initialMeetingSync.nottaRouting,'calendar-title-v1');
  }
  assert.equal(result.org.initialMeetingSync,null);
  assert.equal(calls.filter(c=>c.path==='/v2/users/me/meetings'&&c.method==='POST').length,1);
@@ -173,4 +175,16 @@ test('同期中の所要時間変更は成功扱いせず、既存IDと最新入
  assert.equal(result.org.initialMeetingSync.status,'synced');
  assert.equal(calls.filter(c=>c.path.endsWith('/events')&&c.method==='POST').length,1);
  assert.equal(calls.filter(c=>c.path==='/v2/users/me/meetings'&&c.method==='POST').length,1);
+});
+
+test('既存会議の更新はNottaタグへ自動移行しない',async t=>{
+ const {store,calls,revision}=await setup(t);
+ let input={orgId:'example',kind:'initial',action:'prepare',revision};
+ let plan=await previewMeeting(store,input,policy);await confirmMeeting(store,{...input,confirmation:plan.confirmation},policy);
+ const data=JSON.parse((await store.doc('workspace')).body);delete data.orgSales[0].initialMeetingSync.nottaRouting;
+ const [row]=await store.put('workspace',data);input={...input,action:'update',revision:row.revision};
+ plan=await previewMeeting(store,input,policy);assert.equal(plan.nottaRouting,null);assert.equal(plan.summary,'Example Club｜商品説明');
+ await confirmMeeting(store,{...input,confirmation:plan.confirmation},policy);
+ const event=calls.find(c=>c.path.endsWith('/events')&&c.method==='POST');
+ assert.equal(JSON.parse(event.body).summary,'Example Club｜商品説明');assert.doesNotMatch(JSON.parse(event.body).description,/Notta/);
 });

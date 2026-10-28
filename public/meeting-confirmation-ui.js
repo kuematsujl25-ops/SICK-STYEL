@@ -1,3 +1,4 @@
+import {NOTTA_NOTICE} from './meeting-policy.js';
 // All values are text nodes: meeting names and provider values never become HTML.
 export function confirmMeetingPlan(plan){
  return new Promise(resolve=>{
@@ -9,6 +10,7 @@ export function confirmMeetingPlan(plan){
    const row=document.createElement('p'),heading=document.createElement('strong'),text=document.createElement('span');
    heading.textContent=label+'：';text.textContent=value;row.style.overflowWrap='anywhere';row.append(heading,text);dialog.append(row);
   }
+  const notta=document.createElement('p');notta.textContent=(plan.nottaRouting?NOTTA_NOTICE+' ':'')+'Notta参加予約はこのアプリでは確認できません。作成・変更・取消後はNottaの対象予定を確認してください。識別タグはNotta側の許可リスト設定後に対象判定に使われます。';dialog.append(notta);
   const actions=document.createElement('div');actions.className='dialogactions';
   let settled=false;
   const finish=value=>{if(settled)return;settled=true;dialog.close();dialog.remove();resolve(value);};
