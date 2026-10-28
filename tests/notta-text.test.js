@@ -15,5 +15,5 @@ test('text selection preserves drafts including input typed during the async rea
  await assert.rejects(readNottaText(file('a'.repeat(5001)),5000));
  picker.files=[file('replacement')];await picker.onchange();assert.equal(body.value,'Example transcript');
  body.value='';picker.files=[{name:'example.txt',size:5,arrayBuffer:async()=>{body.value='typed during read';return new TextEncoder().encode('file').buffer;}}];await picker.onchange();assert.equal(body.value,'typed during read');assert.equal(picker.disabled,false);
- assert.match(notesView({},'initial',String),/Notta自動連携：未接続/);assert.doesNotMatch(notesView({},'initial',String),/type="checkbox" checked/);
+ assert.match(notesView({},'initial',String),/議事録自動取得：未接続/);assert.doesNotMatch(notesView({},'initial',String),/type="checkbox" checked/);
 });
