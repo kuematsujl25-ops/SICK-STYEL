@@ -1,10 +1,29 @@
 // Amazon Ads is independent from SP-API. No campaign/advertising writes are implemented.
 import {runtime} from '../lib/runtime.js';
-import {randomUUID} from 'node:crypto';
+import {randomUUID,createHash} from 'node:crypto';
 const NAME='amazonads-reports',host='https://advertising-api-fe.amazon.com';
 const configured=()=>['CLIENT_ID','CLIENT_SECRET','REFRESH_TOKEN','PROFILE_ID'].every(k=>!!runtime()['AMAZON_ADS_'+k]);
 const read=async store=>{const r=await store.doc(NAME);return {revision:r?.revision||0,state:r?JSON.parse(r.body):{rows:[],job:null,lastSuccess:null,error:null}};};
-async function cas(store,revision,state){if(new TextEncoder().encode(JSON.stringify(state)).length>1_500_000)throw Error('広告保存容量の上限です。既存データを保持します');const r=await store.query('UPDATE ss_documents SET body=$1,revision=revision+1 WHERE name=$2 AND revision=$3 RETURNING revision',[JSON.stringify(state),NAME,revision]);if(!r.length)throw Error('広告同期中です。後で状態を確認してください');return r[0].revision;}
+const bytes=value=>new TextEncoder().encode(JSON.stringify(value)).length;
+// Keep overflow snapshots in immutable documents, not in the hot polling document.
+// Every insert and the CAS update share one transaction; a stale writer archives nothing.
+async function cas(store,revision,state){
+ const next={...state,history:[...(state.history||[])]},archived=[];
+ while(next.history.length&&(next.history.length>30||bytes(next)>1_400_000))archived.push(next.history.shift());
+ if(archived.length)next.historyArchived=(state.historyArchived||0)+archived.length;
+ if(bytes(next)>1_500_000)throw Error('広告保存容量の上限です。既存データを保持します');
+ const commands=archived.map(snapshot=>{
+  const body=JSON.stringify({profileId:state.profileVerified,snapshot});
+  if(new TextEncoder().encode(body).length>1_500_000)throw Error('広告履歴の保存容量を確認してください。既存データを保持します');
+  const name=NAME+'-history/'+createHash('sha256').update(body).digest('hex');
+  return ['INSERT INTO ss_documents(name,body,revision) SELECT $1,$2,0 FROM ss_documents WHERE name=$3 AND revision=$4 ON CONFLICT(name) DO NOTHING',[name,body,NAME,revision]];
+ });
+ const update=['UPDATE ss_documents SET body=$1,revision=revision+1 WHERE name=$2 AND revision=$3 RETURNING revision',[JSON.stringify(next),NAME,revision]];
+ const result=commands.length?(await store.transaction([...commands,update])).at(-1):await store.query(...update);
+ if(!result.length)throw Error('広告同期中です。後で状態を確認してください');
+ Object.assign(state,next);
+ return result[0].revision;
+}
 export async function status(store){const {state}=await read(store);const ready=configured()&&state.profileVerified===runtime().AMAZON_ADS_PROFILE_ID;return {configured:configured(),connected:ready,lastSuccess:ready?state.lastSuccess:null,period:ready?state.period||null:null,error:state.error,job:ready&&state.job?{status:state.job.status,start:state.job.start,end:state.job.end}:null,rows:ready?state.rows:[],scope:'Sponsored Products / 日本・JPY・Asia/Tokyo',automatic:runtime().AMAZON_ADS_SYNC_ENABLED==='true'};}
 const day=d=>new Date(d).toISOString().slice(0,10);
 export function reportingWindow(now=new Date()){const end=new Date(now.toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'})+'T00:00:00Z');end.setUTCDate(end.getUTCDate()-1);return {start:day(end.getTime()-30*86400000),end:day(end)};}
@@ -41,7 +60,9 @@ export async function sync(store,{fetcher=fetch,now=new Date()}={}){
   const bytes=new Uint8Array(size);let offset=0;for(const c of chunks){bytes.set(c,offset);offset+=c.length;}
   const {gunzipSync}=await import('node:zlib');const rows=JSON.parse(gunzipSync(bytes,{maxOutputLength:10_000_000}).toString());
   const normalized=normalizeReport(rows,{...state.job,profileId:String(p.profileId)}),job=state.job;
-  state.history=[...(state.history||[]),{at:new Date().toISOString(),reportId:job.id,start:job.start,end:job.end,previous:state.rows.filter(r=>r.periodStart>=job.start&&r.periodStart<=job.end)}].slice(-30);
-  state.rows=[...state.rows.filter(r=>r.periodStart<job.start||r.periodStart>job.end),...normalized];state.lastSuccess=new Date().toISOString();state.period={start:job.start,end:job.end,windowDays:job.windowDays};state.error=null;state.job=null;await cas(store,revision,state);return status(store);
+  const completed={...state,history:[...(state.history||[]),{at:now.toISOString(),reportId:job.id,start:job.start,end:job.end,previous:state.rows.filter(r=>r.periodStart>=job.start&&r.periodStart<=job.end)}],
+   rows:[...state.rows.filter(r=>r.periodStart<job.start||r.periodStart>job.end),...normalized],lastSuccess:now.toISOString(),period:{start:job.start,end:job.end,windowDays:job.windowDays},error:null,job:null};
+  // Leave the original job/rows intact if persistence fails, so the completed report is retryable.
+  await cas(store,revision,completed);return status(store);
  }catch(e){state.error=String(e.message).slice(0,300);try{await cas(store,revision,state);}catch{}throw Error(state.error);}
 }
