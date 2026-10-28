@@ -5,3 +5,5 @@ Instagramは`instagram.js`、Amazon SP-API/LWAは`amazon.js`、認証済みAPI�
 `safeStatus.connected`は保存済み認可・設定の有無であり、実データ取得の証明ではありません。`readiness`と`cache.syncVerified`で認証待ち・同期未検証・読み取り同期成功を区別します。AmazonはSales/Ordersごとに成功日時・期間・エラーを保存します。ダッシュボードはAPI値と手入力/CSVを合算しません。
 
 `index.js`のmanualAdapterは未設定サービス向けの拡張点です。BASE・TikTok・Metricoolのアプリ内アダプターやCanvaデザイン用MCPは未接続です。料金不明のAPIや有料機能を自動実行しません。
+
+Nottaは自動連携未接続です。現プランでのTXT取込と自動同期の承認事項は[Notta接続準備](../docs/integrations/notta-readiness.md)を参照してください。

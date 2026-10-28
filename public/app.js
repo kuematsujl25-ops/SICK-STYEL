@@ -1,3 +1,4 @@
+import {bindNottaText} from './meeting-notes-ui.js';
 import {renderAdInsights,renderOrderInsights} from './amazon-insights.js';
 import {createOverdueMonitor,overdueSummary,renderOverdue} from './overdue.js';
 import {reconcileAds} from './ads-reconcile.js';
@@ -426,6 +427,7 @@ function meetingEditor(record,kind='initial',noteDraft=null){
  const captureNoteDraft=()=>Object.fromEntries(['note-source','note-at','note-summary','note-body','note-consent'].map(id=>{const el=d.querySelector('#'+id);return [id,el.type==='checkbox'?el.checked:el.value];}));
  const noteAction=async(input,btn)=>{if(btn.disabled)return;if(meetingFormChanged(record,kind,Object.fromEntries(new FormData(d.querySelector('#meetingform'))))){d.querySelector('#editerror').textContent='未保存の会議変更があります。議事録を保存・反映する前に内容・日時を保存してください';return;}btn.disabled=true;const draft=captureNoteDraft();try{await api('meeting-notes','POST',{...input,orgId:record.id,kind,revision:state.revision});state=await api('data');render();meetingEditor(state.orgSales.find(o=>o.id===record.id),kind,input.action==='import'?null:draft);}catch(e){d.querySelector('#editerror').textContent=e.message;btn.disabled=false;}};
  const noteImport=d.querySelector('#note-import');noteImport.onclick=()=>noteAction({action:'import',source:d.querySelector('#note-source').value,meetingAt:d.querySelector('#note-at').value,body:d.querySelector('#note-body').value,summary:d.querySelector('#note-summary').value,consentConfirmed:d.querySelector('#note-consent').checked},noteImport);
+ bindNottaText(d);
  d.querySelectorAll('[data-note-undo],[data-note-approve]').forEach(b=>b.onclick=()=>{const action=b.dataset.noteUndo?'undo':'approve',[noteId,index]=(b.dataset.noteUndo||b.dataset.noteApprove).split(':');const raw=action==='approve'?d.querySelector('#fact-'+noteId+'-'+index).value:null;if(action==='approve'&&raw===''){d.querySelector('#editerror').textContent='確認した数値を入力してください';return;}if(confirm(action==='undo'?'反映前の値へ戻しますか？後から変更された値は上書きしません。':'根拠と現在の値を確認しましたか？この項目を指定値で更新します。'))noteAction({action,noteId,index:Number(index),value:raw===null?undefined:Number(raw)},b);});
  d.querySelectorAll('[data-mtgsync]').forEach(btn=>btn.onclick=async()=>{
   if(btn.disabled)return;
