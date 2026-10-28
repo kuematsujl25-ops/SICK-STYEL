@@ -1,3 +1,4 @@
+import {renderTodayMeetings,renderMeetingReminder} from './meeting-agenda.js';
 import {bindNottaText} from './meeting-notes-ui.js';
 import {renderAdInsights,renderOrderInsights} from './amazon-insights.js';
 import {createOverdueMonitor,overdueSummary,renderOverdue} from './overdue.js';
@@ -46,6 +47,10 @@ let overdueSource=null,overdueOpenRequest=0;
 function updateOverdue(){
  const dateLabel=document.querySelector('.pageheading .date');if(dateLabel)dateLabel.textContent=today().replaceAll('-',' / ');
  const snapshot=overdue.snapshot();
+ const agenda=document.querySelector('#today-meetings');
+ if(agenda)agenda.innerHTML=snapshot.status==='ready'?renderTodayMeetings(snapshot.data.orgSales,esc):'<section class="panel"><h2>今日の会議</h2><p>最新の予定を確認できません。更新してください。</p></section>';
+ const reminder=document.querySelector('#meeting-reminder');
+ if(reminder)reminder.innerHTML=snapshot.status==='ready'?renderMeetingReminder(snapshot.data.orgSales,esc):'';
  document.querySelectorAll('[data-overdue-summary]').forEach(el=>el.textContent=overdueSummary(snapshot));
  const panel=document.querySelector('#overdue-content');
  if(!panel)return;
@@ -76,6 +81,7 @@ async function load(){
  [state,ig,amz,zoomStatus,calendarStatus]=await Promise.all([api('data'),api('instagram/status'),api('amazon/status'),api('zoom/status'),api('googlecalendar/status')]);
  adsStatus=await api('amazonads/status');conversations=(await api('instagram/conversations')).data;if(section==='team')team=await api('ai-team');site=null;if(section==='site')site=await api('site');render();
  const q=new URLSearchParams(location.search);
+ if(q.has('meetings')){section='meetings';render();}
  if(q.has('notifications')){section='settings';render();}
  if(q.has('instagram')){section='instagram';render();toast(q.get('instagram')==='connected'?'Instagramの認可が完了しました。「今すぐ同期」で読み取りを検証してください。':'Instagramの認可を完了できませんでした。設定・権限を確認して再接続してください。');}
  if(q.has('amazon')){section='amazon';render();toast(q.get('amazon')==='connected'?'Amazonの認可が完了しました。「今すぐ同期」でデータを取得してください。':'Amazonの認可を完了できませんでした。アプリ設定・リダイレクトURIを確認してください。');}
@@ -120,7 +126,7 @@ function render(){
  reelPosts:()=>renderReels(state.reelPosts,reelUI,esc,today()),growthExperiments:()=>renderExperiments(state.growthExperiments,experimentUI,esc),competitorAccounts:()=>renderAccounts(state.competitorAccounts,accountUI,esc),playerCandidates:()=>renderPlayers(state.playerCandidates,playerUI,esc)};
  app.innerHTML=`<aside><div class="brandtop"><a href="#" class="brandmark" data-nav="overview">${LOGO}<span><b>SICKSTYLE</b><small>管理アプリ</small></span></a><span class="mobileonly"><button id="mrefresh" aria-label="最新データに更新">↻</button><button id="mlogout" aria-label="ログアウト">ログアウト</button></span></div><nav aria-label="メニュー">${nav.map(([id,icon,name])=>`<button data-nav="${id}" class="${section===id?'active':''}" ${section===id?'aria-current="page"':''}><span aria-hidden="true">${icon}</span>${name}</button>`).join('')}</nav><div class="sidebottom"><div>管理者<small>${esc(storageKind==='d1'?'クラウド保存（Cloudflare D1）':'このPCに保存（SQLite）')}</small></div><button id="logout">ログアウト</button></div></aside>
  <main><header><div class="breadcrumb">SICKSTYLE<span>/ ${names[section]}</span></div><div class="headeractions"><span class="live">保存先: ${storageKind==='d1'?'クラウド':'このPC'}</span><button id="refresh" aria-label="最新データに更新" title="最新データに更新">↻ 更新</button></div></header>
- <div class="content"><div class="overdue-entry"><button data-nav="overdue" aria-label="期限超過の通知を開く"><span aria-hidden="true">!</span> <span data-overdue-summary></span></button></div><div class="pageheading"><div><h1>${names[section]}</h1></div><span class="date">${today().replaceAll('-',' / ')}</span></div>${(views[section]||(()=>collection(section)))()}</div>
+ <div class="content"><div id="meeting-reminder"></div><div class="overdue-entry"><button data-nav="overdue" aria-label="期限超過の通知を開く"><span aria-hidden="true">!</span> <span data-overdue-summary></span></button></div><div class="pageheading"><div><h1>${names[section]}</h1></div><span class="date">${today().replaceAll('-',' / ')}</span></div>${(views[section]||(()=>collection(section)))()}</div>
  <footer><span>SICKSTYLE 管理アプリ</span><a href="/privacy.html">プライバシー</a></footer></main><dialog id="editor"></dialog>`;
  bind();updateOverdue();
  const currentNav=document.querySelector('#app aside nav');
@@ -139,7 +145,7 @@ function overview(){
  <article><small>タスク完了</small><strong>${done}<em> / ${state.tasks.length}</em></strong><span>${overdue?'期限超過 '+overdue+' 件':'期限超過なし'}</span></article>
  <article><small>発送待ち（アプリ登録分）</small><strong>${pending.length}<em> 件</em></strong><span>${pending.filter(s=>s.due<t).length} 件が期限超過${amzOpen!==null?` · Amazon未発送 ${amzOpen} 件`:amz?.connected?' · Amazon未発送 未取得':''}</span></article>
  <article><small>Instagramフォロワー</small><strong>${igApi?num(ig.cache.followers):latest?Number(latest.followers).toLocaleString('ja-JP'):'—'}</strong><span>${igApi?(typeof ig.cache.delta==='number'?`前回記録比 ${ig.cache.delta>0?'+':''}${ig.cache.delta.toLocaleString('ja-JP')}`:'増減は次回以降の同期で表示'):latest?latest.date+' の記録':'未記録'}</span>${sourceTag(igApi)}</article></div>
- <div class="dashboardgrid"><section class="panel"><div class="panelhead"><h2>目標 <small>GOALS</small></h2><button data-nav="goals">すべて見る</button></div>${state.goals.length?state.goals.slice(0,3).map(g=>`<div class="goal"><div><span class="badge">${esc(g.type==='final'?'最終目標':g.month||'月間目標')}</span><b>${esc(g.title)}</b><strong>${rate(g)}%</strong></div><progress max="100" value="${rate(g)}" aria-label="達成率"></progress><small>${Number(g.current).toLocaleString('ja-JP')} / ${Number(g.target).toLocaleString('ja-JP')} ${esc(g.unit)}</small></div>`).join(''):empty('目標は未登録です。','月間目標・最終目標を登録できます。','goals')}</section>
+ <div id="today-meetings">${renderTodayMeetings(state.orgSales,esc)}</div><div class="dashboardgrid"><section class="panel"><div class="panelhead"><h2>目標 <small>GOALS</small></h2><button data-nav="goals">すべて見る</button></div>${state.goals.length?state.goals.slice(0,3).map(g=>`<div class="goal"><div><span class="badge">${esc(g.type==='final'?'最終目標':g.month||'月間目標')}</span><b>${esc(g.title)}</b><strong>${rate(g)}%</strong></div><progress max="100" value="${rate(g)}" aria-label="達成率"></progress><small>${Number(g.current).toLocaleString('ja-JP')} / ${Number(g.target).toLocaleString('ja-JP')} ${esc(g.unit)}</small></div>`).join(''):empty('目標は未登録です。','月間目標・最終目標を登録できます。','goals')}</section>
  <section class="identity">${LOGO}<h2>ブランドの Mission</h2>${state.brand.Mission?`<p class="statement">${esc(state.brand.Mission)}</p>`:'<p class="placeholder">未入力です。「ブランド」画面で、ご自身の言葉で登録できます。</p>'}<button data-nav="brand">ブランド画面へ</button></section>
  <section class="panel"><div class="panelhead"><h2>今日までのタスク <small>TASKS</small></h2><button data-nav="tasks">タスク管理</button></div>${state.tasks.filter(x=>!x.done&&x.due<=t).length?state.tasks.filter(x=>!x.done&&x.due<=t).slice(0,5).map(taskrow).join(''):empty('期限が今日までの未完了タスクはありません。','タスクを登録できます。','tasks')}</section>
  <section class="panel"><div class="panelhead"><h2>発送待ち <small>SHIPPING</small></h2><button data-nav="shipments">発送管理</button></div>${pending.length?pending.slice(0,4).map(s=>`<div class="listrow"><div class="parcel" aria-hidden="true">▣</div><div class="grow"><b>${esc(s.title)}</b><small>期限 ${esc(s.due)} · ${esc(s.status)}</small></div><span class="badge ${s.due<t?'danger':''}">${s.due<t?'期限超過':'発送待ち'}</span></div>`).join(''):empty('発送待ちはありません。','発送する注文を登録できます。','shipments')}</section></div>`;

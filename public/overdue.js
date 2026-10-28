@@ -14,7 +14,7 @@ export function overdueItems(data,now=new Date()){
 export function createOverdueMonitor({fetchData,changed,now=()=>new Date()}){
  let data=null,status='loading',generation=0,pending=false;
  const seen=new Set();
- const snapshot=()=>{const items=overdueItems(data,now());return {status,items,unread:items?.filter(x=>!seen.has(x.token)).length??null,seen};};
+ const snapshot=()=>{const items=overdueItems(data,now());return {data,status,items,unread:items?.filter(x=>!seen.has(x.token)).length??null,seen};};
  const accept=value=>{data=value;status=overdueItems(value,now())===null?'error':'ready';const active=new Set(overdueItems(value,now())?.map(x=>x.token));for(const token of seen)if(!active.has(token))seen.delete(token);};
  return {
   snapshot,
