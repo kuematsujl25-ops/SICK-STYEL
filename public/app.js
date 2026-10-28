@@ -441,7 +441,7 @@ function meetingEditor(record,kind='initial',noteDraft=null){
    if(!d.open){btn.disabled=false;return;}
    if(!await confirmMeetingPlan({...plan,action})){btn.disabled=false;return;}
    if(!d.open)return;
-   const r=await api('orgsales/meeting','POST',{...request,confirmation:plan.confirmation});
+   const r=await api('orgsales/meeting','POST',{...request,confirmation:plan.confirmation,externalResultsChecked:plan.requiresExternalCheck===true});
    // サーバー側は、Zoom/カレンダーの外部呼び出し中に他端末が無関係な箇所を編集していても、その編集を
    // 保持したまま最新revisionへ自動的に追従して保存を完了させることがある（saveSyncReconciled）。
    // ここで該当団体だけをstateへ上書きしてrevisionだけ進めると、他端末の編集内容はローカルのstateに

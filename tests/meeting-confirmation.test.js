@@ -26,6 +26,8 @@ async function setup(t){
   if(u.pathname==='/v2/users/me')return Response.json({id:'host-id',email:'zoom@example.com'});
   if(u.pathname==='/calendar/v3/calendars/primary')return Response.json({id:wrong?'wrong@example.com':policy.organizer});
   if(u.pathname==='/v2/users/me/meetings')return Response.json({id:123,join_url:'https://zoom.us/j/123'});
+  if(method==='GET'&&u.pathname==='/v2/meetings/123')return Response.json({id:123,host_id:'host-id',start_url:'PRIVATE-START-URL'});
+  if(method==='GET'&&u.pathname.endsWith('/events/event123'))return Response.json({id:'event123',organizer:{email:policy.organizer}});
   if(method==='PATCH'||method==='DELETE')return new Response(null,{status:204});
   if(u.pathname.endsWith('/events'))return failCalendar?Response.json({error:{code:403}},{status:403}):Response.json({id:'event123'});
   throw Error('Unexpected mock request');
@@ -187,4 +189,93 @@ test('既存会議の更新はNottaタグへ自動移行しない',async t=>{
  await confirmMeeting(store,{...input,confirmation:plan.confirmation},policy);
  const event=calls.find(c=>c.path.endsWith('/events')&&c.method==='POST');
  assert.equal(JSON.parse(event.body).summary,'Example Club｜商品説明');assert.doesNotMatch(JSON.parse(event.body).description,/Notta/);
+});
+
+async function abandoned(store,fields={}){
+ const data=JSON.parse((await store.doc('workspace')).body);
+ data.orgSales[0].initialZoomUrl='https://zoom.us/j/123';
+ data.orgSales[0].initialMeetingSync={requestId:'old-request',zoomMeetingId:'123',calendarEventId:'event123',zoomHostId:'host-id',calendarId:policy.organizer,status:'creating',error:null,updatedAt:new Date(Date.now()-3600000).toISOString(),...fields};
+ return (await store.put('workspace',data))[0].revision;
+}
+test('中断復旧は既存IDを読取照合して保持し、外部会議を変更せず要確認にする',async t=>{
+ const {store,calls}=await setup(t),revision=await abandoned(store);
+ const input={orgId:'example',kind:'initial',action:'recover',revision};
+ const plan=await previewMeeting(store,input,policy);assert.match(plan.recoveryEvidence,/Zoom: 保存済みID.*Calendar: 保存済みID/);assert.equal(plan.requiresExternalCheck,true);
+ await assert.rejects(confirmMeeting(store,{...input,confirmation:plan.confirmation},policy),/外部結果/);
+ const result=await confirmMeeting(store,{...input,confirmation:plan.confirmation,externalResultsChecked:true},policy);
+ assert.equal(result.org.initialMeetingSync.status,'uncertain');assert.equal(result.org.initialMeetingSync.zoomMeetingId,'123');assert.equal(result.org.initialMeetingSync.calendarEventId,'event123');assert.equal(result.org.initialZoomUrl,'https://zoom.us/j/123');
+ assert.ok(calls.filter(c=>c.path.includes('/meetings/')||c.path.includes('/events/')).every(c=>c.method==='GET'));
+ assert.doesNotMatch(JSON.stringify(plan)+JSON.stringify(result),/PRIVATE-START-URL/);
+ const {syncMeeting}=await import('../lib/meeting-sync.js');
+ await assert.rejects(syncMeeting(store,{...input,action:'create',revision:result.revision}),/結果が不明/);
+ await assert.rejects(syncMeeting(store,{...input,action:'cancel',revision:result.revision}),/手動で確認/);
+ const cancel={...input,action:'cancel',revision:result.revision},cancelPlan=await previewMeeting(store,cancel,policy);
+ await assert.rejects(confirmMeeting(store,{...cancel,confirmation:cancelPlan.confirmation},policy),/外部結果/);
+ const cancelled=await confirmMeeting(store,{...cancel,confirmation:cancelPlan.confirmation,externalResultsChecked:true},policy);
+ assert.equal(cancelled.org.initialMeetingSync,null);
+});
+test('ID未保存・404・権限不足・所有者不一致は未作成と判断せず要確認で停止',async t=>{
+ const {store}=await setup(t),original=global.fetch;
+ for(const scenario of ['missing','404','403','wrong-host']){
+  const revision=await abandoned(store,scenario==='missing'?{zoomMeetingId:null,calendarEventId:null}:{});
+  global.fetch=async (url,options)=>{
+   if(String(url).includes('/v2/meetings/')||String(url).includes('/events/'))return scenario==='wrong-host'?Response.json({id:123,host_id:'another-host'}):Response.json({error:{code:Number(scenario)}},{status:Number(scenario)});
+   return original(url,options);
+  };
+  const input={orgId:'example',kind:'initial',action:'recover',revision},plan=await previewMeeting(store,input,policy);
+  assert.match(plan.recoveryEvidence,/結果不明|要確認/);
+  const result=await confirmMeeting(store,{...input,confirmation:plan.confirmation,externalResultsChecked:true},policy);
+  assert.equal(result.org.initialMeetingSync.status,'uncertain');
+ }
+});
+test('新しい予約の復旧と同時更新後の古い確認は拒否する',async t=>{
+ const {store,calls}=await setup(t);let revision=await abandoned(store,{updatedAt:new Date().toISOString()});
+ let input={orgId:'example',kind:'initial',action:'recover',revision};
+ await assert.rejects(previewMeeting(store,input,policy),/15分/);assert.equal(calls.length,0);
+ revision=await abandoned(store);input={...input,revision};const plan=await previewMeeting(store,input,policy);
+ await abandoned(store);
+ await assert.rejects(confirmMeeting(store,{...input,confirmation:plan.confirmation,externalResultsChecked:true},policy),/再読み込み/);
+});
+test('遅れて返った作成結果は復旧後の状態を上書きせず代償削除もしない',async t=>{
+ const {store,calls,revision}=await setup(t),original=global.fetch;
+ const {syncMeeting}=await import('../lib/meeting-sync.js');
+ global.fetch=async (url,options={})=>{
+  if(new URL(url).pathname==='/v2/users/me/meetings'){
+   const data=JSON.parse((await store.doc('workspace')).body);
+   data.orgSales[0].initialMeetingSync.updatedAt=new Date(Date.now()-3600000).toISOString();
+   const [r]=await store.put('workspace',data);
+   await syncMeeting(store,{orgId:'example',kind:'initial',action:'recover',revision:r.revision,externalResultsChecked:true});
+  }
+  return original(url,options);
+ };
+ const input={orgId:'example',kind:'initial',action:'prepare',revision},plan=await previewMeeting(store,input,policy);
+ await assert.rejects(confirmMeeting(store,{...input,confirmation:plan.confirmation},policy),/古い処理結果/);
+ const current=JSON.parse((await store.doc('workspace')).body).orgSales[0];assert.equal(current.initialMeetingSync.status,'uncertain');assert.equal(current.initialMeetingSync.zoomMeetingId,null);
+ assert.equal(calls.filter(c=>c.method==='DELETE').length,0);assert.equal(calls.filter(c=>c.path.endsWith('/events')&&c.method==='POST').length,0);
+});
+
+test('復旧後に古い更新処理が戻っても次のCalendar書込を開始しない',async t=>{
+ const {store,calls}=await setup(t),original=global.fetch;
+ const revision=await abandoned(store,{status:'synced',operationId:'previous'}),{syncMeeting}=await import('../lib/meeting-sync.js');
+ global.fetch=async(url,options={})=>{
+  if(new URL(url).pathname==='/v2/meetings/123'&&options.method==='PATCH'){
+   const data=JSON.parse((await store.doc('workspace')).body);data.orgSales[0].initialMeetingSync.updatedAt=new Date(Date.now()-3600000).toISOString();
+   const [r]=await store.put('workspace',data);
+   await syncMeeting(store,{orgId:'example',kind:'initial',action:'recover',revision:r.revision,externalResultsChecked:true});
+  }
+  return original(url,options);
+ };
+ const input={orgId:'example',kind:'initial',action:'update',revision},plan=await previewMeeting(store,input,policy);
+ await assert.rejects(confirmMeeting(store,{...input,confirmation:plan.confirmation},policy),/古い処理を続けません/);
+ assert.equal(calls.filter(c=>c.path.includes('/events/')&&c.method==='PATCH').length,0);
+ assert.equal(JSON.parse((await store.doc('workspace')).body).orgSales[0].initialMeetingSync.status,'uncertain');
+});
+test('復旧保存に失敗しても元のIDとロックは残り、読取復旧を再試行できる',async t=>{
+ const {store}=await setup(t),revision=await abandoned(store),query=store.query;
+ const input={orgId:'example',kind:'initial',action:'recover',revision},plan=await previewMeeting(store,input,policy);
+ store.query=async(sql,args)=>{if(sql.startsWith('UPDATE ss_documents')&&args[1]==='workspace')throw Error('dummy storage failure');return query(sql,args);};
+ await assert.rejects(confirmMeeting(store,{...input,confirmation:plan.confirmation,externalResultsChecked:true},policy),/storage failure/);
+ assert.equal(JSON.parse((await store.doc('workspace')).body).orgSales[0].initialMeetingSync.status,'creating');
+ store.query=query;const result=await confirmMeeting(store,{...input,confirmation:plan.confirmation,externalResultsChecked:true},policy);
+ assert.equal(result.org.initialMeetingSync.status,'uncertain');assert.equal(result.org.initialMeetingSync.zoomMeetingId,'123');
 });

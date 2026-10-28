@@ -102,3 +102,12 @@ export async function verifyOrganizer(store,expected){
  if(typeof calendar?.id!=='string'||calendar.id.toLowerCase()!==expected.toLowerCase())throw Error('接続中の主カレンダーが指定した主催者と一致しません');
  return {calendarId:calendar.id};
 }
+
+export async function inspectEvent(store,eventId,calendarId){
+ if(!calendarId||calendarId==='primary')throw Error('主催カレンダーの記録がありません');
+ await verifyOrganizer(store,calendarId);
+ const p=await privateData(store),access=await accessToken(store,p);
+ const r=await remote('get_event',`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,{headers:{Authorization:`Bearer ${access}`}});
+ if(!r||r.id!==eventId||r.status==='cancelled'||r.organizer?.email?.toLowerCase()!==calendarId.toLowerCase())throw Error('カレンダー予定の照合ができません');
+ return 'exists';
+}

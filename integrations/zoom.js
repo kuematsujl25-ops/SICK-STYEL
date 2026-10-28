@@ -154,3 +154,13 @@ export async function verifyHost(store){
  if(!me?.id||!me?.email||me.id!==p.userId)throw Error('Zoomホストの本人確認に失敗しました');
  return {userId:me.id,email:me.email};
 }
+
+// Read only. Do not expose start_url, tokens, or provider response bodies.
+export async function inspectMeeting(store,meetingId,expectedHost){
+ if(!expectedHost)throw Error('Zoom所有者の記録がありません');
+ const p=await privateData(store);if(!p||p.userId!==expectedHost)throw Error('Zoom所有者が一致しません');
+ const access=await accessToken(store);
+ const r=await remote('get_meeting',`https://api.zoom.us/v2/meetings/${encodeURIComponent(meetingId)}`,{headers:{Authorization:`Bearer ${access}`}});
+ if(!r||String(r.id)!==String(meetingId)||r.host_id!==expectedHost)throw Error('Zoom会議の照合ができません');
+ return 'exists';
+}

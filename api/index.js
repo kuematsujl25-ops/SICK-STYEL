@@ -123,7 +123,7 @@ export default async function handler(req,res){
  if(route==='/api/orgsales/meeting-preview'&&req.method==='POST')return json(res,200,await previewMeeting(store,await body(req)));
  if(route==='/api/orgsales/meeting'&&req.method==='POST'){
   const b=await body(req);
-  const result=await confirmMeeting(store,{orgId:String(b.orgId||''),kind:String(b.kind||''),action:String(b.action||''),revision:b.revision,confirmation:b.confirmation});
+  const result=await confirmMeeting(store,{orgId:String(b.orgId||''),kind:String(b.kind||''),action:String(b.action||''),revision:b.revision,confirmation:b.confirmation,externalResultsChecked:b.externalResultsChecked===true});
   return json(res,200,{ok:true,org:result.org,revision:result.revision,warnings:result.warnings||[]});
  }
  if(route==='/api/logout'&&req.method==='POST'){await store.query('DELETE FROM ss_sessions WHERE token=$1',[sessionHash]);res.setHeader('Set-Cookie',cookie('',0));return json(res,200,{ok:true});}
