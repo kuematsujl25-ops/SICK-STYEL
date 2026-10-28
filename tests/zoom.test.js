@@ -26,7 +26,7 @@ test('Zoom OAuth: state固定・トークン暗号化・会議作成はjoin_url�
   if(u.hostname==='zoom.us'&&u.pathname==='/oauth/token'){
    const body=new URLSearchParams(options.body);
    if(body.get('grant_type')==='refresh_token')refreshCount++;
-   return Response.json({access_token:'access-secret',refresh_token:'refresh-secret-'+refreshCount,scope:'meeting:write:meeting meeting:update:meeting meeting:delete:meeting user:read:user'});
+   return Response.json({access_token:'access-secret',refresh_token:'refresh-secret-'+refreshCount,scope:'meeting:write:meeting meeting:update:meeting meeting:delete:meeting meeting:read:meeting user:read:user'});
   }
   if(u.pathname==='/v2/users/me')return Response.json({id:'u1',email:'owner@example.com'});
   if(u.pathname==='/v2/users/me/meetings')return Response.json({id:987654321,join_url:'https://zoom.us/j/987654321',start_url:'https://zoom.us/s/987654321?zak=SECRET'});
@@ -43,7 +43,7 @@ test('Zoom OAuth: state固定・トークン暗号化・会議作成はjoin_url�
  assert.equal(JSON.stringify(priv).includes('refresh-secret'),false);
  assert.equal(decrypt(priv.encrypted).refresh,'refresh-secret-0');
  const status=await safeStatus(store);assert.equal(status.connected,true);assert.equal(status.email,'owner@example.com');
- assert.deepEqual(status.scopes,['meeting:write:meeting','meeting:update:meeting','meeting:delete:meeting','user:read:user']);
+ assert.deepEqual(status.scopes,['meeting:write:meeting','meeting:update:meeting','meeting:delete:meeting','meeting:read:meeting','user:read:user']);
  const meeting=await createMeeting(store,{topic:'SICKSTYLE｜初回ZOOM｜FC Example',startIso:'2026-10-28T05:00:00.000Z',durationMin:45});
  assert.equal(meeting.meetingId,'987654321');
  assert.equal(meeting.joinUrl,'https://zoom.us/j/987654321');
@@ -80,7 +80,7 @@ test('Zoomの認可コールバックは失敗段階ごとに区別できる安�
   await assert.rejects(connect(store,'s',cb),e=>{assert.ok(e instanceof ZoomError);assert.equal(e.code,'token_response_incomplete');assert.equal(e.stage,'token_exchange');return true;});}
 
  // トークン交換・スコープ照合は通るが、/users/meの応答が不完全（id/emailがない）。
- {tokenResponse={access_token:'a',refresh_token:'r',scope:'meeting:write:meeting meeting:update:meeting meeting:delete:meeting user:read:user'};
+ {tokenResponse={access_token:'a',refresh_token:'r',scope:'meeting:write:meeting meeting:update:meeting meeting:delete:meeting meeting:read:meeting user:read:user'};
   const brokenFetch=global.fetch;global.fetch=async(url)=>{const u=new URL(url);if(u.pathname==='/v2/users/me')return Response.json({});return brokenFetch(url);};
   const u=await begun();const cb=new URL('http://localhost/api/zoom/callback?code=c&state='+u.searchParams.get('state'));
   await assert.rejects(connect(store,'s',cb),e=>{assert.ok(e instanceof ZoomError);assert.equal(e.code,'profile_incomplete');assert.equal(e.stage,'profile');return true;});
@@ -104,7 +104,7 @@ test('ローテーション後の新しいrefresh_tokenの保存自体が失敗�
  const dir=await mkdtemp(path.join(tmpdir(),'ss-zoom-persist-fail-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
  t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
  global.fetch=async(url,options)=>{const u=new URL(url);
-  if(u.hostname==='zoom.us'&&u.pathname==='/oauth/token')return Response.json({access_token:'access-x',refresh_token:'refresh-x',scope:'meeting:write:meeting meeting:update:meeting meeting:delete:meeting user:read:user'});
+  if(u.hostname==='zoom.us'&&u.pathname==='/oauth/token')return Response.json({access_token:'access-x',refresh_token:'refresh-x',scope:'meeting:write:meeting meeting:update:meeting meeting:delete:meeting meeting:read:meeting user:read:user'});
   if(u.pathname==='/v2/users/me')return Response.json({id:'u1',email:'owner@example.com'});
   return new Response(null,{status:404});
  };
@@ -136,8 +136,8 @@ test('同時に2件の会議を作成しても、refresh_tokenのローテーシ
  global.fetch=async(url,options)=>{const u=new URL(url);
   if(u.hostname==='zoom.us'&&u.pathname==='/oauth/token'){
    const body=new URLSearchParams(options.body);
-   if(body.get('grant_type')==='refresh_token'){refreshCount++;return Response.json({access_token:'access-'+refreshCount,refresh_token:'refresh-'+refreshCount,scope:'meeting:write:meeting meeting:update:meeting meeting:delete:meeting user:read:user'});}
-   return Response.json({access_token:'access-initial',refresh_token:'refresh-initial',scope:'meeting:write:meeting meeting:update:meeting meeting:delete:meeting user:read:user'});
+   if(body.get('grant_type')==='refresh_token'){refreshCount++;return Response.json({access_token:'access-'+refreshCount,refresh_token:'refresh-'+refreshCount,scope:'meeting:write:meeting meeting:update:meeting meeting:delete:meeting meeting:read:meeting user:read:user'});}
+   return Response.json({access_token:'access-initial',refresh_token:'refresh-initial',scope:'meeting:write:meeting meeting:update:meeting meeting:delete:meeting meeting:read:meeting user:read:user'});
   }
   if(u.pathname==='/v2/users/me')return Response.json({id:'u1',email:'owner@example.com'});
   if(u.pathname==='/v2/users/me/meetings'&&options.method==='POST'){meetingSeq++;return Response.json({id:9000+meetingSeq,join_url:'https://zoom.us/j/'+(9000+meetingSeq)});}
@@ -164,7 +164,7 @@ test('Zoomのエラー応答を403/429のヒント付きで分類する',async t
  const dir=await mkdtemp(path.join(tmpdir(),'ss-zoom-err-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
  t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
  global.fetch=async(url,options)=>{const u=new URL(url);
-  if(u.pathname==='/oauth/token')return Response.json({access_token:'a',refresh_token:'r',scope:'meeting:write:meeting meeting:update:meeting meeting:delete:meeting user:read:user'});
+  if(u.pathname==='/oauth/token')return Response.json({access_token:'a',refresh_token:'r',scope:'meeting:write:meeting meeting:update:meeting meeting:delete:meeting meeting:read:meeting user:read:user'});
   if(u.pathname==='/v2/users/me')return Response.json({id:'u1',email:'owner@example.com'});
   if(u.pathname==='/v2/users/me/meetings')return Response.json({code:429,message:'Too many requests'},{status:429});
   return new Response(null,{status:404});
@@ -179,7 +179,7 @@ test('会議作成がHTTP成功応答を返したのに本文を読み取れな�
  const dir=await mkdtemp(path.join(tmpdir(),'ss-zoom-body-unreadable-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
  t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
  global.fetch=async(url,options)=>{const u=new URL(url);
-  if(u.pathname==='/oauth/token')return Response.json({access_token:'a',refresh_token:'r',scope:'meeting:write:meeting meeting:update:meeting meeting:delete:meeting user:read:user'});
+  if(u.pathname==='/oauth/token')return Response.json({access_token:'a',refresh_token:'r',scope:'meeting:write:meeting meeting:update:meeting meeting:delete:meeting meeting:read:meeting user:read:user'});
   if(u.pathname==='/v2/users/me')return Response.json({id:'u1',email:'owner@example.com'});
   // HTTPとしては成功（2xx）だが、本文が壊れていてresponse.json()が失敗する状況を再現する
   // （Zoomは会議を作成済みの可能性が高い）。
@@ -238,7 +238,7 @@ test('Zoom OAuth認証後の暗号化失敗とDB保存失敗を安全に区別�
  const dir=await mkdtemp(path.join(tmpdir(),'ss-zoom-failures-'));const store=await createStore({DATA_DIR:dir});
  t.after(async()=>{global.fetch=oldFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
  global.fetch=async url=>new URL(url).pathname==='/oauth/token'?
-   Response.json({access_token:'do-not-log',refresh_token:'do-not-log',scope:'meeting:write:meeting meeting:update:meeting meeting:delete:meeting user:read:user'}):
+   Response.json({access_token:'do-not-log',refresh_token:'do-not-log',scope:'meeting:write:meeting meeting:update:meeting meeting:delete:meeting meeting:read:meeting user:read:user'}):
    Response.json({id:'u-1',email:'owner@example.com'});
  const callback=async()=>{const u=new URL(await begin(store,'s'));return new URL('http://localhost/api/zoom/callback?code=c&state='+u.searchParams.get('state'));};
  process.env.TOKEN_ENCRYPTION_KEY='wrong';
@@ -248,4 +248,34 @@ test('Zoom OAuth認証後の暗号化失敗とDB保存失敗を安全に区別�
  await assert.rejects(connect(store,'s',await callback()),e=>{assert.equal(e.code,'database_write_failed');assert.equal(e.stage,'database_write');assert.equal(e.message.includes('DATABASE_SECRET_SHOULD_NOT_LOG'),false);return true;});
  store.put=put;
  assert.equal(await store.doc('zoom-private'),undefined);
+});
+
+test('会議読取診断: 旧権限は通信せず停止し、指定済み会議のGETだけを行う',async t=>{
+ const env={...process.env},realFetch=global.fetch;
+ Object.assign(process.env,{ZOOM_CLIENT_ID:'test',ZOOM_CLIENT_SECRET:'test',TOKEN_ENCRYPTION_KEY:randomBytes(32).toString('base64')});
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-read-'));const store=await createStore({DATA_DIR:dir});
+ t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
+ const {encrypt}=await import('../lib/security.js');const {checkMeetingRead,inspectMeeting}=await import('../integrations/zoom.js');
+ const credential={userId:'owner',scopes:scopes.filter(s=>s!=='meeting:read:meeting'),encrypted:encrypt({refresh:'dummy'})};
+ await store.put('zoom-private',credential);let calls=[];
+ global.fetch=async(url,options={})=>{calls.push([new URL(url).pathname,options.method||'GET']);if(new URL(url).pathname==='/oauth/token')return Response.json({access_token:'dummy',refresh_token:'dummy'});return Response.json({id:123,host_id:'owner',start_url:'NEVER-EXPOSE'});};
+ assert.equal((await safeStatus(store)).meetingReadReady,false);
+ await assert.rejects(checkMeetingRead(store),e=>e.code==='scope_missing');
+ await assert.rejects(inspectMeeting(store,'123','owner'),e=>e.code==='scope_missing');assert.deepEqual(calls,[]);
+ await store.put('zoom-private',{...credential,scopes});
+ assert.equal((await checkMeetingRead(store)).code,'no_saved_meeting');assert.deepEqual(calls,[]);
+ await store.put('workspace',{orgSales:[{deletedAt:'yesterday',initialMeetingSync:{zoomMeetingId:'999',zoomHostId:'owner'}},{initialMeetingSync:{zoomMeetingId:'777',zoomHostId:'other'}},{initialMeetingSync:{zoomMeetingId:'123',zoomHostId:'owner'}}]});
+ const before=await store.doc('workspace');const result=await checkMeetingRead(store);
+ assert.equal(result.ok,true);assert.doesNotMatch(JSON.stringify(result),/123|NEVER-EXPOSE|dummy/);
+ assert.deepEqual(calls,[['/oauth/token','POST'],['/v2/meetings/123','GET']]);assert.deepEqual(await store.doc('workspace'),before);
+ calls=[];global.fetch=async(url)=>new URL(url).pathname==='/oauth/token'?Response.json({access_token:'dummy',refresh_token:'dummy'}):Response.json({id:123,host_id:'wrong'});
+ await assert.rejects(checkMeetingRead(store),/照合/);
+});
+
+test('旧4スコープの再認可は既存保存情報を置き換えずに停止する',async t=>{
+ const origin=process.env.APP_ORIGIN;process.env.APP_ORIGIN='http://localhost';t.after(()=>{if(origin===undefined)delete process.env.APP_ORIGIN;else process.env.APP_ORIGIN=origin;});
+ const old=global.fetch;global.fetch=async()=>Response.json({access_token:'dummy',refresh_token:'dummy',scope:scopes.filter(s=>s!=='meeting:read:meeting').join(' ')});t.after(()=>global.fetch=old);
+ let writes=0;const store={query:async()=>[{state:'used'}],put:async()=>{writes++;}};
+ await assert.rejects(connect(store,'session',new URL('http://localhost/api/zoom/callback?code=dummy&state=dummy')),e=>e.code==='scope_missing'&&e.message.includes('meeting:read:meeting'));
+ assert.equal(writes,0);
 });
