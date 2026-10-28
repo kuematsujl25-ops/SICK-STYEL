@@ -34,6 +34,7 @@ export function renderMeetingEditor(o,kind,esc,connections){
  <div id="editerror" role="alert"></div><div class="actions">
  ${ready&&(!sync||(['error','zoom_only'].includes(sync.status)&&!sync.cancelPending))?`<button type="button" class="primary" data-mtgsync="${kind}:${sync?.zoomMeetingId?'create':'prepare'}">${sync?.zoomMeetingId?'URLを確認してカレンダー追加・招待':'確認してZoomを作成'}</button>`:''}
  ${ready&&sync?.status==='synced'?`<button type="button" data-mtgsync="${kind}:update">変更を確認して同期</button>`:''}
+ ${sync?.status==='creating'?`<button type="button" data-mtgsync="${kind}:recover">中断した処理を確認（15分経過後）</button>`:''}
  ${sync&&sync.status!=='creating'?`<button type="button" class="red" data-mtgsync="${kind}:cancel">${sync.cancelPending?'取消を再試行':'MTGを取消'}</button>`:''}</div>
  ${notesView(o,kind,esc)}
  <div class="dialogactions"><button type="button" id="cancel">閉じる</button><button class="secondary" id="save">内容・日時を保存</button></div></form>`;

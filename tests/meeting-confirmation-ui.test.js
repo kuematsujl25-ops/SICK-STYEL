@@ -27,3 +27,14 @@ test('会議確認は重要項目・招待警告を表示し、戻る/閉じる/
   assert.equal(await promise,choice==='確認して実行');assert.ok(dialog.removed);
  }}finally{global.document=old;}
 });
+
+test('復旧・結果不明取消の外部確認は未選択で、確認操作なしでは送信しない',async()=>{
+ const old=global.document;
+ try{for(const action of ['recover','cancel']){
+  const body=new Element();global.document={body,createElement:()=>new Element()};
+  const promise=confirmMeetingPlan({action,requiresExternalCheck:true,recoveryEvidence:'ID未保存・結果不明',attendees:[]});
+  const dialog=body.children[0],label=dialog.children.find(e=>e.children.some(x=>x.type==='checkbox')),checkbox=label.children[0],submit=dialog.children.at(-1).children.at(-1);
+  assert.equal(checkbox.checked,false);submit.onclick();assert.ok(dialog.open);
+  checkbox.checked=true;submit.onclick();assert.equal(await promise,true);
+ }}finally{global.document=old;}
+});

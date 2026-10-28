@@ -306,7 +306,7 @@ test('既存カレンダー予定の更新中に同じ団体のMTG日時が別�
  // 固着していないことを実際に確認：次の取消操作がブロックされずに進む。
  global.fetch=fakeFetch({});
  const latest=await store.doc('workspace');
- const cancelled=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'cancel',revision:latest.revision});
+ const cancelled=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'cancel',revision:latest.revision,externalResultsChecked:true});
  assert.equal(cancelled.org.initialMeetingSync,null,'固着していれば「会議を作成処理中です」で拒否されるはずの取消が正常に完了する');
 });
 
@@ -486,7 +486,7 @@ test('Zoom会議の作成自体が失敗し、そのエラー記録の保存も�
  await assert.rejects(syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision:beforeRetry.revision}),/作成結果が不明です/);
  global.fetch=fakeFetch({});
  const latest=await store.doc('workspace');
- const cancelled=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'cancel',revision:latest.revision});
+ const cancelled=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'cancel',revision:latest.revision,externalResultsChecked:true});
  assert.equal(cancelled.org.initialMeetingSync,null);
  // 取消が完全に成功すると開始予定の日時も消える（round19の回帰防止）ため、再作成には新しい日時が必要。
  const afterCancel=JSON.parse((await store.doc('workspace')).body);afterCancel.orgSales[0].initialZoomAt='2026-11-10T10:00';
@@ -519,7 +519,7 @@ test('Zoom会議作成がタイムアウト等の通信失敗で終わった場�
  // （zoomMeetingIdがnullなのでZoomへの削除呼び出しは発生せず、ローカルの記録だけが安全にクリアされる）。
  global.fetch=fakeFetch({});
  const latest=await store.doc('workspace');
- const cancelled=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'cancel',revision:latest.revision});
+ const cancelled=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'cancel',revision:latest.revision,externalResultsChecked:true});
  assert.equal(cancelled.org.initialMeetingSync,null,'uncertain状態は取消でローカルの記録を安全にクリアできる（Zoomへの削除呼び出しは発生しない）');
 });
 
