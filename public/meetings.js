@@ -1,3 +1,4 @@
+import {joinLink} from './meeting-agenda.js';
 import {notesView} from './meeting-notes-ui.js';
 import {meetingTypes,meetingType,usesZoom,assertTypeChange} from './meeting-policy.js';
 import {hasOutstandingMeetings} from './org-meeting-lifecycle.js';
@@ -17,7 +18,7 @@ export function renderMeetings(orgs,esc){
  const active=orgs.filter(o=>!o.deletedAt),recovery=orgs.filter(o=>o.deletedAt&&hasOutstandingMeetings(o));
  const rows=active.flatMap(o=>['initial','proposal'].filter(k=>o[k+'ZoomAt']||o[k+'ZoomUrl']||o[k+'MeetingSync']).map(kind=>({o,kind})));
  return `<section class="panel"><div class="panelhead"><h2>会議を準備</h2><button data-nav="orgSales">団体・OEM先を管理</button></div>${active.length?`<form id="meetingselect"><label>団体・OEM先<select name="orgId" required><option value="">団体を選択</option>${active.map(o=>`<option value="${esc(o.id)}">${o.partyType==='oem'?'OEM：':'団体：'}${esc(o.name)}</option>`).join('')}</select></label><label>会議枠（各団体2件まで）<select name="kind"><option value="initial">1件目</option><option value="proposal">2件目</option></select></label><button class="primary">内容・日時を指定</button></form>`:'<p>先に団体を登録してください。</p><button data-neworg>団体を追加</button>'}<details><summary>使い方・詳細</summary><p>内容と日時を保存し、Zoom作成、URL確認、カレンダー登録の順に進みます。同じ団体に準備済みの会議がある場合は、その会議を開きます。</p></details></section>
- <section class="panel"><h2>会議一覧</h2>${rows.length?rows.map(({o,kind})=>`<article class="listrow"><div class="grow"><b>${esc(o.name)}｜${esc(meetingContent(o,kind))}</b><small>${esc(o[kind+'ZoomAt']||'日時未設定')}（日本時間） · ${o[kind+'MeetingDurationMin']??45}分</small><span class="badge">${esc(labels[o[kind+'MeetingSync']?.status]||'未作成')}</span>${o[kind+'MeetingSync']?.error?`<p role="alert" class="red">${esc(o[kind+'MeetingSync'].error)}</p>`:''}</div><button data-meetingorg="${esc(o.id)}" data-meetingkind="${kind}">会議を開く</button></article>`).join(''):'<p>会議はまだありません。</p>'}</section>
+ <section class="panel"><h2>会議一覧</h2>${rows.length?rows.map(({o,kind})=>`<article class="listrow"><div class="grow"><b>${esc(o.name)}｜${esc(meetingContent(o,kind))}</b><small>${esc(o[kind+'ZoomAt']||'日時未設定')}（日本時間） · ${o[kind+'MeetingDurationMin']??45}分</small><span class="badge">${esc(labels[o[kind+'MeetingSync']?.status]||'未作成')}</span>${o[kind+'MeetingSync']?.error?`<p role="alert" class="red">${esc(o[kind+'MeetingSync'].error)}</p>`:''}</div>${!o[kind+'MeetingSync']?.cancelPending&&!['creating','uncertain','cancelled'].includes(o[kind+'MeetingSync']?.status)?joinLink(o[kind+'ZoomUrl'],esc):''}<button data-meetingorg="${esc(o.id)}" data-meetingkind="${kind}">会議を開く</button></article>`).join(''):'<p>会議はまだありません。</p>'}</section>
  ${recovery.length?`<section class="panel"><h2>確認が必要な会議</h2><p role="alert">削除済み団体に会議記録が残っています。復元して状態・取消を確認してください。</p>${recovery.map(o=>`<p>${esc(o.name)} <button data-restoreorg="${esc(o.id)}">団体を復元して会議を確認</button></p>`).join('')}</section>`:''}`;
 }
 export function renderMeetingEditor(o,kind,esc,connections){
@@ -29,6 +30,7 @@ export function renderMeetingEditor(o,kind,esc,connections){
  <div class="formfields"><label>会議種別<select name="${kind}MeetingType">${Object.entries(meetingTypes).map(([v,l])=>`<option value="${v}" ${meetingType(o,kind)===v?'selected':''}>${l}</option>`).join('')}</select></label><label>内容<input name="${kind}MeetingContent" required maxlength="200" value="${esc(meetingContent(o,kind))}"></label><label>開始日時（日本時間）<input name="${kind}ZoomAt" required type="datetime-local" value="${esc(o[kind+'ZoomAt']||'')}"></label><label>所要時間（分）<input name="${kind}MeetingDurationMin" required type="number" min="1" max="1440" step="1" value="${o[kind+'MeetingDurationMin']??45}"></label><label>Zoom参加URL（自動入力）<input type="text" readonly value="${esc(url)}" placeholder="Zoom作成後に自動入力"></label></div>
  ${!usesZoom(o,kind)?'<p role="note">この種別はアプリ内に保存します。Zoom URLは生成せず、外部予約・招待も行いません。</p>':''}
  <p class="badge">${esc(labels[sync?.status]||'未作成')}</p>${sync?.error?`<p class="red" role="alert">${esc(sync.error)}</p>`:''}
+ ${!sync?.cancelPending&&!['creating','uncertain','cancelled'].includes(sync?.status)?joinLink(url,esc):''}
  <p class="note">Zoomの契約による時間制限は変わりません。</p><p>カレンダー登録時にゲストへ招待を送信します。更新・取消もゲストへ通知します。</p>
  <details><summary>使い方・詳細</summary><p>変更を保存してから次の操作へ進んでください。URLの手入力は不要です。</p></details>
  <div id="editerror" role="alert"></div><div class="actions">

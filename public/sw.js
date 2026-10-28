@@ -7,14 +7,20 @@ self.addEventListener('push',event=>{
  let msg={};try{msg=event.data?.json()||{};}catch{}
  const title=String(msg.title||'SICKSTYLEからのお知らせ').slice(0,100);
  const body=String(msg.body||'管理アプリをご確認ください').slice(0,500);
- event.waitUntil(self.registration.showNotification(title,{
+ event.waitUntil((async()=>{
+  if(msg.reminderId){
+   if(!Number.isFinite(msg.expiresAt)||Date.now()>=msg.expiresAt)return;
+   try{const r=await fetch('/api/notifications/meeting-active?id='+encodeURIComponent(msg.reminderId),{credentials:'same-origin',cache:'no-store'});if(!r.ok||!(await r.json()).active)return;}catch{return;}
+  }
+  await self.registration.showNotification(title,{
   body,tag:String(msg.tag||'sickstyle').slice(0,140),icon:'/icon-192.png',badge:'/icon-192.png',
-  data:{url:msg.url==='/?notifications=1'?'/?notifications=1':'/'}
- }));
+  data:{url:['/?notifications=1','/?meetings=1'].includes(msg.url)?msg.url:'/'}
+ });
+ })());
 });
 self.addEventListener('notificationclick',event=>{
  event.notification.close();
- const path=event.notification.data?.url==='/?notifications=1'?'/?notifications=1':'/';
+ const path=['/?notifications=1','/?meetings=1'].includes(event.notification.data?.url)?event.notification.data.url:'/';
  event.waitUntil((async()=>{
   const windows=await self.clients.matchAll({type:'window',includeUncontrolled:true});
   const existing=windows.find(w=>new URL(w.url).origin===self.location.origin);

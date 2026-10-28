@@ -8,7 +8,7 @@ import {createD1Store} from '../lib/d1-store.js';
 import * as instagram from '../integrations/instagram.js';
 import * as amazon from '../integrations/amazon.js';
 import * as googlecalendar from '../integrations/googlecalendar.js';
-import {scheduledKind,runReport} from '../lib/notifications.js';
+import {scheduledKind,runReport,runMeetingReminders} from '../lib/notifications.js';
 const api=httpServerHandler(createServer(handler));
 const security={
  'X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY','Referrer-Policy':'no-referrer',
@@ -32,6 +32,7 @@ export default {
   if(env.MAINTENANCE_MODE==='true'||!env.DB)return;
   ctx.waitUntil(withRuntime({...env,CLOUDFLARE:true,STORE:createD1Store(env.DB)},async()=>{
    const store=createD1Store(env.DB);
+   if(event.cron==='* * * * *'){await runMeetingReminders(store);return;}
    // Cron Triggers are UTC. 09:00 / 20:00 / 22:00 Asia/Tokyo = 00:00 / 11:00 / 13:00 UTC.
    const kind=scheduledKind(event.cron);
    if(kind==='analysis'){try{await runProactive(store,{trigger:'scheduled'});}catch{console.error(JSON.stringify({event:'proactive_analysis_failed'}));}}

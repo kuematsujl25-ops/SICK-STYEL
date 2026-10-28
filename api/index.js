@@ -83,6 +83,7 @@ export default async function handler(req,res){
  if(!authorized)return json(res,401,{error:'ログインしてください'});
  // Shared sessions cannot authorize PII. All operations remain closed, including forged admin claims.
  if(route==='/api/amazon/fulfillment'||route.startsWith('/api/amazon/fulfillment/'))return json(res,403,fulfillmentReadiness());
+ if(route==='/api/notifications/meeting-active'&&req.method==='GET')return json(res,200,{active:await notifications.meetingReminderActive(store,new URL(req.url,'http://localhost').searchParams.get('id'))});
  if(route==='/api/notifications/status'&&req.method==='GET')return json(res,200,await notifications.status(store));
  if(route==='/api/notifications'&&req.method==='GET')return json(res,200,{items:await notifications.listNotifications(store)});
  if(route==='/api/notifications/subscribe'&&req.method==='POST')return json(res,200,await notifications.subscribe(store,(await body(req)).subscription));
