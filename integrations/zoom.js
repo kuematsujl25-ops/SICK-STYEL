@@ -1,8 +1,8 @@
 import {runtime} from '../lib/runtime.js';
 import {encrypt,decrypt,token,hash} from '../lib/security.js';
 // 本人（管理者）のZoomアカウントをOAuth（Authorization Code）で認可する。サーバー間アプリ（Server-to-Server OAuth）は使わない。
-// 必要スコープ（Zoom Marketplaceアプリ作成時に選択）: meeting:write:meeting, meeting:update:meeting, meeting:delete:meeting, user:read:user
-export const scopes=['meeting:write:meeting','meeting:update:meeting','meeting:delete:meeting','user:read:user'];
+// 必要スコープ（Zoom Marketplaceアプリ作成時に選択）: meeting:write:meeting, meeting:update:meeting, meeting:delete:meeting, meeting:read:meeting, user:read:user
+export const scopes=['meeting:write:meeting','meeting:update:meeting','meeting:delete:meeting','meeting:read:meeting','user:read:user'];
 export function config(){return !!(runtime().ZOOM_CLIENT_ID&&runtime().ZOOM_CLIENT_SECRET&&runtime().APP_ORIGIN&&runtime().TOKEN_ENCRYPTION_KEY);}
 const callback=()=>new URL('/api/zoom/callback',runtime().APP_ORIGIN).href;
 // code: Zoom自身のエラーコード/HTTPステータス、またはローカル検証で判定した安全な識別子（秘密値は含まない）。
@@ -33,7 +33,7 @@ export async function connect(store,session,url){
  const missing=scopes.filter(s=>!granted.includes(s));
  // Zoom Marketplaceの「Scopes」タブで必要な権限が選択されていないと、トークン交換自体は成功してもAPI呼び出しが失敗し続ける。
  // ここで必要スコープの過不足を照合し、/users/me呼び出し前に具体的な不足スコープ名を示して失敗させる（後段で原因不明の401になるのを防ぐ）。
- if(missing.length)throw new ZoomError('scope_missing','Zoomから許可された権限に次が含まれていません: '+missing.join('、')+'。Zoom MarketplaceアプリのScopesタブで必要な権限（'+scopes.join('、')+'）を選び直し、一度「接続を解除」してから再接続してください（Zoom側の表示名が変更されている場合は同等の最小権限を選んでください）。','scope_check');
+ if(missing.length)throw new ZoomError('scope_missing','Zoomから許可された権限に次が含まれていません: '+missing.join('、')+'。Zoom MarketplaceアプリのScopesタブで必要な権限（'+scopes.join('、')+'）を選び直し、既存接続を解除せず「再認可する」を実行してください（Zoom側の表示名が変更されている場合は同等の最小権限を選んでください）。','scope_check');
  const me=await remote('profile','https://api.zoom.us/v2/users/me',{headers:{Authorization:`Bearer ${raw.access_token}`}});
  if(!me?.id||!me?.email)throw new ZoomError('profile_incomplete','Zoomのユーザー情報（id/email）を取得できませんでした','profile');
  let encrypted;
@@ -116,7 +116,7 @@ export async function storageDiagnostics(store){
  }catch(e){console.error(JSON.stringify({event:'zoom_diagnostic',stage:'database_write',type:e?.name||'unknown'}));return {ok:false,stage:'database_write',code:'database_write_failed'};}
  return {ok:true,stage:'ready',code:'ready'};
 }
-export async function safeStatus(store){const p=await privateData(store);return {configured:config(),connected:!!p,email:p?.email||null,connectedAt:p?.connectedAt||null,scopes:p?.scopes||[]};}
+export async function safeStatus(store){const p=await privateData(store);return {configured:config(),connected:!!p,email:p?.email||null,connectedAt:p?.connectedAt||null,scopes:p?.scopes||[],meetingReadReady:!!p?.scopes?.includes('meeting:read:meeting')};}
 // Zoomのjoin_urlのみを返す。ホスト専用start_urlは呼び出し元へ渡さない（外部共有の禁止）。
 export async function createMeeting(store,{topic,startIso,durationMin}){
  const p=await privateData(store);if(!p)throw Error('Zoomを接続してください');
@@ -159,8 +159,21 @@ export async function verifyHost(store){
 export async function inspectMeeting(store,meetingId,expectedHost){
  if(!expectedHost)throw Error('Zoom所有者の記録がありません');
  const p=await privateData(store);if(!p||p.userId!==expectedHost)throw Error('Zoom所有者が一致しません');
+ if(!p.scopes?.includes('meeting:read:meeting'))throw new ZoomError('scope_missing','会議の読み取り権限がありません。設定画面から再認可してください','scope_check');
  const access=await accessToken(store);
  const r=await remote('get_meeting',`https://api.zoom.us/v2/meetings/${encodeURIComponent(meetingId)}`,{headers:{Authorization:`Bearer ${access}`}});
  if(!r||String(r.id)!==String(meetingId)||r.host_id!==expectedHost)throw Error('Zoom会議の照合ができません');
  return 'exists';
+}
+
+// Explicit admin diagnostic: inspect one saved meeting, never accept an arbitrary external ID.
+// Only credential rotation is persisted; workspace and external meetings remain unchanged.
+export async function checkMeetingRead(store){
+ const p=await privateData(store);
+ if(!p?.scopes?.includes('meeting:read:meeting'))throw new ZoomError('scope_missing','会議の読み取り権限がありません。設定画面から再認可してください','scope_check');
+ const row=await store.doc('workspace');const workspace=row?JSON.parse(row.body):{};
+ const meeting=(workspace.orgSales||[]).filter(o=>!o.deletedAt).flatMap(o=>[o.initialMeetingSync,o.proposalMeetingSync]).find(s=>s?.zoomMeetingId&&s.zoomHostId===p.userId);
+ if(!meeting)return {ok:false,code:'no_saved_meeting',message:'照合可能な保存済み会議がないため、実読取りは未確認です。'};
+ await inspectMeeting(store,meeting.zoomMeetingId,meeting.zoomHostId);
+ return {ok:true,code:'verified',message:'保存済み会議1件の読み取りとホスト一致を確認しました。会議は変更していません。'};
 }

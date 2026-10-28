@@ -9,10 +9,11 @@
 
 `https://sickstyle-manager.sickstyle-74h4.workers.dev/api/zoom/callback`
 
-- Meetings の会議作成・更新・削除と、ユーザー自身のプロフィール読み取りの最小スコープを許可する。
+- Meetings の会議作成・更新・削除・読み取りと、ユーザー自身のプロフィール読み取りの最小スコープを許可する。
   - meeting:write:meeting
   - meeting:update:meeting
   - meeting:delete:meeting
+  - meeting:read:meeting
   - user:read:user
 - 必要に応じ、Zoom App MarketplaceのLocal Testで管理者本人がアプリを追加して許可する。開発用と本番用のOAuth認証情報は別物の場合があるため、使う環境とredirect URIを一致させる。
 - Zoom Client ID/Client Secretを本人だけが安全に確認。GitHub、ChatGPT、PRには値を記載しない。
@@ -91,3 +92,8 @@ npm run integrations:googlecalendar -- --apply
 主催者はサーバー側のmeeting-confirmationポリシーで固定します。OAuthのcalendar.eventsだけでは主カレンダーIDを検証できません。追加権限は calendar.calendars.readonly（カレンダー名・ID等のメタデータ読み取り）。本人承認に基づきOAuthスコープ配列へ追加済みです。本番配信と実際の再認可は未実施です。配信後に既存接続を解除せず、設定のGoogleカレンダー接続から指定アカウントで再認可します。未確認状態でZoomを先に作ることも拒否します。Zoomの既存user:read:userでホストを確認し、追加Zoom権限は要求しません。
 
 古い同期記録にホストID・主催カレンダーIDが無い場合は推測で更新・削除しません。元のZoom/Calendar管理画面で所有者と予定を確認する必要があります。会議の通信結果が不明な状態では自動再作成しません。片側の確定失敗は保存済みIDを維持して再確認から復旧します。確認トークン・参加URL・OAuth情報をログへ出力しません。
+
+## 会議復旧の読み取り権限（2026-10-28）
+保存済みIDを `GET /v2/meetings/{meetingId}` で照合するため、`meeting:read:meeting` が必要です。既存接続には自動追加されません。本人の承認を得て既存ユーザー認可型アプリのScopesにこの権限だけを追加し、設定画面の「再認可する」を実行します。接続解除は不要です。認可情報は従来の `zoom-private` に暗号化保存します。
+
+設定画面「会議の読取を確認」は、保存済み会議から接続ホストと一致する1件をGETで照合します。会議の作成・更新・取消や録音は行いません。既存のトークン更新フローのみD1に保存されます。照合できる会議がなければ未確認と表示します。旧スコープの接続は復旧の読取を安全に停止し、再認可を案内します。

@@ -15,7 +15,7 @@ async function setup(t){
  Object.assign(process.env,{TOKEN_ENCRYPTION_KEY:randomBytes(32).toString('base64'),ZOOM_CLIENT_ID:'test',ZOOM_CLIENT_SECRET:'test',GOOGLE_CLIENT_ID:'test',GOOGLE_CLIENT_SECRET:'test'});
  const dir=await mkdtemp(tmpdir()+'/meeting-confirm-');const store=await createStore({DATA_DIR:dir});
  t.after(async()=>{global.fetch=oldFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
- await store.put('zoom-private',{userId:'host-id',email:'zoom@example.com',encrypted:encrypt({refresh:'test'})});
+ await store.put('zoom-private',{scopes:['meeting:read:meeting'],userId:'host-id',email:'zoom@example.com',encrypted:encrypt({refresh:'test'})});
  await store.put('googlecalendar-private',{scope:identityScope,encrypted:encrypt({refresh:'test'})});
  const org={...newOrg(),id:'example',name:'Example Club',initialZoomAt:'2026-12-01T10:00',initialMeetingContent:'商品説明',updatedAt:new Date().toISOString()};
  const [row]=await store.put('workspace',validate({...empty(),orgSales:[org]}));
