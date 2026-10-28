@@ -5,12 +5,17 @@ self.addEventListener('fetch',event=>{const url=new URL(event.request.url);if(ur
 
 self.addEventListener('push',event=>{
  let msg={};try{msg=event.data?.json()||{};}catch{}
- const title=String(msg.title||'SICKSTYLEからのお知らせ').slice(0,100);
- const body=String(msg.body||'管理アプリをご確認ください').slice(0,500);
+ let title=String(msg.title||'SICKSTYLEからのお知らせ').slice(0,100);
+ let body=String(msg.body||'管理アプリをご確認ください').slice(0,500);
  event.waitUntil((async()=>{
   if(msg.reminderId){
-   if(!Number.isFinite(msg.expiresAt)||Date.now()>=msg.expiresAt)return;
-   try{const r=await fetch('/api/notifications/meeting-active?id='+encodeURIComponent(msg.reminderId),{credentials:'same-origin',cache:'no-store'});if(!r.ok||!(await r.json()).active)return;}catch{return;}
+   let active=false;
+   if(Number.isFinite(msg.expiresAt)&&Date.now()<msg.expiresAt){
+    try{const r=await fetch('/api/notifications/meeting-active?id='+encodeURIComponent(msg.reminderId),{credentials:'same-origin',cache:'no-store',signal:AbortSignal.timeout(8000)});active=r.ok&&(await r.json()).active&&Date.now()<msg.expiresAt;}catch{}
+   }
+   // Safari requires every delivered push to show a notification. A neutral fallback
+   // preserves subscriptions without presenting a cancelled/expired meeting as upcoming.
+   if(!active){title='会議予定のお知らせ｜SICKSTYLE';body='予定が変更・終了したか、最新の状態を確認できませんでした。アプリでご確認ください。';}
   }
   await self.registration.showNotification(title,{
   body,tag:String(msg.tag||'sickstyle').slice(0,140),icon:'/icon-192.png',badge:'/icon-192.png',

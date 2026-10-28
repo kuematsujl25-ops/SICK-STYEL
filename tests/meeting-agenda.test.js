@@ -55,13 +55,12 @@ test('burst is bounded and next tick catches remaining meetings; late resume aft
  assert.equal((await runMeetingReminders(store,new Date(now.getTime()+60000))).created,2);
  assert.equal((await runMeetingReminders(store,new Date(now.getTime()+600000))).created,0);
 });
-test('service worker suppresses expired/cancelled/unauthenticated reminders and routes current ones to meetings',async()=>{
+test('service worker displays neutral fallback for stale/unverifiable pushes to preserve Safari subscriptions',async()=>{
  const source=await readFile(new URL('../public/sw.js',import.meta.url),'utf8');
  async function dispatch(msg,active=true,ok=true){const handlers={},shown=[];let pending;
- vm.runInNewContext(source,{self:{addEventListener:(name,fn)=>handlers[name]=fn,registration:{showNotification:async(...x)=>shown.push(x)}},fetch:async()=>({ok,json:async()=>({active})}),Date,Number,encodeURIComponent});
+ vm.runInNewContext(source,{self:{addEventListener:(name,fn)=>handlers[name]=fn,registration:{showNotification:async(...x)=>shown.push(x)}},fetch:async()=>({ok,json:async()=>({active})}),Date,Number,encodeURIComponent,AbortSignal});
  handlers.push({data:{json:()=>msg},waitUntil:p=>pending=p});await pending;return shown;}
  const msg={title:'Meeting',reminderId:'example',expiresAt:Date.now()+600000,url:'/?meetings=1'};
  assert.equal((await dispatch(msg)).length,1);assert.equal((await dispatch(msg))[0][1].data.url,'/?meetings=1');
- assert.equal((await dispatch(msg,false)).length,0);assert.equal((await dispatch(msg,true,false)).length,0);
- assert.equal((await dispatch({...msg,expiresAt:Date.now()-1})).length,0);
+ for(const shown of [await dispatch(msg,false),await dispatch(msg,true,false),await dispatch({...msg,expiresAt:Date.now()-1})]){assert.equal(shown.length,1);assert.match(shown[0][0],/会議予定のお知らせ/);assert.match(shown[0][1].body,/確認できませんでした/);}
 });

@@ -34,7 +34,7 @@ export async function mountNotifications(){
  const current=registration?await withTimeout(registration.pushManager.getSubscription(),4000):null;
  const permission=supports?Notification.permission:'unsupported';
  ref.innerHTML='<p class="note">通知時刻は日本時間。未取得の売上は0円として扱いません。</p><details><summary>通知スケジュール・iPhoneの設定方法</summary><p>会議開始10分前：会議のリマインダー（毎分確認） ／ 毎朝9時：今日の予定 ／ 20時：売上速報 ／ 22時：売上データ分析 ／ AI社員：分析完了・レビュー承認の通知</p>'+
-  '<p class="note">日本時間で通知します。会議通知はアプリを閉じていても、登録済み端末へ配信します。端末・通信・配信処理の状況により遅延や未着となる場合があります。ログイン有効期間内のみ予定を再確認して表示し、開始後の遅延通知は表示しません。送信済み通知は予定を変更・取消しても端末から自動では消えません。未取得の売上は0円として扱いません。iPhoneではSafariから「ホーム画面に追加」したSICKSTYLEアプリを開き、通知を許可してください。</p></details>'+
+  '<p class="note">日本時間で通知します。会議通知はアプリを閉じていても、登録済み端末へ配信します。端末・通信・配信処理の状況により遅延や未着となる場合があります。ログイン有効期間内に予定を再確認します。取消・開始後・確認不能の場合は、予定確認を促す一般的なお知らせになります。送信済み通知は予定を変更・取消しても端末から自動では消えません。未取得の売上は0円として扱いません。iPhoneではSafariから「ホーム画面に追加」したSICKSTYLEアプリを開き、通知を許可してください。</p></details>'+
   '<div class="actions"><button class="primary" id="notification-enable" '+(!status.configured||!supports||permission==='denied'||current?'disabled':'')+'>この端末で通知を有効にする</button>'+
   '<button class="secondary" id="notification-disable" '+(!current?'disabled':'')+'>この端末への通知を停止</button>'+ '<button class="secondary" id="notification-test" '+(!current?'disabled':'')+'>テスト通知を送信</button></div>'+
   '<p class="note">通知の状態：'+(current?'この端末で登録済み':permission==='denied'?'通知が拒否されています（端末の設定から許可してください）':!supports?'この表示環境ではプッシュ通知が利用できません':!status.configured?'配信用キーの本番設定待ち':'端末で未登録')+
