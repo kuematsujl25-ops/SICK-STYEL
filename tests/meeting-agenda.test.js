@@ -51,8 +51,9 @@ test('workspace revision guard rejects reminder when schedule changed between re
 });
 test('burst is bounded and next tick catches remaining meetings; late resume after start emits nothing',async t=>{
  const store=await fixture(t);await store.put('workspace',{orgSales:Array.from({length:5},(_,i)=>org({id:'org-'+i}))});
- assert.equal((await runMeetingReminders(store,now)).created,3);
+ assert.equal((await runMeetingReminders(store,now)).created,2);
  assert.equal((await runMeetingReminders(store,new Date(now.getTime()+60000))).created,2);
+ assert.equal((await runMeetingReminders(store,new Date(now.getTime()+120000))).created,1);
  assert.equal((await runMeetingReminders(store,new Date(now.getTime()+600000))).created,0);
 });
 test('service worker displays neutral fallback for stale/unverifiable pushes to preserve Safari subscriptions',async()=>{
