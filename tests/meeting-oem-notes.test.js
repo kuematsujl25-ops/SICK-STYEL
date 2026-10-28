@@ -38,3 +38,30 @@ test('多数の小さな議事録で全体の編集容量を超えない',async 
  for(let i=0;i<40;i++){const before=await store.doc('workspace');try{await writeMeetingNote(store,{...input,source:'https://app.notta.ai/example/'+i,body:'架'.repeat(20000),orgId:org().id,revision:before.revision,action:'import'});}catch(e){assert.match(e.message,/保存容量/);const after=await store.doc('workspace');assert.equal(after.revision,before.revision);assert.equal(after.body,before.body);assert.ok(Buffer.byteLength(after.body)<1_800_000);rejected=true;break;}}
  assert.equal(rejected,true);
 });
+
+
+test('同値の後続承認を古い議事録の取消で上書きせず、最新だけ取り消せる',()=>{
+ let o=importNote({...org(),trialUsers:2},input).org;
+ o=importNote(o,{...input,source:'https://app.notta.ai/example/second'}).org;
+ const [a,b]=o.meetingNotes.map(n=>n.id);
+ o=resolveFact(o,{noteId:a,index:0,action:'approve',value:5});
+ o=resolveFact(o,{noteId:b,index:0,action:'approve',value:5});
+ // The wall clock is deliberately identical; ordering must use the persisted sequence.
+ for(const n of o.meetingNotes)for(const h of n.history)h.at='2026-12-01T00:00:00.000Z';
+ const before=structuredClone(o);
+ assert.throws(()=>resolveFact(o,{noteId:a,index:0,action:'undo'}),/後続/);assert.deepEqual(o,before);
+ o=resolveFact(o,{noteId:b,index:0,action:'undo'});assert.equal(o.trialUsers,5);
+ assert.throws(()=>resolveFact(o,{noteId:a,index:0,action:'undo'}),/後続/);
+ assert.equal(o.meetingNotes[0].facts[0].status,'applied');
+ validate({...empty(),orgSales:[o]});
+});
+test('別フィールドの承認は取消を妨げず、順序不明の旧履歴は保全する',()=>{
+ let o=importNote({...org(),trialUsers:2},input).org;const id=o.meetingNotes[0].id;
+ o=resolveFact(o,{noteId:id,index:0,action:'approve',value:5});
+ o=resolveFact(o,{noteId:id,index:1,action:'approve',value:50});
+ assert.equal(resolveFact(o,{noteId:id,index:0,action:'undo'}).trialUsers,2);
+ delete o.meetingNotes[0].history[0].sequence;
+ validate({...empty(),orgSales:[o]});
+ assert.throws(()=>resolveFact(o,{noteId:id,index:0,action:'undo'}),/順序未確認/);
+ assert.equal(o.trialUsers,5);
+});
