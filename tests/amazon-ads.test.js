@@ -36,3 +36,71 @@ test('Ads425は既存レポートIDで進捗を確認し、不正なID応答は�
  await withRuntime(env,async()=>{await sync(store,{fetcher,now});await sync(store,{fetcher,now});assert.equal(requests,1);assert.equal(polls,1);assert.equal((await status(store)).job.status,'pending');});
  const other=await setup(t);await withRuntime(env,async()=>{const invalid=async(url,opt)=>String(url).endsWith('/reporting/reports')?Response.json({detail:'unknown result'},{status:425}):fetcher(url,opt);await assert.rejects(sync(other,{fetcher:invalid,now}),/結果が不明/);await assert.rejects(sync(other,{fetcher:invalid,now}),/結果確認/);});
 });
+
+const reportRows=(n,cost=10)=>Array.from({length:n},(_,i)=>({date:'2026-10-23',campaignId:i+1,campaignName:'ダミー広告'.repeat(12),cost,sales7d:100}));
+const job={id:'capacity-report',status:'pending',start:'2026-09-23',end:'2026-10-23',windowDays:7,profileId:'1'};
+const fakeReport=rows=>async url=>{
+ url=String(url);
+ if(url.includes('/auth/'))return Response.json({access_token:'mock'});
+ if(url.endsWith('/v2/profiles'))return Response.json([{profileId:1,countryCode:'JP',currencyCode:'JPY',timezone:'Asia/Tokyo',accountInfo:{type:'seller'}}]);
+ if(url.endsWith('/reporting/reports'))return Response.json({reportId:'capacity-report'});
+ if(url.includes('/reporting/reports/'))return Response.json({status:'COMPLETED',url:'https://example.s3.ap-northeast-1.amazonaws.com/capacity'});
+ return new Response(gzipSync(JSON.stringify(rows)));
+};
+async function seedCapacity(store){
+ const rows=normalizeReport(reportRows(700),job);
+ const history=Array.from({length:3},(_,i)=>({at:'2026-10-2'+i+'T00:00:00Z',reportId:'old-'+i,start:job.start,end:job.end,previous:rows}));
+ const state={rows,history,job:{...job},profileVerified:'1',lastSuccess:'2026-10-22T00:00:00Z',error:null};
+ assert.ok(Buffer.byteLength(JSON.stringify(state))<1_500_000);
+ assert.ok(Buffer.byteLength(JSON.stringify({...state,history:[...history,history[0]]}))>1_500_000);
+ await store.put('amazonads-reports',state);return state;
+}
+const archives=store=>store.query("SELECT name,body FROM ss_documents WHERE name LIKE 'amazonads-reports-history/%' ORDER BY name");
+test('Ads履歴容量を超えても全履歴を別文書へ保全し、次回同期も完了する',async t=>{
+ const store=await setup(t),before=await seedCapacity(store);
+ await withRuntime(env,async()=>{
+  await sync(store,{fetcher:fakeReport(reportRows(700,20)),now});
+  let current=JSON.parse((await store.doc('amazonads-reports')).body),saved=await archives(store);
+  assert.equal(current.job,null);assert.equal(current.rows[0].adCost,20);assert.ok(saved.length>0);
+  assert.ok(Buffer.byteLength(JSON.stringify(current))<=1_500_000);
+  const all=[...saved.map(r=>JSON.parse(r.body).snapshot),...current.history];
+  for(const old of before.history)assert.deepEqual(all.find(x=>x.reportId===old.reportId),old);
+  assert.deepEqual(all.find(x=>x.reportId==='capacity-report').previous,before.rows);
+  await sync(store,{fetcher:fakeReport(reportRows(700,30)),now});
+  await sync(store,{fetcher:fakeReport(reportRows(700,30)),now:new Date(now.getTime()+1000)});
+  assert.equal((await status(store)).rows[0].adCost,30);assert.equal((await status(store)).job,null);
+  current=JSON.parse((await store.doc('amazonads-reports')).body);saved=await archives(store);
+  assert.equal(saved.length+current.history.length,5);
+ });
+});
+test('Ads保全トランザクション失敗は履歴移動も現在値更新も戻し、同じジョブで再試行できる',async t=>{
+ const store=await setup(t),before=await seedCapacity(store),transaction=store.transaction;
+ store.transaction=commands=>transaction([...commands.slice(0,-1),['INSERT INTO nonexistent_table VALUES (1)'],commands.at(-1)]);
+ await withRuntime(env,async()=>{
+  await assert.rejects(sync(store,{fetcher:fakeReport(reportRows(700,20)),now}));
+  let current=JSON.parse((await store.doc('amazonads-reports')).body);
+  assert.deepEqual(current.rows,before.rows);assert.deepEqual(current.history,before.history);assert.deepEqual(current.job,before.job);assert.equal((await archives(store)).length,0);
+  store.transaction=transaction;await sync(store,{fetcher:fakeReport(reportRows(700,20)),now});
+  assert.equal((await status(store)).job,null);assert.equal((await status(store)).rows[0].adCost,20);
+ });
+});
+test('Ads同時更新に負けた処理は履歴アーカイブを残さず新しいデータを上書きしない',async t=>{
+ const store=await setup(t),before=await seedCapacity(store),transaction=store.transaction;
+ store.transaction=async commands=>{await store.put('amazonads-reports',{...before,error:'concurrent update'});return transaction(commands);};
+ await withRuntime(env,async()=>{await assert.rejects(sync(store,{fetcher:fakeReport(reportRows(700,20)),now}),/広告同期中/);});
+ assert.equal((await archives(store)).length,0);const current=JSON.parse((await store.doc('amazonads-reports')).body);
+ assert.equal(current.error,'concurrent update');assert.deepEqual(current.rows,before.rows);assert.deepEqual(current.history,before.history);
+});
+test('Ads現在値自体が上限超過なら以前の実績・履歴・保留ジョブを保持する',async t=>{
+ const store=await setup(t),before=await seedCapacity(store);
+ await withRuntime(env,async()=>{await assert.rejects(sync(store,{fetcher:fakeReport(reportRows(4000)),now}),/保存容量/);});
+ const current=JSON.parse((await store.doc('amazonads-reports')).body);
+ assert.deepEqual(current.rows,before.rows);assert.deepEqual(current.history,before.history);assert.deepEqual(current.job,before.job);assert.equal((await archives(store)).length,0);
+});
+test('Ads30件を超えた履歴も削除せず保全する',async t=>{
+ const store=await setup(t),history=Array.from({length:30},(_,i)=>({at:'2026-10-23T00:00:00Z',reportId:'small-'+i,previous:[]}));
+ await store.put('amazonads-reports',{rows:[],history,job:{...job},profileVerified:'1',error:null});
+ await withRuntime(env,async()=>{await sync(store,{fetcher:fakeReport([]),now});});
+ const current=JSON.parse((await store.doc('amazonads-reports')).body),saved=await archives(store);
+ assert.equal(current.history.length,30);assert.equal(saved.length,1);assert.deepEqual(JSON.parse(saved[0].body).snapshot,history[0]);
+});
