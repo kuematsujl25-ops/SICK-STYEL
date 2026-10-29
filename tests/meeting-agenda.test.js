@@ -106,6 +106,12 @@ test('transient push failure retries only affected devices; concurrent ticks pre
   for(const item of await listNotifications(store))if(item.detail?.token?.includes('retry-'))await store.put(item.id,{...item,detail:{...item.detail,nextAttemptAt:0,lastAttemptAt:1}});
   await runMeetingReminders(store,new Date(),fail);await runMeetingReminders(store,new Date(),fail);
   assert.equal(failures,20,'an earlier failing reminder in backoff does not starve the other meeting');
+  const legacyOrg=org({id:'legacy',initialZoomAt:at}),legacyMeeting=meetingAgenda([legacyOrg])[0];
+  const {createHash}=await import('node:crypto');const legacyId='notify-event-v1:meeting_reminder:'+createHash('sha256').update(legacyMeeting.token).digest('hex').slice(0,40);
+  await store.put('workspace',{orgSales:[legacyOrg]});
+  await store.put(legacyId,{id:legacyId,kind:'meeting_reminder',title:'Legacy',body:'Legacy notification',createdAt:new Date().toISOString(),detail:{token:legacyMeeting.token,startsAt:legacyMeeting.start}});
+  let legacySends=0;await runMeetingReminders(store,new Date(),async()=>{legacySends++;return new Response(null,{status:201});});
+  assert.equal(legacySends,0,'legacy events without retry state must not be resent');
 
  });
 });
