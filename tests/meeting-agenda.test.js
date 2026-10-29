@@ -51,9 +51,7 @@ test('workspace revision guard rejects reminder when schedule changed between re
 });
 test('burst is bounded and next tick catches remaining meetings; late resume after start emits nothing',async t=>{
  const store=await fixture(t);await store.put('workspace',{orgSales:Array.from({length:5},(_,i)=>org({id:'org-'+i}))});
- assert.equal((await runMeetingReminders(store,now)).created,2);
- assert.equal((await runMeetingReminders(store,new Date(now.getTime()+60000))).created,2);
- assert.equal((await runMeetingReminders(store,new Date(now.getTime()+120000))).created,1);
+ for(let tick=0;tick<5;tick++)assert.equal((await runMeetingReminders(store,new Date(now.getTime()+tick*60000))).created,1);
  assert.equal((await runMeetingReminders(store,new Date(now.getTime()+600000))).created,0);
 });
 test('service worker displays neutral fallback for stale/unverifiable pushes to preserve Safari subscriptions',async()=>{
@@ -64,4 +62,56 @@ test('service worker displays neutral fallback for stale/unverifiable pushes to 
  const msg={title:'Meeting',reminderId:'example',expiresAt:Date.now()+600000,url:'/?meetings=1'};
  assert.equal((await dispatch(msg)).length,1);assert.equal((await dispatch(msg))[0][1].data.url,'/?meetings=1');
  for(const shown of [await dispatch(msg,false),await dispatch(msg,true,false),await dispatch({...msg,expiresAt:Date.now()-1})]){assert.equal(shown.length,1);assert.match(shown[0][0],/会議予定のお知らせ/);assert.match(shown[0][1].body,/確認できませんでした/);}
+});
+
+test('transient push failure retries only affected devices; concurrent ticks preserve successes',async t=>{
+ const {withRuntime}=await import('../lib/runtime.js');const {subscribe}=await import('../lib/notifications.js');
+ const {base64url,unbase64url}=await import('../lib/web-push.js');
+ const {randomBytes}=await import('node:crypto');const store=await fixture(t);
+ const signing=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']);
+ const jwk=await crypto.subtle.exportKey('jwk',signing.privateKey);
+ const receiver=await crypto.subtle.generateKey({name:'ECDH',namedCurve:'P-256'},true,['deriveBits']);
+ const keys={p256dh:base64url(new Uint8Array(await crypto.subtle.exportKey('raw',receiver.publicKey))),auth:base64url(crypto.getRandomValues(new Uint8Array(16)))};
+ const env={TOKEN_ENCRYPTION_KEY:randomBytes(32).toString('base64'),VAPID_PRIVATE_KEY:jwk.d,VAPID_PUBLIC_KEY:base64url(new Uint8Array([4,...unbase64url(jwk.x),...unbase64url(jwk.y)])),VAPID_SUBJECT:'https://example.com'};
+ await withRuntime(env,async()=>{
+  for(const name of ['success','retry','network','gone'])await subscribe(store,{endpoint:'https://fcm.googleapis.com/fcm/send/'+name,keys});
+  const at=new Date(Date.now()+9*60000+9*3600000).toISOString().slice(0,16);
+  await store.put('workspace',{orgSales:[org({initialZoomAt:at})]});
+  const calls={};const request=async url=>{const name=url.split('/').at(-1);calls[name]=(calls[name]||0)+1;if(name==='network'&&calls[name]===1)throw Error('synthetic timeout');return new Response(null,{status:name==='gone'?410:name==='retry'&&calls[name]===1?503:201});};
+  await Promise.all([runMeetingReminders(store,new Date(),request),runMeetingReminders(store,new Date(),request)]);
+  assert.deepEqual(calls,{success:1,retry:1,network:1,gone:1});
+  await runMeetingReminders(store,new Date(),request);assert.equal(calls.retry,1,'backoff is respected');
+  const receipts=await store.query('SELECT name,body FROM ss_documents WHERE name LIKE $1',['meeting-delivery:%']);
+  for(const row of receipts){const data=JSON.parse(row.body);if(!data.settled)await store.put(row.name,{...data,retryAfter:0});}
+  for(const item of await listNotifications(store))await store.put(item.id,{...item,detail:{...item.detail,nextAttemptAt:0}});
+  await Promise.all([runMeetingReminders(store,new Date(),request),runMeetingReminders(store,new Date(),request)]);
+  assert.deepEqual(calls,{success:1,retry:2,network:2,gone:1});
+  for(const item of await listNotifications(store))await store.put(item.id,{...item,detail:{...item.detail,nextAttemptAt:0}});
+  await runMeetingReminders(store,new Date(),request);assert.equal(calls.retry,2);
+  assert.equal((await listNotifications(store))[0].detail.deliveryComplete,true);
+  const remaining=await store.query('SELECT name FROM ss_documents WHERE name LIKE $1',['notify-device-v1:%']);assert.equal(remaining.length,3,'expired subscription is removed');
+  for(const name of ['fourth','fifth'])await subscribe(store,{endpoint:'https://fcm.googleapis.com/fcm/send/'+name,keys});
+  await store.put('workspace',{orgSales:[org({id:'batch-a',initialZoomAt:at}),org({id:'batch-b',initialZoomAt:at})]});
+  let subrequests=0;const counted={...store,async doc(...args){subrequests++;return store.doc(...args);},async query(...args){subrequests++;return store.query(...args);}};
+  assert.equal((await runMeetingReminders(counted,new Date(),async()=>{subrequests++;return new Response(null,{status:201});})).created,1);
+  assert.equal(subrequests,34,'one meeting and five devices fit the 50-subrequest Free limit');
+  await store.put('workspace',{orgSales:[org({id:'cancel-between-devices',initialZoomAt:at})]});
+  let sends=0;await runMeetingReminders(store,new Date(),async()=>{sends++;await store.put('workspace',{orgSales:[]});return new Response(null,{status:201});});
+  assert.equal(sends,1,'cancellation during the first delivery prevents every subsequent device send');
+  await store.put('workspace',{orgSales:[org({id:'retry-a',initialZoomAt:at}),org({id:'retry-b',initialZoomAt:at})]});
+  let failures=0;const fail=async()=>{failures++;return new Response(null,{status:503});};
+  await runMeetingReminders(store,new Date(),fail);await runMeetingReminders(store,new Date(),fail);
+  assert.equal(failures,10,'both new meetings attempted');
+  for(const row of await store.query('SELECT name,body FROM ss_documents WHERE name LIKE $1',['meeting-delivery:%'])){const receipt=JSON.parse(row.body);if(!receipt.settled)await store.put(row.name,{...receipt,retryAfter:0});}
+  for(const item of await listNotifications(store))if(item.detail?.token?.includes('retry-'))await store.put(item.id,{...item,detail:{...item.detail,nextAttemptAt:0,lastAttemptAt:1}});
+  await runMeetingReminders(store,new Date(),fail);await runMeetingReminders(store,new Date(),fail);
+  assert.equal(failures,20,'an earlier failing reminder in backoff does not starve the other meeting');
+  const legacyOrg=org({id:'legacy',initialZoomAt:at}),legacyMeeting=meetingAgenda([legacyOrg])[0];
+  const {createHash}=await import('node:crypto');const legacyId='notify-event-v1:meeting_reminder:'+createHash('sha256').update(legacyMeeting.token).digest('hex').slice(0,40);
+  await store.put('workspace',{orgSales:[legacyOrg]});
+  await store.put(legacyId,{id:legacyId,kind:'meeting_reminder',title:'Legacy',body:'Legacy notification',createdAt:new Date().toISOString(),detail:{token:legacyMeeting.token,startsAt:legacyMeeting.start}});
+  let legacySends=0;await runMeetingReminders(store,new Date(),async()=>{legacySends++;return new Response(null,{status:201});});
+  assert.equal(legacySends,0,'legacy events without retry state must not be resent');
+
+ });
 });
