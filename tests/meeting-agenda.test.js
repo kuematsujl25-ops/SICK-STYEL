@@ -83,8 +83,10 @@ test('transient push failure retries only affected devices; concurrent ticks pre
   await runMeetingReminders(store,new Date(),request);assert.equal(calls.retry,1,'backoff is respected');
   const receipts=await store.query('SELECT name,body FROM ss_documents WHERE name LIKE $1',['meeting-delivery:%']);
   for(const row of receipts){const data=JSON.parse(row.body);if(!data.settled)await store.put(row.name,{...data,retryAfter:0});}
+  for(const item of await listNotifications(store))await store.put(item.id,{...item,detail:{...item.detail,nextAttemptAt:0}});
   await Promise.all([runMeetingReminders(store,new Date(),request),runMeetingReminders(store,new Date(),request)]);
   assert.deepEqual(calls,{success:1,retry:2,network:2,gone:1});
+  for(const item of await listNotifications(store))await store.put(item.id,{...item,detail:{...item.detail,nextAttemptAt:0}});
   await runMeetingReminders(store,new Date(),request);assert.equal(calls.retry,2);
   assert.equal((await listNotifications(store))[0].detail.deliveryComplete,true);
   const remaining=await store.query('SELECT name FROM ss_documents WHERE name LIKE $1',['notify-device-v1:%']);assert.equal(remaining.length,3,'expired subscription is removed');
@@ -96,5 +98,14 @@ test('transient push failure retries only affected devices; concurrent ticks pre
   await store.put('workspace',{orgSales:[org({id:'cancel-between-devices',initialZoomAt:at})]});
   let sends=0;await runMeetingReminders(store,new Date(),async()=>{sends++;await store.put('workspace',{orgSales:[]});return new Response(null,{status:201});});
   assert.equal(sends,1,'cancellation during the first delivery prevents every subsequent device send');
+  await store.put('workspace',{orgSales:[org({id:'retry-a',initialZoomAt:at}),org({id:'retry-b',initialZoomAt:at})]});
+  let failures=0;const fail=async()=>{failures++;return new Response(null,{status:503});};
+  await runMeetingReminders(store,new Date(),fail);await runMeetingReminders(store,new Date(),fail);
+  assert.equal(failures,10,'both new meetings attempted');
+  for(const row of await store.query('SELECT name,body FROM ss_documents WHERE name LIKE $1',['meeting-delivery:%'])){const receipt=JSON.parse(row.body);if(!receipt.settled)await store.put(row.name,{...receipt,retryAfter:0});}
+  for(const item of await listNotifications(store))if(item.detail?.token?.includes('retry-'))await store.put(item.id,{...item,detail:{...item.detail,nextAttemptAt:0,lastAttemptAt:1}});
+  await runMeetingReminders(store,new Date(),fail);await runMeetingReminders(store,new Date(),fail);
+  assert.equal(failures,20,'an earlier failing reminder in backoff does not starve the other meeting');
+
  });
 });
