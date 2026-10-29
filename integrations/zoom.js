@@ -51,11 +51,14 @@ export async function connect(store,session,url){
 // そこでリース（refreshing）をCASで取得してから交換する。他の呼び出しが既にリース保持中なら、自分では
 // 交換せず少し待って再試行する（長すぎるリースは異常終了とみなし20秒で放棄）。
 async function acquireRefreshLease(store){
- for(let attempt=0;attempt<4;attempt++){
+ // Allow the active 12s request plus persistence to finish; bound polling for Workers Free.
+ const deadline=Date.now()+15000;
+ for(let attempt=0;attempt<16&&Date.now()<=deadline;attempt++){
+  if(attempt>0)await new Promise(r=>setTimeout(r,Math.min(1000,Math.max(0,deadline-Date.now()))));
   const current=await privateData(store);
   if(!current)throw Error('Zoomを接続してください');
   const {revision,refreshing,...rest}=current;
-  if(refreshing&&Date.now()-refreshing<20000){await new Promise(r=>setTimeout(r,250));continue;}
+  if(refreshing&&Date.now()-refreshing<20000)continue;
   const rows=await store.query('UPDATE ss_documents SET body=$1,revision=revision+1 WHERE name=$2 AND revision=$3 RETURNING revision',
    [JSON.stringify({...rest,refreshing:Date.now()}),'zoom-private',revision]);
   if(rows.length)return {...rest,revision:rows[0].revision};

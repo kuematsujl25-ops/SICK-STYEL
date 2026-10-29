@@ -133,10 +133,11 @@ test('同時に2件の会議を作成しても、refresh_tokenのローテーシ
  const dir=await mkdtemp(path.join(tmpdir(),'ss-zoom-token-race-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
  t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
  let refreshCount=0,meetingSeq=0;
+ const refreshedTokens=[];
  global.fetch=async(url,options)=>{const u=new URL(url);
   if(u.hostname==='zoom.us'&&u.pathname==='/oauth/token'){
    const body=new URLSearchParams(options.body);
-   if(body.get('grant_type')==='refresh_token'){refreshCount++;return Response.json({access_token:'access-'+refreshCount,refresh_token:'refresh-'+refreshCount,scope:'meeting:write:meeting meeting:update:meeting meeting:delete:meeting meeting:read:meeting user:read:user'});}
+   if(body.get('grant_type')==='refresh_token'){refreshedTokens.push(body.get('refresh_token'));refreshCount++;if(refreshCount===1)await new Promise(r=>setTimeout(r,1250));return Response.json({access_token:'access-'+refreshCount,refresh_token:'refresh-'+refreshCount,scope:'meeting:write:meeting meeting:update:meeting meeting:delete:meeting meeting:read:meeting user:read:user'});}
    return Response.json({access_token:'access-initial',refresh_token:'refresh-initial',scope:'meeting:write:meeting meeting:update:meeting meeting:delete:meeting meeting:read:meeting user:read:user'});
   }
   if(u.pathname==='/v2/users/me')return Response.json({id:'u1',email:'owner@example.com'});
@@ -151,6 +152,7 @@ test('同時に2件の会議を作成しても、refresh_tokenのローテーシ
   createMeeting(store,{topic:'会議A',startIso:'2026-10-28T05:00:00.000Z',durationMin:45}),
   createMeeting(store,{topic:'会議B',startIso:'2026-10-28T06:00:00.000Z',durationMin:45}),
  ]);
+ assert.deepEqual(refreshedTokens,['refresh-initial','refresh-1'],'slow refresh must finish before the next operation uses the rotated token');
  assert.notEqual(a.meetingId,b.meetingId,'両方とも実際に会議が作成されている（片方が失敗で握りつぶされていない）');
  // 保存は壊れていない（JSONとして読める・空になっていない）こと、またこの後の呼び出しが
  // （保存されたどちらかのrefresh_tokenで）正常に継続できることを確認する。
