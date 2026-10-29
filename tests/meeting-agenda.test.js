@@ -51,9 +51,7 @@ test('workspace revision guard rejects reminder when schedule changed between re
 });
 test('burst is bounded and next tick catches remaining meetings; late resume after start emits nothing',async t=>{
  const store=await fixture(t);await store.put('workspace',{orgSales:Array.from({length:5},(_,i)=>org({id:'org-'+i}))});
- assert.equal((await runMeetingReminders(store,now)).created,2);
- assert.equal((await runMeetingReminders(store,new Date(now.getTime()+60000))).created,2);
- assert.equal((await runMeetingReminders(store,new Date(now.getTime()+120000))).created,1);
+ for(let tick=0;tick<5;tick++)assert.equal((await runMeetingReminders(store,new Date(now.getTime()+tick*60000))).created,1);
  assert.equal((await runMeetingReminders(store,new Date(now.getTime()+600000))).created,0);
 });
 test('service worker displays neutral fallback for stale/unverifiable pushes to preserve Safari subscriptions',async()=>{
@@ -89,10 +87,14 @@ test('transient push failure retries only affected devices; concurrent ticks pre
   assert.deepEqual(calls,{success:1,retry:2,network:2,gone:1});
   await runMeetingReminders(store,new Date(),request);assert.equal(calls.retry,2);
   assert.equal((await listNotifications(store))[0].detail.deliveryComplete,true);
-  await subscribe(store,{endpoint:'https://fcm.googleapis.com/fcm/send/fifth',keys});
+  const remaining=await store.query('SELECT name FROM ss_documents WHERE name LIKE $1',['notify-device-v1:%']);assert.equal(remaining.length,3,'expired subscription is removed');
+  for(const name of ['fourth','fifth'])await subscribe(store,{endpoint:'https://fcm.googleapis.com/fcm/send/'+name,keys});
   await store.put('workspace',{orgSales:[org({id:'batch-a',initialZoomAt:at}),org({id:'batch-b',initialZoomAt:at})]});
   let subrequests=0;const counted={...store,async doc(...args){subrequests++;return store.doc(...args);},async query(...args){subrequests++;return store.query(...args);}};
-  assert.equal((await runMeetingReminders(counted,new Date(),async()=>{subrequests++;return new Response(null,{status:201});})).created,2);
-  assert.equal(subrequests,46,'two meetings and five devices fit the 50-subrequest Free limit');
+  assert.equal((await runMeetingReminders(counted,new Date(),async()=>{subrequests++;return new Response(null,{status:201});})).created,1);
+  assert.equal(subrequests,34,'one meeting and five devices fit the 50-subrequest Free limit');
+  await store.put('workspace',{orgSales:[org({id:'cancel-between-devices',initialZoomAt:at})]});
+  let sends=0;await runMeetingReminders(store,new Date(),async()=>{sends++;await store.put('workspace',{orgSales:[]});return new Response(null,{status:201});});
+  assert.equal(sends,1,'cancellation during the first delivery prevents every subsequent device send');
  });
 });
