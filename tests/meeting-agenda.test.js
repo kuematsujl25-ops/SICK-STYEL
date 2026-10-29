@@ -65,3 +65,34 @@ test('service worker displays neutral fallback for stale/unverifiable pushes to 
  assert.equal((await dispatch(msg)).length,1);assert.equal((await dispatch(msg))[0][1].data.url,'/?meetings=1');
  for(const shown of [await dispatch(msg,false),await dispatch(msg,true,false),await dispatch({...msg,expiresAt:Date.now()-1})]){assert.equal(shown.length,1);assert.match(shown[0][0],/会議予定のお知らせ/);assert.match(shown[0][1].body,/確認できませんでした/);}
 });
+
+test('transient push failure retries only affected devices; concurrent ticks preserve successes',async t=>{
+ const {withRuntime}=await import('../lib/runtime.js');const {subscribe}=await import('../lib/notifications.js');
+ const {base64url,unbase64url}=await import('../lib/web-push.js');
+ const {randomBytes}=await import('node:crypto');const store=await fixture(t);
+ const signing=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']);
+ const jwk=await crypto.subtle.exportKey('jwk',signing.privateKey);
+ const receiver=await crypto.subtle.generateKey({name:'ECDH',namedCurve:'P-256'},true,['deriveBits']);
+ const keys={p256dh:base64url(new Uint8Array(await crypto.subtle.exportKey('raw',receiver.publicKey))),auth:base64url(crypto.getRandomValues(new Uint8Array(16)))};
+ const env={TOKEN_ENCRYPTION_KEY:randomBytes(32).toString('base64'),VAPID_PRIVATE_KEY:jwk.d,VAPID_PUBLIC_KEY:base64url(new Uint8Array([4,...unbase64url(jwk.x),...unbase64url(jwk.y)])),VAPID_SUBJECT:'https://example.com'};
+ await withRuntime(env,async()=>{
+  for(const name of ['success','retry','network','gone'])await subscribe(store,{endpoint:'https://fcm.googleapis.com/fcm/send/'+name,keys});
+  const at=new Date(Date.now()+9*60000+9*3600000).toISOString().slice(0,16);
+  await store.put('workspace',{orgSales:[org({initialZoomAt:at})]});
+  const calls={};const request=async url=>{const name=url.split('/').at(-1);calls[name]=(calls[name]||0)+1;if(name==='network'&&calls[name]===1)throw Error('synthetic timeout');return new Response(null,{status:name==='gone'?410:name==='retry'&&calls[name]===1?503:201});};
+  await Promise.all([runMeetingReminders(store,new Date(),request),runMeetingReminders(store,new Date(),request)]);
+  assert.deepEqual(calls,{success:1,retry:1,network:1,gone:1});
+  await runMeetingReminders(store,new Date(),request);assert.equal(calls.retry,1,'backoff is respected');
+  const receipts=await store.query('SELECT name,body FROM ss_documents WHERE name LIKE $1',['meeting-delivery:%']);
+  for(const row of receipts){const data=JSON.parse(row.body);if(!data.settled)await store.put(row.name,{...data,retryAfter:0});}
+  await Promise.all([runMeetingReminders(store,new Date(),request),runMeetingReminders(store,new Date(),request)]);
+  assert.deepEqual(calls,{success:1,retry:2,network:2,gone:1});
+  await runMeetingReminders(store,new Date(),request);assert.equal(calls.retry,2);
+  assert.equal((await listNotifications(store))[0].detail.deliveryComplete,true);
+  await subscribe(store,{endpoint:'https://fcm.googleapis.com/fcm/send/fifth',keys});
+  await store.put('workspace',{orgSales:[org({id:'batch-a',initialZoomAt:at}),org({id:'batch-b',initialZoomAt:at})]});
+  let subrequests=0;const counted={...store,async doc(...args){subrequests++;return store.doc(...args);},async query(...args){subrequests++;return store.query(...args);}};
+  assert.equal((await runMeetingReminders(counted,new Date(),async()=>{subrequests++;return new Response(null,{status:201});})).created,2);
+  assert.equal(subrequests,46,'two meetings and five devices fit the 50-subrequest Free limit');
+ });
+});
