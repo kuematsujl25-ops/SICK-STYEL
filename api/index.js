@@ -1,3 +1,4 @@
+import {instagramPreviewPage} from '../lib/instagram-preview-page.js';
 import {retainKpiHistory,restoreKpiHistory,KpiValidationError} from '../lib/monthly-kpi.js';
 import {prepareRecurringWrite,restoreRecurringTasks,recurringTaskStatus} from '../lib/recurring-tasks.js';
 import {fulfillmentReadiness} from '../lib/amazon-fulfillment-gate.js';
@@ -83,6 +84,13 @@ export default async function handler(req,res){
  const redirect=location=>{res.writeHead(303,{Location:location,'Cache-Control':'no-store'});res.end();};
  if(['/api/amazon/login','/api/amazon/callback','/api/instagram/callback','/api/zoom/callback','/api/googlecalendar/callback'].includes(route)&&req.method==='GET'&&!authorized)return redirect('/?auth=required');
  if(!authorized)return json(res,401,{error:'ログインしてください'});
+ if(route==='/api/instagram-sales-preview'){
+  if(!['GET','HEAD'].includes(req.method))return json(res,405,{error:'プレビュー専用です。候補の保存はできません'});
+  res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'none'; img-src 'none'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
+  res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(req.method==='HEAD'?undefined:instagramPreviewPage);
+ }
+
  // Shared sessions cannot authorize PII. All operations remain closed, including forged admin claims.
  if(route==='/api/amazon/fulfillment'||route.startsWith('/api/amazon/fulfillment/'))return json(res,403,fulfillmentReadiness());
  if(route==='/api/notifications/meeting-active'&&req.method==='GET')return json(res,200,{active:await notifications.meetingReminderActive(store,new URL(req.url,'http://localhost').searchParams.get('id'))});

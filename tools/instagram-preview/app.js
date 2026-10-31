@@ -1,3 +1,4 @@
+import sample from './sample.js';
 import {previewBatch,stagePreview,summarize,TYPES} from './model.js';
 const $=id=>document.getElementById(id);
 let preview=null,ledger=[];
@@ -7,7 +8,7 @@ $('confirm').onchange=()=>{$('stage').disabled=!preview||!$('confirm').checked;}
 function show(){const s=summarize(ledger,$('month').value);$('result').textContent=Object.entries(s.monthly).map(([t,n])=>`${TYPES[t]}：確認済み ${n}アカウント`).join(' ／ ')+'（部分確認）';$('cohort').textContent=`初回DM月コホート：${s.cohort.size}先 → 観測済み期間の返信 ${s.cohort.reply}先 ／ Zoom案内 ${s.cohort.zoom_invite}先。月内活動とは別集計。`;}
 function safely(fn){try{$('error').textContent='';fn();}catch{$('error').textContent='取込を停止しました。形式・対象アカウント・初回DM日の競合・営業先対応を確認してください。';}}
 $('month').onchange=()=>safely(show);
-$('sample').onclick=async()=>{try{const r=await fetch('/sample.json');$('input').value=await r.text();invalidate();}catch{$('error').textContent='サンプルを読み込めませんでした';}};
+$('sample').onclick=()=>{$('owner').value=sample.owner;$('month').value=sample.rangeStart.slice(0,7);$('input').value=JSON.stringify(sample,null,2);$('error').textContent='';invalidate();};
 $('preview').onclick=()=>{invalidate();safely(()=>{
  if($('input').value.length>200000)throw Error('size');
  preview=previewBatch(JSON.parse($('input').value),$('owner').value);
@@ -18,3 +19,6 @@ $('preview').onclick=()=>{invalidate();safely(()=>{
  }$('rows').append(table);
  });};
 $('stage').onclick=()=>safely(()=>{if(!preview||!$('confirm').checked)throw Error('confirm');ledger=stagePreview(ledger,preview);show();$('confirm').checked=false;$('stage').disabled=true;});
+
+// Do not retain candidate text in the back/forward cache. No storage or network writes.
+addEventListener('pagehide',()=>{ledger=[];preview=null;$('input').value='';$('rows').replaceChildren();$('result').textContent='一時データを消去しました';$('cohort').textContent='';$('scope').textContent='未読込';$('owner').value='';$('confirm').checked=false;$('stage').disabled=true;});
