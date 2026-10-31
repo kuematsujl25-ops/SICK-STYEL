@@ -1,3 +1,4 @@
+import {retainKpiHistory,restoreKpiHistory,KpiValidationError} from '../lib/monthly-kpi.js';
 import {prepareRecurringWrite,restoreRecurringTasks,recurringTaskStatus} from '../lib/recurring-tasks.js';
 import {fulfillmentReadiness} from '../lib/amazon-fulfillment-gate.js';
 import {MeetingNoteError} from '../lib/meeting-notes.js';
@@ -133,6 +134,7 @@ export default async function handler(req,res){
  if(route==='/api/data'&&req.method==='GET')return json(res,200,await revisionOf(store));
  if(route==='/api/data'&&req.method==='PUT'){
   const b=await body(req);const d=validate(b);if(!Number.isSafeInteger(b.revision)||b.revision<0)return json(res,400,{error:'更新バージョンが必要です'});
+  retainKpiHistory(await revisionOf(store),d);
   assertMeetingRecordsRetained(await revisionOf(store),d);
   prepareRecurringWrite(await revisionOf(store),d);
   await store.query('INSERT INTO ss_documents(name,body,revision) VALUES ($1,$2,0) ON CONFLICT(name) DO NOTHING',['workspace',JSON.stringify(empty())]);
@@ -146,6 +148,8 @@ export default async function handler(req,res){
   if(b.revision!==current.revision)return json(res,409,{error:'他の端末で更新されました。再読み込み後に復元してください'});
   assertMeetingRecordsRetained(current,data,{restoreNotes:true});
   data=restoreRecurringTasks(current,data);
+  data=validate(restoreKpiHistory(current,data));
+  retainKpiHistory(current,data);
   const result=await store.transaction([
    ['INSERT INTO ss_documents(name,body,revision) VALUES ($1,$2,0) ON CONFLICT(name) DO NOTHING',['workspace',JSON.stringify(empty())]],
    ['INSERT INTO ss_documents(name,body) SELECT $1,body FROM ss_documents WHERE name=$2 AND revision=$3 ON CONFLICT(name) DO UPDATE SET body=excluded.body,revision=ss_documents.revision+1',['before-restore','workspace',b.revision]],
@@ -188,7 +192,7 @@ export default async function handler(req,res){
  if(route==='/api/instagram/resolve'&&req.method==='POST'){const b=await body(req);await instagram.resolveConversation(store,String(b.peer||''));return json(res,200,{ok:true});}
  return json(res,404,{error:'見つかりません'});
  }catch(e){
-  if(e instanceof MeetingNoteError)return json(res,400,{error:e.message});
+  if(e instanceof MeetingNoteError||e instanceof KpiValidationError)return json(res,400,{error:e.message});
   if(e.conflict)return json(res,409,{error:e.message});
   const validation=/掲載|下書き|データ|形式|バックアップ|認可|Instagram|Meta|Amazon|Zoom|Google|カレンダー|MTG|団体|同期|トークン|アカウント|キー|コード|種別|操作|更新バージョン/.test(e.message);
   console.error(JSON.stringify({event:'api_error',type:e.name,code:e instanceof instagram.MetaError?e.code:undefined}));
