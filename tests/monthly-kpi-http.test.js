@@ -27,6 +27,8 @@ test('authenticated KPI HTTP save/read/backup/restore retain evidence and reject
  assert.equal((await req('data','PUT',stale)).status,409);
  const oldClient=structuredClone(data);delete oldClient.salesKpiRecords;
  assert.equal((await req('data','PUT',oldClient)).status,400);
+ const reordered={...data,salesKpiRecords:data.salesKpiRecords.map(r=>Object.fromEntries(Object.entries(r).reverse()))};
+ assert.equal((await req('data','PUT',reordered)).status,200);data=(await req('data')).data;
  const tampered=structuredClone(data);tampered.salesKpiRecords[0].title='Edited evidence';assert.equal((await req('data','PUT',tampered)).status,400);
  assert.equal((await req('data','PUT',{...data,salesKpiRecords:[record,{...record,id:'future',date:future}]})).status,400);
  const cancellation={...record,id:'void-1',type:'void',ref:record.id,date:future};
