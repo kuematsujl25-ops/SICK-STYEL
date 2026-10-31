@@ -30,3 +30,15 @@ test('Workers API + D1: recurring configuration, generation, stale writes, backu
  const backup=(await req('backup')).data;assert.equal((await req('restore','POST',{...backup,revision:current.revision})).status,200);
  current=(await req('data')).data;delete current.recurringTasks;assert.notEqual((await req('data','PUT',current)).status,200);
 });
+
+test('D1 batch captures deferred meeting history atomically across bounded JSON chunks',async t=>{
+ const {runMeetingReminders,listNotifications}=await import('../lib/notifications.js');
+ const {withRuntime}=await import('../lib/runtime.js');
+ const mf=new Miniflare(convertV4MiniflareOptions({workers:[{name:'reminder-batch-test',modules:true,script:'export default {fetch(){return new Response("ok")}}',compatibilityDate:'2026-10-16',d1Databases:{DB:'reminder-synthetic'}}]}));t.after(()=>mf.dispose());
+ const db=await mf.getD1Database('DB');await db.exec(readFileSync('migrations/0001_initial.sql','utf8').replaceAll('\n',' '));
+ const store=createD1Store(db),now=new Date(),at=new Date(+now+9*60000+9*3600000).toISOString().slice(0,16);
+ await store.put('workspace',{orgSales:Array.from({length:201},(_,i)=>({id:'synthetic-'+i,name:'Synthetic',initialZoomAt:at}))});
+ await withRuntime({},async()=>{assert.equal((await runMeetingReminders(store,now)).created,201);assert.equal((await runMeetingReminders(store,now)).created,0);});
+ const rows=await store.query('SELECT name FROM ss_documents WHERE name LIKE $1',['notify-event-v1:meeting_reminder:%']);assert.equal(rows.length,201);
+ assert.equal((await listNotifications(store)).length,60,'history UI remains bounded independently of durable captures');
+});

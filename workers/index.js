@@ -1,5 +1,4 @@
-import {runRecurringTasks} from '../lib/recurring-tasks.js';
-import {runProactive} from '../lib/proactive-staff.js';
+import {runMinuteJobs} from '../lib/scheduled-minute.js';
 import * as amazonAds from '../integrations/amazon-ads.js';
 import {createServer} from 'node:http';
 import {httpServerHandler} from 'cloudflare:node';
@@ -9,7 +8,7 @@ import {createD1Store} from '../lib/d1-store.js';
 import * as instagram from '../integrations/instagram.js';
 import * as amazon from '../integrations/amazon.js';
 import * as googlecalendar from '../integrations/googlecalendar.js';
-import {scheduledKind,runReport,runMeetingReminders} from '../lib/notifications.js';
+import {scheduledKind,runReport} from '../lib/notifications.js';
 const api=httpServerHandler(createServer(handler));
 const security={
  'X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY','Referrer-Policy':'no-referrer',
@@ -34,13 +33,11 @@ export default {
   ctx.waitUntil(withRuntime({...env,CLOUDFLARE:true,STORE:createD1Store(env.DB)},async()=>{
    const store=createD1Store(env.DB);
    const scheduledAt=new Date(event.scheduledTime??Date.now());
-   const recurring=async()=>{if(env.RECURRING_TASKS_ENABLED==='true')await runRecurringTasks(store,scheduledAt);};
    if(event.cron==='* * * * *'){
     // Reuse the existing minute cron: Free allows only five triggers/account.
     // 23:00 UTC = 08:00 JST; quarter-hours also recover delayed generation.
     // Reminder delivery stays independent from recurring-task failures.
-    const results=await Promise.allSettled([runMeetingReminders(store),scheduledAt.getUTCMinutes()%15===0?recurring():Promise.resolve(),scheduledAt.getUTCHours()===23&&[0,15].includes(scheduledAt.getUTCMinutes())?runProactive(store,{now:scheduledAt.toISOString(),trigger:'morning'}):Promise.resolve()]);
-    const failure=results.find(r=>r.status==='rejected');if(failure)throw failure.reason;return;
+    await runMinuteJobs(store,env,scheduledAt);return;
    }
    // Cron Triggers are UTC. 09:00 / 20:00 / 22:00 Asia/Tokyo = 00:00 / 11:00 / 13:00 UTC.
    const kind=scheduledKind(event.cron);
