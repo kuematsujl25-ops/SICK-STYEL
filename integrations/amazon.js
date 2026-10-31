@@ -1,7 +1,11 @@
+import {productSnapshot,analyzeAmazon} from '../public/amazon-analysis.js';
+import {orderInsight} from '../public/amazon-insights.js';
 // Amazon Selling Partner API（日本: Far East リージョン）連携。
 // 公式のLWA認可（Webサイト認可フロー or セルフ認可）のみ使用し、Amazonのパスワードは扱いません。
 // リフレッシュトークンはサーバー側でAES-256-GCM暗号化して保存し、ブラウザーへ返しません。
 import {runtime} from '../lib/runtime.js';
+import {connectionReadiness} from '../public/integration-status.js';
+import {mergeDailyHistory} from '../public/amazon-periods.js';
 import {encrypt,decrypt,token,hash} from '../lib/security.js';
 export const MARKETPLACE_ID='A1VC38T7YXB528'; // Amazon.co.jp
 export const ENDPOINT='https://sellingpartnerapi-fe.amazon.com';
@@ -45,27 +49,38 @@ export async function connect(store,session,url){
  await store.put('amazon-private',{sellerId:/^[A-Z0-9]{1,40}$/.test(seller)?seller:null,encrypted:encrypt({refresh:b.refresh_token}),connectedAt:new Date().toISOString()});
 }
 export async function safeStatus(store){const p=await privateData(store);const r=await store.doc('amazon-cache');const cache=r?JSON.parse(r.body):null;const self=!p&&!!env().AMAZON_REFRESH_TOKEN;
- return {configured:config(),websiteFlow:websiteFlowReady(),connected:!!(config()&&(p||self)),authorization:p?'website':self?'self':null,sellerId:p?.sellerId||null,connectedAt:p?.connectedAt||null,marketplace:'Amazon.co.jp ('+MARKETPLACE_ID+')',salesDefinition:SALES_DEFINITION,ordersDefinition:ORDERS_DEFINITION,cache};}
+ const status={configured:config(),websiteFlow:websiteFlowReady(),connected:!!(config()&&(p||self)),authorization:p?'website':self?'self':null,sellerId:p?.sellerId||null,connectedAt:p?.connectedAt||null,marketplace:'Amazon.co.jp ('+MARKETPLACE_ID+')',salesDefinition:SALES_DEFINITION,ordersDefinition:ORDERS_DEFINITION,cache};return {...status,analysis:analyzeAmazon(cache),readiness:connectionReadiness(status,'amazon')};}
 // --- 同期 ---
 const jstDate=d=>d.toLocaleDateString('sv-SE',{timeZone:TZ});
 function addDays(ymd,n){const d=new Date(ymd+'T00:00:00+09:00');d.setUTCDate(d.getUTCDate()+n);return jstDate(d);}
 export function salesInterval(now=new Date(),days=31){const today=jstDate(now);const start=addDays(today,-(days-1));const t=new Date(now.getTime()-5*60000);const hm=t.toLocaleTimeString('sv-SE',{timeZone:TZ,hour:'2-digit',minute:'2-digit',hour12:false});return {start,end:today,interval:`${start}T00:00:00+09:00--${jstDate(t)}T${hm}:00+09:00`};}
-export function parseMetrics(payload){return (payload||[]).map(x=>({date:String(x.interval||'').slice(0,10),sales:Number(x.totalSales?.amount??NaN),currency:x.totalSales?.currencyCode||null,orders:Number.isInteger(x.orderCount)?x.orderCount:null,units:Number.isInteger(x.unitCount)?x.unitCount:null})).filter(x=>/^\d{4}-\d{2}-\d{2}$/.test(x.date)).map(x=>({...x,sales:Number.isFinite(x.sales)?x.sales:null}));}
-export function summarizeOrders(orders){const counts={};const open=[];for(const o of orders){const s=o.fulfillment?.fulfillmentStatus||'UNKNOWN';counts[s]=(counts[s]||0)+1;if(['UNSHIPPED','PARTIALLY_SHIPPED'].includes(s))open.push({orderId:String(o.orderId||'').slice(0,40),createdTime:o.createdTime||null,status:s,fulfilledBy:o.fulfillment?.fulfilledBy||null,items:(o.orderItems||[]).reduce((n,i)=>n+(Number(i.quantityOrdered)||0),0)});}open.sort((a,b)=>String(a.createdTime).localeCompare(String(b.createdTime)));return {counts,total:orders.length,open:open.slice(0,50)};}
+export function parseMetrics(payload){return (payload||[]).map(x=>{const raw=x.totalSales?.amount;const amount=typeof raw==='number'||typeof raw==='string'&&raw.trim()!==''?Number(raw):NaN;return {date:String(x.interval||'').slice(0,10),sales:x.totalSales?.currencyCode==='JPY'&&Number.isFinite(amount)&&amount>=0?amount:null,currency:x.totalSales?.currencyCode||null,orders:Number.isInteger(x.orderCount)&&x.orderCount>=0?x.orderCount:null,units:Number.isInteger(x.unitCount)&&x.unitCount>=0?x.unitCount:null};}).filter(x=>/^\d{4}-\d{2}-\d{2}$/.test(x.date)&&Number.isFinite(Date.parse(x.date))&&new Date(x.date).toISOString().slice(0,10)===x.date);}
+export function monthlyMetrics(daily,month){const rows=daily.filter(d=>d.date.startsWith(month));const sum=k=>rows.length&&rows.every(d=>typeof d[k]==='number'&&Number.isFinite(d[k]))?rows.reduce((n,d)=>n+d[k],0):null;return {monthSales:sum('sales'),monthOrders:sum('orders')};}
+export function summarizeOrders(orders){const counts={};const open=[];for(const o of orders){const s=o.fulfillment?.fulfillmentStatus||'UNKNOWN';counts[s]=(counts[s]||0)+1;if(['UNSHIPPED','PARTIALLY_SHIPPED'].includes(s))open.push({orderId:String(o.orderId||'').slice(0,40),createdTime:o.createdTime||null,status:s,fulfilledBy:o.fulfillment?.fulfilledBy||null,items:(o.orderItems||[]).reduce((n,i)=>n+(Number(i.quantityOrdered)||0),0)});}open.sort((a,b)=>String(a.createdTime).localeCompare(String(b.createdTime)));return {counts,total:orders.length,open:open.slice(0,50),details:orders.map(orderInsight)};}
 async function lease(store){const l=await store.query('INSERT INTO ss_attempts(key,n,expires) VALUES ($1,1,$2) ON CONFLICT(key) DO UPDATE SET expires=excluded.expires WHERE ss_attempts.expires<$3 RETURNING key',['amazon-sync',Date.now()+180000,Date.now()]);if(!l.length)throw Error('Amazonの同期処理中です。完了後に再試行してください');return ()=>store.query('DELETE FROM ss_attempts WHERE key=$1',['amazon-sync']);}
 export async function sync(store,now=new Date()){
  if(!config())throw Error('Amazon連携のアプリ設定が未完了です');
  const release=await lease(store);const old=await store.doc('amazon-cache');const cache=old?JSON.parse(old.body):{};
  try{
   const auth=await refreshToken(store);if(!auth)throw Error('Amazonの認可が未完了です');
-  const access=await accessToken(auth.token);const warnings=[];const range=salesInterval(now);
-  let daily=null;try{const m=await sp('/sales/v1/orderMetrics',access,{marketplaceIds:MARKETPLACE_ID,interval:range.interval,granularity:'Day',granularityTimeZone:TZ});daily=parseMetrics(m.payload);}catch(e){warnings.push('売上（Sales API）: '+e.message);}
+  const access=await accessToken(auth.token);const warnings=[];const range=salesInterval(now);let salesError=null,ordersError=null;
+  let daily=null;try{const m=await sp('/sales/v1/orderMetrics',access,{marketplaceIds:MARKETPLACE_ID,interval:range.interval,granularity:'Day',granularityTimeZone:TZ});if(!Array.isArray(m?.payload))throw new AmazonError('invalid_response');daily=parseMetrics(m.payload);if(daily.length!==m.payload.length||new Set(daily.map(d=>d.date)).size!==daily.length||daily.some(d=>d.date<range.start||d.date>range.end))throw new AmazonError('invalid_response');if(daily.some(d=>d.sales===null||d.orders===null))warnings.push('Sales APIの一部金額・注文数は未取得またはJPY以外です。合計は未取得として扱います。');}catch(e){daily=null;salesError=e.message;warnings.push('売上（Sales API）: '+e.message);}
   // Orders API: 1分あたりの上限が小さいため最大5ページ（500件）まで。
-  let orders=null,truncated=false;try{const list=[];let next;const createdAfter=new Date(range.start+'T00:00:00+09:00').toISOString();for(let page=0;page<5;page++){const r=await sp('/orders/2026-01-01/orders',access,{marketplaceIds:MARKETPLACE_ID,createdAfter,maxResultsPerPage:'100',paginationToken:next});list.push(...(r.orders||[]));next=r.pagination?.nextToken;if(!next)break;}truncated=!!next;orders=summarizeOrders(list);}catch(e){warnings.push('注文（Orders API）: '+e.message);}
+  let orders=null,products=null,truncated=false;try{const list=[];let next;const createdAfter=new Date(range.start+'T00:00:00+09:00').toISOString();for(let page=0;page<5;page++){const r=await sp('/orders/2026-01-01/orders',access,{marketplaceIds:MARKETPLACE_ID,createdAfter,maxResultsPerPage:'100',includedData:'FULFILLMENT,PACKAGES',paginationToken:next});if(!Array.isArray(r?.orders))throw new AmazonError('invalid_response');list.push(...r.orders);next=r.pagination?.nextToken;if(!next)break;}truncated=!!next;if(list.some(o=>!o||typeof o.fulfillment?.fulfillmentStatus!=='string'||!o.fulfillment.fulfillmentStatus.trim()))throw new AmazonError('fulfillment_missing','注文の配送状況を取得できませんでした。前回の取得結果を保持しています。');orders=summarizeOrders(list);products=productSnapshot(list);}catch(e){ordersError=e.message;warnings.push('注文（Orders API）: '+e.message);}
   if(!daily&&!orders)throw new AmazonError('all',warnings.join(' / '));
   const month=jstDate(now).slice(0,7);
-  const next={syncedAt:new Date().toISOString(),attemptedAt:new Date().toISOString(),error:null,warnings,period:{start:range.start,end:range.end,timeZone:TZ},daily:daily??cache.daily??null,monthSales:daily?daily.filter(d=>d.date.startsWith(month)).reduce((n,d)=>n+(d.sales||0),0):cache.monthSales??null,monthOrders:daily?daily.filter(d=>d.date.startsWith(month)).reduce((n,d)=>n+(d.orders||0),0):cache.monthOrders??null,month,orders:orders??cache.orders??null,ordersTruncated:truncated};
+  const stamp=new Date().toISOString(),period={start:range.start,end:range.end,timeZone:TZ};
+  const monthly=daily?monthlyMetrics(daily,month):{monthSales:cache.monthSales??null,monthOrders:cache.monthOrders??null};
+  const syncVerified=!!(daily&&orders&&daily.length&&daily.every(d=>d.sales!==null&&d.orders!==null));
+  const next={...cache,syncedAt:syncVerified?stamp:cache.syncedAt??null,attemptedAt:stamp,error:null,warnings,syncVerified,salesError,ordersError,
+   period:daily&&orders?period:cache.period??null,salesPeriod:daily?period:cache.salesPeriod??null,ordersPeriod:orders?period:cache.ordersPeriod??null,
+   salesSyncedAt:daily?stamp:cache.salesSyncedAt??null,ordersSyncedAt:orders?stamp:cache.ordersSyncedAt??null,
+   // 旧いキャッシュ（dailyHistoryフィールド導入前）はdailyだけに過去のローリングウィンドウが入っている。
+   // dailyHistoryが存在しない場合はdailyを種にしてから新しいレスポンスをマージすることで、アップグレード時に
+   // それまで取得済みだった日付が消えてしまわないようにする（Codex独立レビュー指摘）。
+   daily:daily??cache.daily??null,dailyHistory:daily?mergeDailyHistory(cache.dailyHistory??cache.daily,daily):cache.dailyHistory??null,
+   products:products??cache.products??null,...monthly,month:daily?month:cache.month??null,orders:orders??cache.orders??null,ordersTruncated:orders?truncated:cache.ordersTruncated??false};
   await store.put('amazon-cache',next);return next;
- }catch(e){await store.put('amazon-cache',{...cache,error:e.message,attemptedAt:new Date().toISOString()});throw e;}finally{await release();}
+ }catch(e){await store.put('amazon-cache',{...cache,syncVerified:false,error:e.message,attemptedAt:new Date().toISOString()});throw e;}finally{await release();}
 }
 export async function disconnect(store){await store.transaction([['DELETE FROM ss_documents WHERE name IN ($1,$2)',['amazon-private','amazon-cache']]]);return {ok:true,warning:env().AMAZON_REFRESH_TOKEN?'セルフ認可のトークン（AMAZON_REFRESH_TOKEN）はCloudflareのSecretsから削除してください。':'Seller Centralの「アプリとサービス」メニュー内の認可済みアプリの管理画面からも認可を取り消せます。'};}

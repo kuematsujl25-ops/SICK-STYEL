@@ -1,0 +1,701 @@
+import {renderMeetingEditor} from '../public/meetings.js';
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import path from 'node:path';
+import {randomBytes} from 'node:crypto';
+import {createStore} from '../lib/store.js';
+import {encrypt} from '../lib/security.js';
+import {empty,validate} from '../lib/domain.js';
+import {newOrg} from '../public/org-sales.js';
+import {syncMeeting} from '../lib/meeting-sync.js';
+
+async function seed(store,org){
+ await store.put('zoom-private',{userId:'u1',email:'owner@example.com',encrypted:encrypt({refresh:'zoom-refresh'}),issuedAt:Date.now(),connectedAt:new Date().toISOString(),scopes:[]});
+ await store.put('googlecalendar-private',{email:'owner@example.com',encrypted:encrypt({refresh:'gcal-refresh'}),issuedAt:Date.now(),connectedAt:new Date().toISOString(),scope:''});
+ const data=validate({...empty(),orgSales:[org]});
+ const r=await store.put('workspace',data);
+ return r[0].revision;
+}
+function fakeFetch(behavior){
+ let zoomMeetingSeq=1000;
+ return async(url,options)=>{const u=new URL(url);
+  if(u.hostname==='zoom.us'&&u.pathname==='/oauth/token'){
+   if(behavior.zoomTokenRefreshFails)throw Error('network');
+   return Response.json({access_token:'za',refresh_token:'zr'});
+  }
+  if(u.pathname==='/v2/users/me/meetings'&&options.method==='POST'){
+   if(behavior.zoomFails)throw Error('network');
+   zoomMeetingSeq++;return Response.json({id:zoomMeetingSeq,join_url:'https://zoom.us/j/'+zoomMeetingSeq,start_url:'https://zoom.us/s/'+zoomMeetingSeq+'?zak=SECRET'});
+  }
+  if(/^\/v2\/meetings\/\d+$/.test(u.pathname)&&options.method==='PATCH')return behavior.zoomUpdateFails?new Response(JSON.stringify({code:1,message:'fail'}),{status:400}):new Response(null,{status:204});
+  if(/^\/v2\/meetings\/\d+$/.test(u.pathname)&&options.method==='DELETE')return behavior.zoomDeleteFails?new Response(JSON.stringify({code:1,message:'fail'}),{status:400}):new Response(null,{status:204});
+  if(u.hostname==='oauth2.googleapis.com'){
+   if(behavior.calendarTokenRefreshFails)throw Error('network');
+   return Response.json({access_token:'ga'});
+  }
+  if(u.pathname==='/calendar/v3/calendars/primary/events'&&options.method==='POST'){
+   if(behavior.calendarNetworkFails)throw Error('network');
+   if(behavior.calendarFails)return new Response(JSON.stringify({error:{code:400,message:'fail'}}),{status:400});
+   return Response.json({id:'evt-'+(zoomMeetingSeq),htmlLink:'https://calendar.google.com/x'});
+  }
+  if(/^\/calendar\/v3\/calendars\/primary\/events\/.+$/.test(u.pathname)&&options.method==='PATCH')return behavior.calendarUpdateFails?new Response(null,{status:500}):new Response(null,{status:204});
+  if(/^\/calendar\/v3\/calendars\/primary\/events\/.+$/.test(u.pathname)&&options.method==='DELETE')return behavior.calendarDeleteFails?new Response(null,{status:500}):new Response(null,{status:204});
+  return new Response(null,{status:404});
+ };
+}
+
+test('新規作成は1回だけZoom会議を発行し、両方成功して初めてsyncedになる（start_urlは外部に出さない）',async t=>{
+ const env={...process.env};process.env.ZOOM_CLIENT_ID='c';process.env.ZOOM_CLIENT_SECRET='s';process.env.GOOGLE_CLIENT_ID='c';process.env.GOOGLE_CLIENT_SECRET='s';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-meeting-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
+ t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
+ const org={...newOrg(),id:'org-1',name:'FC Example',updatedAt:new Date().toISOString(),deletedAt:null,history:[{stage:'DM送信',at:new Date().toISOString(),note:''}],initialZoomAt:'2026-10-28T14:00'};
+ const revision=await seed(store,org);
+ global.fetch=fakeFetch({});
+ const r1=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision});
+ assert.equal(r1.org.initialMeetingSync.status,'synced');
+ assert.ok(r1.org.initialMeetingSync.zoomMeetingId);
+ assert.ok(r1.org.initialMeetingSync.calendarEventId);
+ assert.equal(r1.org.initialZoomUrl.includes('zoom.us/j/'),true);
+ assert.equal(JSON.stringify(r1).includes('zak'),false);
+ // 二重会議作成の防止：既にsynced状態でcreateを呼んでも何もしない。
+ const r2=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision:r1.revision});
+ assert.equal(r2.org.initialMeetingSync.zoomMeetingId,r1.org.initialMeetingSync.zoomMeetingId);
+});
+
+test('Zoom成功・カレンダー失敗は部分成功として記録し、再試行はZoomを再発行しない',async t=>{
+ const env={...process.env};process.env.ZOOM_CLIENT_ID='c';process.env.ZOOM_CLIENT_SECRET='s';process.env.GOOGLE_CLIENT_ID='c';process.env.GOOGLE_CLIENT_SECRET='s';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-meeting-partial-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
+ t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
+ const org={...newOrg(),id:'org-1',name:'FC Example',updatedAt:new Date().toISOString(),deletedAt:null,history:[{stage:'DM送信',at:new Date().toISOString(),note:''}],initialZoomAt:'2026-10-28T14:00'};
+ const revision=await seed(store,org);
+ global.fetch=fakeFetch({calendarFails:true});
+ const r1=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision});
+ assert.equal(r1.org.initialMeetingSync.status,'error');
+ assert.ok(r1.org.initialMeetingSync.zoomMeetingId);
+ assert.equal(r1.org.initialMeetingSync.calendarEventId,null);
+ assert.ok(r1.warnings.length);
+ const firstZoomId=r1.org.initialMeetingSync.zoomMeetingId;
+ // 再試行：カレンダーだけ復旧させる。Zoomは再発行しない。
+ global.fetch=fakeFetch({});
+ const r2=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision:r1.revision});
+ assert.equal(r2.org.initialMeetingSync.zoomMeetingId,firstZoomId);
+ assert.equal(r2.org.initialMeetingSync.status,'synced');
+ assert.ok(r2.org.initialMeetingSync.calendarEventId);
+});
+
+test('日程変更はZoom・Googleカレンダー双方へ同期し、取消は両方の削除を試みてから状態をクリアする',async t=>{
+ const env={...process.env};process.env.ZOOM_CLIENT_ID='c';process.env.ZOOM_CLIENT_SECRET='s';process.env.GOOGLE_CLIENT_ID='c';process.env.GOOGLE_CLIENT_SECRET='s';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-meeting-resched-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
+ t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
+ const org={...newOrg(),id:'org-1',name:'FC Example',updatedAt:new Date().toISOString(),deletedAt:null,history:[{stage:'DM送信',at:new Date().toISOString(),note:''}],proposalZoomAt:'2026-11-03T16:00'};
+ const revision=await seed(store,org);
+ global.fetch=fakeFetch({});
+ const created=await syncMeeting(store,{orgId:'org-1',kind:'proposal',action:'create',revision});
+ assert.equal(created.org.proposalMeetingSync.status,'synced');
+ // 日程変更の同期
+ const updated=await syncMeeting(store,{orgId:'org-1',kind:'proposal',action:'update',revision:created.revision});
+ assert.equal(updated.org.proposalMeetingSync.status,'synced');
+ assert.equal(updated.warnings.length,0);
+ // 取消：両方の削除を試み、ローカルの同期状態をクリアする
+ const cancelled=await syncMeeting(store,{orgId:'org-1',kind:'proposal',action:'cancel',revision:updated.revision});
+ assert.equal(cancelled.org.proposalMeetingSync,null);
+ assert.equal(cancelled.org.proposalZoomUrl,'');
+ assert.equal(cancelled.warnings.length,0);
+ // 開始予定の日時も消す：残したままだと朝の通知が取消済みのMTGを「今日の予定」として表示してしまい、
+ // 編集画面の入力欄にも取消済みの古い日時が残ったまま「MTGを作成」を押せてしまう（Codex独立レビュー指摘）。
+ assert.equal(cancelled.org.proposalZoomAt,'','取消が完全に成功した場合は開始予定の日時も消える');
+ // 一部でも失敗した場合、未取消の外部IDを保持し、誤った「取消済み」表示を防ぐ。
+ const org2={...newOrg(),id:'org-2',name:'FC Two',updatedAt:new Date().toISOString(),deletedAt:null,history:[{stage:'DM送信',at:new Date().toISOString(),note:''}],initialZoomAt:'2026-10-28T14:00'};
+ const data2=validate({...empty(),orgSales:[org2]});const put2=(await store.query('UPDATE ss_documents SET body=$1,revision=revision+1 WHERE name=$2 RETURNING revision',[JSON.stringify(data2),'workspace']))[0];
+ const created2=await syncMeeting(store,{orgId:'org-2',kind:'initial',action:'create',revision:put2.revision});
+ global.fetch=fakeFetch({zoomDeleteFails:true,calendarDeleteFails:true});
+ const cancelled2=await syncMeeting(store,{orgId:'org-2',kind:'initial',action:'cancel',revision:created2.revision});
+ assert.equal(cancelled2.org.initialMeetingSync.status,'error');
+ assert.equal(cancelled2.org.initialMeetingSync.cancelPending,true);
+ assert.equal(cancelled2.org.initialMeetingSync.zoomMeetingId,created2.org.initialMeetingSync.zoomMeetingId);
+ assert.equal(cancelled2.org.initialMeetingSync.calendarEventId,created2.org.initialMeetingSync.calendarEventId);
+ assert.equal(cancelled2.warnings.length,2);
+ // 取消が未完了（cancelPending）の間は、再試行に日時を使わないため開始予定の日時は消さずに残す。
+ assert.equal(cancelled2.org.initialZoomAt,created2.org.initialZoomAt,'取消未完了の間は開始予定の日時を保持する');
+ // 復旧時は残っている会議・イベントだけを再取消する。
+ global.fetch=fakeFetch({});
+ const recovered=await syncMeeting(store,{orgId:'org-2',kind:'initial',action:'cancel',revision:cancelled2.revision});
+ assert.equal(recovered.org.initialMeetingSync,null);
+ assert.equal(recovered.org.initialZoomUrl,'');
+ assert.equal(recovered.warnings.length,0);
+ assert.equal(recovered.org.initialZoomAt,'','取消が完全に成功した時点で開始予定の日時も消える（Codex独立レビュー指摘の回帰）');
+});
+
+test('更新バージョン不一致（他端末の同時更新）は競合として拒否する',async t=>{
+ const env={...process.env};process.env.ZOOM_CLIENT_ID='c';process.env.ZOOM_CLIENT_SECRET='s';process.env.GOOGLE_CLIENT_ID='c';process.env.GOOGLE_CLIENT_SECRET='s';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-meeting-conflict-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
+ t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
+ const org={...newOrg(),id:'org-1',name:'FC Example',updatedAt:new Date().toISOString(),deletedAt:null,history:[{stage:'DM送信',at:new Date().toISOString(),note:''}],initialZoomAt:'2026-10-28T14:00'};
+ await seed(store,org);
+ global.fetch=fakeFetch({});
+ await assert.rejects(syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision:999}),/他の端末/);
+ await assert.rejects(syncMeeting(store,{orgId:'does-not-exist',kind:'initial',action:'create',revision:0}),/見つかりません/);
+ await assert.rejects(syncMeeting(store,{orgId:'org-1',kind:'bogus',action:'create',revision:0}),/種別/);
+});
+
+test('予定の更新失敗後の再試行は既存IDをPATCHしカレンダーイベントを重複作成しない',async t=>{
+ const env={...process.env};process.env.ZOOM_CLIENT_ID='c';process.env.ZOOM_CLIENT_SECRET='s';process.env.GOOGLE_CLIENT_ID='c';process.env.GOOGLE_CLIENT_SECRET='s';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-meeting-retry-update-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
+ t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
+ const org={...newOrg(),id:'org-1',name:'Test FC',updatedAt:new Date().toISOString(),deletedAt:null,history:[{stage:'DM送信',at:new Date().toISOString(),note:''}],initialZoomAt:'2026-11-03T14:00'};
+ const revision=await seed(store,org);
+ global.fetch=fakeFetch({});
+ const first=await syncMeeting(store,{orgId:org.id,kind:'initial',action:'create',revision});
+ global.fetch=fakeFetch({calendarUpdateFails:true});
+ const changed=await syncMeeting(store,{orgId:org.id,kind:'initial',action:'update',revision:first.revision});
+ assert.equal(changed.org.initialMeetingSync.status,'error');
+ let unexpectedCreates=0;
+ const successFetch=fakeFetch({});
+ global.fetch=async(u,opts)=>{
+  if(String(u).includes('/calendar/v3/calendars/primary/events')&&opts?.method==='POST'){unexpectedCreates++;throw Error('must PATCH existing event');}
+  if(String(u).includes('/v2/users/me/meetings')&&opts?.method==='POST'){unexpectedCreates++;throw Error('must not create new Zoom meeting');}
+  return successFetch(u,opts);
+ };
+ const retried=await syncMeeting(store,{orgId:org.id,kind:'initial',action:'create',revision:changed.revision});
+ assert.equal(unexpectedCreates,0);
+ assert.equal(retried.org.initialMeetingSync.status,'synced');
+ assert.equal(retried.org.initialMeetingSync.zoomMeetingId,first.org.initialMeetingSync.zoomMeetingId);
+ assert.equal(retried.org.initialMeetingSync.calendarEventId,first.org.initialMeetingSync.calendarEventId);
+});
+
+test('Zoomだけ成功しカレンダーが未作成のまま日程変更しても、Zoom側の日時が必ず更新される（Codex指摘の回帰）',async t=>{
+ const env={...process.env};process.env.ZOOM_CLIENT_ID='c';process.env.ZOOM_CLIENT_SECRET='s';process.env.GOOGLE_CLIENT_ID='c';process.env.GOOGLE_CLIENT_SECRET='s';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-meeting-reschedule-gap-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
+ t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
+ const org={...newOrg(),id:'org-1',name:'FC Example',updatedAt:new Date().toISOString(),deletedAt:null,history:[{stage:'DM送信',at:new Date().toISOString(),note:''}],initialZoomAt:'2026-10-28T14:00'};
+ const revision=await seed(store,org);
+ // Zoomは成功、カレンダーは失敗 → zoomMeetingIdはあるがcalendarEventIdがない状態になる。
+ global.fetch=fakeFetch({calendarFails:true});
+ const created=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision});
+ assert.equal(created.org.initialMeetingSync.status,'error');
+ assert.ok(created.org.initialMeetingSync.zoomMeetingId);
+ assert.equal(created.org.initialMeetingSync.calendarEventId,null);
+ // この状態のまま、ユーザーが日程を変更して保存したとする（通常のorg編集で直接workspaceを更新）。
+ const doc=await store.doc('workspace');const data=JSON.parse(doc.body);
+ data.orgSales[0].initialZoomAt='2026-10-30T10:00';
+ const put=(await store.query('UPDATE ss_documents SET body=$1,revision=revision+1 WHERE name=$2 AND revision=$3 RETURNING revision',[JSON.stringify(data),'workspace',doc.revision]))[0];
+ // 日程変更の同期（action='update'）。カレンダーも成功するように戻す。
+ let zoomPatchBody=null;
+ const okFetch=fakeFetch({});
+ global.fetch=async(u,o)=>{if(/\/v2\/meetings\/\d+$/.test(new URL(u).pathname)&&o?.method==='PATCH')zoomPatchBody=JSON.parse(o.body);return okFetch(u,o);};
+ const updated=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'update',revision:put.revision});
+ assert.ok(zoomPatchBody,'calendarEventIdが無い状態でも、更新のたびに必ずZoom側へPATCHが送られる（以前はスキップされていた）');
+ assert.equal(zoomPatchBody.start_time,'2026-10-30T01:00:00.000Z','Zoomに送られた開始時刻が新しい日程になっている');
+ assert.equal(updated.org.initialMeetingSync.zoomMeetingId,created.org.initialMeetingSync.zoomMeetingId,'Zoom会議IDは変わらない（再作成しない）');
+ assert.ok(updated.org.initialMeetingSync.calendarEventId,'欠けていたカレンダー予定もこの時点で作成される');
+ assert.equal(updated.org.initialMeetingSync.status,'synced');
+});
+
+test('カレンダー予定が未作成の状態から2件が同時に復旧を試みても、Googleカレンダーの予定は1件しか作成されない（Codex指摘の回帰）',async t=>{
+ const env={...process.env};process.env.ZOOM_CLIENT_ID='c';process.env.ZOOM_CLIENT_SECRET='s';process.env.GOOGLE_CLIENT_ID='c';process.env.GOOGLE_CLIENT_SECRET='s';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-meeting-calendar-race-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
+ t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
+ const org={...newOrg(),id:'org-1',name:'FC Example',updatedAt:new Date().toISOString(),deletedAt:null,history:[{stage:'DM送信',at:new Date().toISOString(),note:''}],initialZoomAt:'2026-10-28T14:00'};
+ const revision=await seed(store,org);
+ global.fetch=fakeFetch({calendarFails:true});
+ const created=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision});
+ assert.equal(created.org.initialMeetingSync.calendarEventId,null);
+ // 同じrevisionに対して、2つのリクエストが同時に「作成（復旧）」を試みる。
+ let calendarEventsCreated=0;
+ const okFetch=fakeFetch({});
+ global.fetch=async(u,o)=>{if(String(u).includes('/calendar/v3/calendars/primary/events')&&o?.method==='POST')calendarEventsCreated++;return okFetch(u,o);};
+ const results=await Promise.allSettled([
+  syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision:created.revision}),
+  syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision:created.revision})
+ ]);
+ assert.equal(calendarEventsCreated,1,'同時再試行でもGoogleカレンダーの予定作成は1回だけ（孤立イベントを作らない）');
+ assert.equal(results.filter(x=>x.status==='fulfilled').length,1);
+ assert.equal(results.filter(x=>x.status==='rejected').length,1);
+});
+
+test('カレンダー作成の外部呼び出し中に無関係な別の編集でrevisionが進んでも、古いrevisionへの再試行で永久に固着しない（Codex指摘の回帰）',async t=>{
+ const env={...process.env};process.env.ZOOM_CLIENT_ID='c';process.env.ZOOM_CLIENT_SECRET='s';process.env.GOOGLE_CLIENT_ID='c';process.env.GOOGLE_CLIENT_SECRET='s';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-meeting-stale-reconcile-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
+ t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
+ const org={...newOrg(),id:'org-1',name:'FC Example',updatedAt:new Date().toISOString(),deletedAt:null,history:[{stage:'DM送信',at:new Date().toISOString(),note:''}],initialZoomAt:'2026-10-28T14:00'};
+ const revision=await seed(store,org);
+ global.fetch=fakeFetch({calendarFails:true});
+ const created=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision});
+ assert.equal(created.org.initialMeetingSync.calendarEventId,null);
+ // カレンダー作成の再試行中、Googleへのリクエストが返ってくる直前に、別の無関係な編集（目標の追加）が
+ // ワークスペース全体のrevisionを進めてしまったとする（同一ドキュメント共有による典型的な競合）。
+ const okFetch=fakeFetch({});
+ global.fetch=async(u,o)=>{
+  if(String(u).includes('/calendar/v3/calendars/primary/events')&&o?.method==='POST'){
+   const doc=await store.doc('workspace');const data=JSON.parse(doc.body);
+   data.goals.push({id:'unrelated-goal',title:'無関係な目標',type:'monthly',month:'2026-10',current:0,target:1,unit:'件'});
+   await store.query('UPDATE ss_documents SET body=$1,revision=revision+1 WHERE name=$2 AND revision=$3',[JSON.stringify(data),'workspace',doc.revision]);
+  }
+  return okFetch(u,o);
+ };
+ const retried=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision:created.revision});
+ assert.equal(retried.org.initialMeetingSync.status,'synced','古いrevisionでの再試行が失敗しても、最新revisionへの再試行で保存が完了する');
+ assert.ok(retried.org.initialMeetingSync.calendarEventId,'作成済みのカレンダー予定IDが孤立せず記録される');
+ const finalDoc=JSON.parse((await store.doc('workspace')).body);
+ assert.ok(finalDoc.goals.some(g=>g.id==='unrelated-goal'),'途中で保存された無関係な編集も失われていない');
+ assert.notEqual(finalDoc.orgSales[0].initialMeetingSync.status,'creating','statusが作成中のまま固着していない（以後の操作がブロックされない）');
+});
+
+test('カレンダー作成の外部呼び出し中に、同じ団体のMTG日時そのものが別編集で変更された場合は、古い日時の成功を「同期済み」として保存しない（Codex指摘の回帰）',async t=>{
+ const env={...process.env};process.env.ZOOM_CLIENT_ID='c';process.env.ZOOM_CLIENT_SECRET='s';process.env.GOOGLE_CLIENT_ID='c';process.env.GOOGLE_CLIENT_SECRET='s';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-meeting-input-changed-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
+ t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
+ const org={...newOrg(),id:'org-1',name:'FC Example',updatedAt:new Date().toISOString(),deletedAt:null,history:[{stage:'DM送信',at:new Date().toISOString(),note:''}],initialZoomAt:'2026-10-28T14:00'};
+ const revision=await seed(store,org);
+ global.fetch=fakeFetch({calendarFails:true});
+ const created=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision});
+ assert.equal(created.org.initialMeetingSync.calendarEventId,null);
+ // カレンダー作成の再試行中、Googleへのリクエストが返ってくる直前に、別の操作がこの団体自身のMTG日時を
+ // 変更したとする（同期対象の入力そのものが途中で変わった、Codexが指摘したケース）。
+ const okFetch=fakeFetch({});
+ global.fetch=async(u,o)=>{
+  if(String(u).includes('/calendar/v3/calendars/primary/events')&&o?.method==='POST'){
+   const doc=await store.doc('workspace');const data=JSON.parse(doc.body);
+   data.orgSales[0].initialZoomAt='2026-11-05T10:00'; // 日時そのものを変更
+   await store.query('UPDATE ss_documents SET body=$1,revision=revision+1 WHERE name=$2 AND revision=$3',[JSON.stringify(data),'workspace',doc.revision]);
+  }
+  return okFetch(u,o);
+ };
+ // このケースはgoogleカレンダー新規作成の直前に日時が変わるため、既存のcatch(カレンダー登録失敗)経路に
+ // guardの拒否理由が合流し、最終的に status:'error'（'synced'ではない）として明示的なエラーメッセージ付きで
+ // 保存される。例外を投げっぱなしにするよりも、既存のUI（再試行ボタン・エラー文言表示）にそのまま乗る。
+ const retried=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision:created.revision});
+ assert.notEqual(retried.org.initialMeetingSync.status,'synced','「同期済み」として誤って記録されていない（古い日時の成功を真実として保存しない）');
+ assert.notEqual(retried.org.initialMeetingSync.status,'creating','creating状態のまま固着していない（以後の操作がブロックされない、Codex指摘の回帰：P2）');
+ assert.match(retried.org.initialMeetingSync.error,/変更したため、今回の同期結果は保存しませんでした/);
+ assert.ok(retried.org.initialMeetingSync.zoomMeetingId,'Zoom会議のIDは保持され、再試行時に重複作成されない');
+ assert.ok(retried.org.initialMeetingSync.calendarEventId,'Googleカレンダーの作成自体は成功しているため、そのイベントIDも失われず保持される（Codex指摘の回帰：P2、以前は孤立イベントになっていた）');
+ const finalOrg=JSON.parse((await store.doc('workspace')).body).orgSales[0];
+ assert.notEqual(finalOrg.initialMeetingSync.status,'synced','「同期済み」として誤って記録されていない');
+ assert.equal(finalOrg.initialZoomAt,'2026-11-05T10:00','変更後の日時そのものは失われていない');
+});
+
+test('既存カレンダー予定の更新中に同じ団体のMTG日時が別編集で変更された場合、creating状態のまま固着せず、既存のZoom・カレンダーIDも保持したまま再試行できる（Codex独立レビュー指摘の回帰：P2）',async t=>{
+ const env={...process.env};process.env.ZOOM_CLIENT_ID='c';process.env.ZOOM_CLIENT_SECRET='s';process.env.GOOGLE_CLIENT_ID='c';process.env.GOOGLE_CLIENT_SECRET='s';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-meeting-update-guard-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
+ t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
+ const org={...newOrg(),id:'org-1',name:'FC Example',updatedAt:new Date().toISOString(),deletedAt:null,history:[{stage:'DM送信',at:new Date().toISOString(),note:''}],initialZoomAt:'2026-10-28T14:00'};
+ const revision=await seed(store,org);
+ global.fetch=fakeFetch({});
+ const created=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision});
+ assert.equal(created.org.initialMeetingSync.status,'synced');
+ // 既存のカレンダー予定を更新中、GoogleへのPATCHが返る直前に、別操作がこの団体自身のMTG日時を変更したとする。
+ const okFetch=fakeFetch({});
+ global.fetch=async(u,o)=>{
+  const path=new URL(u).pathname;
+  if(/^\/calendar\/v3\/calendars\/primary\/events\/.+$/.test(path)&&o?.method==='PATCH'){
+   const doc=await store.doc('workspace');const data=JSON.parse(doc.body);
+   data.orgSales[0].initialZoomAt='2026-11-05T10:00';
+   await store.query('UPDATE ss_documents SET body=$1,revision=revision+1 WHERE name=$2 AND revision=$3',[JSON.stringify(data),'workspace',doc.revision]);
+  }
+  return okFetch(u,o);
+ };
+ await assert.rejects(syncMeeting(store,{orgId:'org-1',kind:'initial',action:'update',revision:created.revision}),/変更したため、今回の同期結果は保存しませんでした/);
+ const afterConflict=JSON.parse((await store.doc('workspace')).body).orgSales[0];
+ assert.notEqual(afterConflict.initialMeetingSync.status,'creating','creating状態のまま固着していない（以前は以後のcreate/update/cancelが全てブロックされていた）');
+ assert.equal(afterConflict.initialMeetingSync.status,'error');
+ assert.ok(afterConflict.initialMeetingSync.zoomMeetingId,'Zoom会議IDは保持される');
+ assert.ok(afterConflict.initialMeetingSync.calendarEventId,'既存のカレンダー予定IDも保持される');
+ // 固着していないことを実際に確認：次の取消操作がブロックされずに進む。
+ global.fetch=fakeFetch({});
+ const latest=await store.doc('workspace');
+ const cancelled=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'cancel',revision:latest.revision,externalResultsChecked:true});
+ assert.equal(cancelled.org.initialMeetingSync,null,'固着していれば「会議を作成処理中です」で拒否されるはずの取消が正常に完了する');
+});
+
+test('既存カレンダー予定の更新中に団体名（Zoom/カレンダーのトピックに使われる）が別編集で変更された場合、MTG日時自体は同じでも「同期済み」として保存しない（Codex独立レビュー指摘の回帰：P2）',async t=>{
+ const env={...process.env};process.env.ZOOM_CLIENT_ID='c';process.env.ZOOM_CLIENT_SECRET='s';process.env.GOOGLE_CLIENT_ID='c';process.env.GOOGLE_CLIENT_SECRET='s';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-meeting-name-guard-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
+ t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
+ const org={...newOrg(),id:'org-1',name:'FC Example',updatedAt:new Date().toISOString(),deletedAt:null,history:[{stage:'DM送信',at:new Date().toISOString(),note:''}],initialZoomAt:'2026-10-28T14:00'};
+ const revision=await seed(store,org);
+ global.fetch=fakeFetch({});
+ const created=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision});
+ assert.equal(created.org.initialMeetingSync.status,'synced');
+ // 既存のカレンダー予定を更新中、GoogleへのPATCHが返る直前に、別操作が団体名だけを変更したとする
+ // （MTG日時そのものは変わらないため、日時だけを見るガードでは検出できないケース）。
+ const okFetch=fakeFetch({});
+ global.fetch=async(u,o)=>{
+  const path=new URL(u).pathname;
+  if(/^\/calendar\/v3\/calendars\/primary\/events\/.+$/.test(path)&&o?.method==='PATCH'){
+   const doc=await store.doc('workspace');const data=JSON.parse(doc.body);
+   data.orgSales[0].name='FC Renamed';
+   await store.query('UPDATE ss_documents SET body=$1,revision=revision+1 WHERE name=$2 AND revision=$3',[JSON.stringify(data),'workspace',doc.revision]);
+  }
+  return okFetch(u,o);
+ };
+ await assert.rejects(syncMeeting(store,{orgId:'org-1',kind:'initial',action:'update',revision:created.revision}),/変更したため、今回の同期結果は保存しませんでした/);
+ const afterConflict=JSON.parse((await store.doc('workspace')).body).orgSales[0];
+ assert.notEqual(afterConflict.initialMeetingSync.status,'synced','団体名（Zoom/カレンダーのトピックの元）が変わったのに、古いトピックで送った成功を「同期済み」と誤って記録してはいけない');
+ assert.notEqual(afterConflict.initialMeetingSync.status,'creating','creating状態のまま固着していない');
+ assert.equal(afterConflict.name,'FC Renamed','変更後の団体名そのものは失われていない');
+});
+
+test('Zoom会議の作成自体は成功しても、その直後のID保存が失敗した場合、代償削除（Zoom会議の削除）はしつつcreating状態のまま固着させず再試行できる（Codex独立レビュー指摘の回帰：P2）',async t=>{
+ const env={...process.env};process.env.ZOOM_CLIENT_ID='c';process.env.ZOOM_CLIENT_SECRET='s';process.env.GOOGLE_CLIENT_ID='c';process.env.GOOGLE_CLIENT_SECRET='s';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-meeting-save-after-create-fail-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
+ t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
+ const org={...newOrg(),id:'org-1',name:'FC Example',updatedAt:new Date().toISOString(),deletedAt:null,history:[{stage:'DM送信',at:new Date().toISOString(),note:''}],initialZoomAt:'2026-10-28T14:00'};
+ const revision=await seed(store,org);
+ let zoomDeleted=0,failRemaining=0;
+ const realQuery=store.query.bind(store);
+ store.query=(text,values)=>{
+  if(failRemaining>0&&typeof text==='string'&&text.startsWith('UPDATE ss_documents')&&values?.[1]==='workspace'){failRemaining--;return [];}
+  return realQuery(text,values);
+ };
+ const okFetch=fakeFetch({});
+ global.fetch=async(u,o)=>{
+  const p=new URL(u).pathname;
+  const res=await okFetch(u,o);
+  // Zoom会議の作成自体が成功した直後から、ワークスペースへの保存を2回（saveSyncReconciledの初回+1回の
+  // 再試行）だけ失敗させる（CAS競合が繰り返し起きた想定）。その後の「creating状態を解除する」保存は
+  // 成功させることで、代償削除後にロックだけが固着しないことを確認する。
+  if(p==='/v2/users/me/meetings'&&o?.method==='POST')failRemaining=2;
+  if(/^\/v2\/meetings\/\d+$/.test(p)&&o?.method==='DELETE')zoomDeleted++;
+  return res;
+ };
+ await assert.rejects(syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision}),/他の端末/);
+ assert.equal(zoomDeleted,1,'保存失敗後、作成済みのZoom会議は代償削除される（孤立させない）');
+ assert.equal(failRemaining,0,'想定した2回の保存失敗が実際に発生した');
+ const afterFailure=JSON.parse((await store.doc('workspace')).body).orgSales[0];
+ assert.notEqual(afterFailure.initialMeetingSync.status,'creating','creating状態のまま固着していない（以前は以後のcreate/update/cancelが全てブロックされていた）');
+ assert.equal(afterFailure.initialMeetingSync.status,'error');
+ assert.equal(afterFailure.initialMeetingSync.zoomMeetingId,null,'代償削除済みのZoom会議IDを孤立したまま保持しない');
+ // 固着していないことを実際に確認：次の作成リトライがブロックされずに進む。
+ global.fetch=fakeFetch({});
+ const latest=await store.doc('workspace');
+ const retried=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision:latest.revision});
+ assert.equal(retried.org.initialMeetingSync.status,'synced','固着していれば「会議を作成処理中です」で拒否されるはずの再作成が正常に完了する');
+});
+
+test('Zoom会議の作成自体は成功したがID保存に失敗し、代償削除（Zoom会議の削除）自体も失敗した場合、zoomMeetingIdをnullにせず保持する（削除されていない会議を孤立・重複作成させない、Codex独立レビュー指摘の回帰）',async t=>{
+ const env={...process.env};process.env.ZOOM_CLIENT_ID='c';process.env.ZOOM_CLIENT_SECRET='s';process.env.GOOGLE_CLIENT_ID='c';process.env.GOOGLE_CLIENT_SECRET='s';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-meeting-save-fail-delete-fail-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
+ t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
+ const org={...newOrg(),id:'org-1',name:'FC Example',updatedAt:new Date().toISOString(),deletedAt:null,history:[{stage:'DM送信',at:new Date().toISOString(),note:''}],initialZoomAt:'2026-10-28T14:00'};
+ const revision=await seed(store,org);
+ let failRemaining=0;
+ const realQuery=store.query.bind(store);
+ store.query=(text,values)=>{
+  if(failRemaining>0&&typeof text==='string'&&text.startsWith('UPDATE ss_documents')&&values?.[1]==='workspace'){failRemaining--;return [];}
+  return realQuery(text,values);
+ };
+ const okFetch=fakeFetch({zoomDeleteFails:true});
+ global.fetch=async(u,o)=>{
+  const p=new URL(u).pathname;
+  const res=await okFetch(u,o);
+  if(p==='/v2/users/me/meetings'&&o?.method==='POST')failRemaining=2;
+  return res;
+ };
+ await assert.rejects(syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision}),/他の端末/);
+ const afterFailure=JSON.parse((await store.doc('workspace')).body).orgSales[0];
+ assert.notEqual(afterFailure.initialMeetingSync.status,'creating','creating状態のまま固着していない');
+ assert.ok(afterFailure.initialMeetingSync.zoomMeetingId,'削除が確認できていないZoom会議IDは孤立させず保持する');
+ assert.equal(afterFailure.initialMeetingSync.status,'zoom_only');
+ assert.match(afterFailure.initialMeetingSync.error,/削除（後始末）も失敗/);
+ assert.ok(afterFailure.initialZoomUrl,'参加URLも保持され、保持されたIDで安全に再開できる');
+ // 固着していないことを実際に確認：次の操作（再試行）は新しい会議を重複作成せず、既存のIDを使って進む。
+ let meetingCreatedAgain=0;
+ const successFetch=fakeFetch({});
+ global.fetch=async(u,o)=>{if(String(u).includes('/v2/users/me/meetings')&&o?.method==='POST')meetingCreatedAgain++;return successFetch(u,o);};
+ const latest=await store.doc('workspace');
+ const retried=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision:latest.revision});
+ assert.equal(meetingCreatedAgain,0,'保持された既存のZoom会議IDを再利用し、重複作成しない');
+ assert.equal(retried.org.initialMeetingSync.zoomMeetingId,afterFailure.initialMeetingSync.zoomMeetingId);
+ assert.equal(retried.org.initialMeetingSync.status,'synced');
+});
+
+test('取消処理で両方の外部削除が成功しても、最後の保存自体が失敗した場合、creating状態のまま固着させず再試行できる（Codex独立レビュー指摘の回帰：P2）',async t=>{
+ const env={...process.env};process.env.ZOOM_CLIENT_ID='c';process.env.ZOOM_CLIENT_SECRET='s';process.env.GOOGLE_CLIENT_ID='c';process.env.GOOGLE_CLIENT_SECRET='s';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-meeting-cancel-save-fail-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
+ t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
+ const org={...newOrg(),id:'org-1',name:'FC Example',updatedAt:new Date().toISOString(),deletedAt:null,history:[{stage:'DM送信',at:new Date().toISOString(),note:''}],initialZoomAt:'2026-10-28T14:00'};
+ const revision=await seed(store,org);
+ global.fetch=fakeFetch({});
+ const created=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision});
+ assert.equal(created.org.initialMeetingSync.status,'synced');
+ let failRemaining=0;
+ const realQuery=store.query.bind(store);
+ store.query=(text,values)=>{
+  if(failRemaining>0&&typeof text==='string'&&text.startsWith('UPDATE ss_documents')&&values?.[1]==='workspace'){failRemaining--;return [];}
+  return realQuery(text,values);
+ };
+ const okFetch=fakeFetch({});
+ global.fetch=async(u,o)=>{
+  const p=new URL(u).pathname;
+  const res=await okFetch(u,o);
+  // Zoom会議の削除が成功した直後から、最後の保存を2回（saveSyncReconciledの初回+1回の再試行）だけ
+  // 失敗させる（両方の外部削除は成功しているのに、最後の保存だけがCAS競合の繰り返し等で失敗した想定）。
+  if(/^\/v2\/meetings\/\d+$/.test(p)&&o?.method==='DELETE')failRemaining=2;
+  return res;
+ };
+ await assert.rejects(syncMeeting(store,{orgId:'org-1',kind:'initial',action:'cancel',revision:created.revision}),/他の端末/);
+ assert.equal(failRemaining,0,'想定した2回の保存失敗が実際に発生した');
+ const afterFailure=JSON.parse((await store.doc('workspace')).body).orgSales[0];
+ assert.notEqual(afterFailure.initialMeetingSync?.status,'creating','creating状態のまま固着していない（以前は以後のcreate/update/cancelが全てブロックされていた）');
+ assert.equal(afterFailure.initialMeetingSync,null,'両方の外部削除は成功済みのため、再試行の保存で正しく取消済み（null）として記録される');
+ assert.equal(afterFailure.initialZoomUrl,'');
+ assert.equal(afterFailure.initialZoomAt,'','取消が完全に成功した時点で開始予定の日時も消える（Codex独立レビュー指摘の回帰：朝の通知に取消済みのMTGが残らないようにする）');
+ // 固着していないことを実際に確認：次の操作（新しい日時での再作成）がブロックされずに進む。
+ global.fetch=fakeFetch({});
+ const latest=await store.doc('workspace');
+ const data=JSON.parse(latest.body);data.orgSales[0].initialZoomAt='2026-11-10T10:00';
+ const put=(await store.query('UPDATE ss_documents SET body=$1,revision=revision+1 WHERE name=$2 AND revision=$3 RETURNING revision',[JSON.stringify(data),'workspace',latest.revision]))[0];
+ const recreated=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision:put.revision});
+ assert.equal(recreated.org.initialMeetingSync.status,'synced','固着していれば「会議を作成処理中です」で拒否されるはずの再作成が正常に完了する');
+});
+
+test('Zoom会議の作成自体が失敗し、そのエラー記録の保存も失敗した場合、creating状態のまま固着させず再試行できる（round16・17と同じ固着パターンの自己点検での発見）',async t=>{
+ const env={...process.env};process.env.ZOOM_CLIENT_ID='c';process.env.ZOOM_CLIENT_SECRET='s';process.env.GOOGLE_CLIENT_ID='c';process.env.GOOGLE_CLIENT_SECRET='s';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-meeting-create-fail-save-fail-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
+ t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
+ const org={...newOrg(),id:'org-1',name:'FC Example',updatedAt:new Date().toISOString(),deletedAt:null,history:[{stage:'DM送信',at:new Date().toISOString(),note:''}],initialZoomAt:'2026-10-28T14:00'};
+ const revision=await seed(store,org);
+ let failRemaining=0;
+ const realQuery=store.query.bind(store);
+ store.query=(text,values)=>{
+  if(failRemaining>0&&typeof text==='string'&&text.startsWith('UPDATE ss_documents')&&values?.[1]==='workspace'){failRemaining--;return [];}
+  return realQuery(text,values);
+ };
+ const okFetch=fakeFetch({zoomFails:true});
+ global.fetch=async(u,o)=>{
+  const p=new URL(u).pathname;
+  const res=await okFetch(u,o);
+  // Zoomのトークン取得（会議作成の直前）が終わった時点から、エラー記録の保存を2回だけ失敗させる。
+  if(p==='/oauth/token')failRemaining=2;
+  return res;
+ };
+ await assert.rejects(syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision}),/Zoom API/,'Zoom作成失敗の元エラーが伝わる（保存失敗の例外で上書きされない）');
+ assert.equal(failRemaining,0,'想定した2回の保存失敗が実際に発生した');
+ const afterFailure=JSON.parse((await store.doc('workspace')).body).orgSales[0];
+ assert.notEqual(afterFailure.initialMeetingSync?.status,'creating','creating状態のまま固着していない（以前は以後のcreate/update/cancelが全てブロックされていた）');
+ // zoomFails（fetch自体の失敗）はintegrations/zoom.jsのnetwork_errorに分類され、Zoomが実際に会議を
+ // 作成したかどうか不明なため、通常の'error'ではなく'uncertain'として記録される（別のCodex独立レビュー
+ // 指摘の回帰：不明な場合を確定失敗と同じに扱うと、再試行で重複作成が起きうる）。
+ assert.equal(afterFailure.initialMeetingSync.status,'uncertain');
+ // uncertainの間はcreate/updateがサーバー側でも拒否される（Codex独立レビュー指摘：UIがボタンを
+ // 隠すだけではAPIを直接呼ぶ経路を防げない）。取消でクリアしてから再作成できることを確認する。
+ const beforeRetry=await store.doc('workspace');
+ await assert.rejects(syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision:beforeRetry.revision}),/作成結果が不明です/);
+ global.fetch=fakeFetch({});
+ const latest=await store.doc('workspace');
+ const cancelled=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'cancel',revision:latest.revision,externalResultsChecked:true});
+ assert.equal(cancelled.org.initialMeetingSync,null);
+ // 取消が完全に成功すると開始予定の日時も消える（round19の回帰防止）ため、再作成には新しい日時が必要。
+ const afterCancel=JSON.parse((await store.doc('workspace')).body);afterCancel.orgSales[0].initialZoomAt='2026-11-10T10:00';
+ const put=(await store.query('UPDATE ss_documents SET body=$1,revision=revision+1 WHERE name=$2 AND revision=$3 RETURNING revision',[JSON.stringify(afterCancel),'workspace',cancelled.revision]))[0];
+ const retried=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision:put.revision});
+ assert.equal(retried.org.initialMeetingSync.status,'synced','固着していれば「会議を作成処理中です」で拒否されるはずの再作成が正常に完了する');
+});
+
+test('Zoom会議作成がタイムアウト等の通信失敗で終わった場合、会議が実際に作成されたか不明なため「確定失敗」とは別の状態（uncertain）として記録し、管理者への確認を促す（Codex独立レビュー指摘の回帰）',async t=>{
+ const env={...process.env};process.env.ZOOM_CLIENT_ID='c';process.env.ZOOM_CLIENT_SECRET='s';process.env.GOOGLE_CLIENT_ID='c';process.env.GOOGLE_CLIENT_SECRET='s';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-meeting-create-uncertain-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
+ t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
+ const org={...newOrg(),id:'org-1',name:'FC Example',updatedAt:new Date().toISOString(),deletedAt:null,history:[{stage:'DM送信',at:new Date().toISOString(),note:''}],initialZoomAt:'2026-10-28T14:00'};
+ const revision=await seed(store,org);
+ global.fetch=fakeFetch({zoomFails:true});
+ await assert.rejects(syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision}),/Zoom API/);
+ const afterFailure=JSON.parse((await store.doc('workspace')).body).orgSales[0];
+ assert.equal(afterFailure.initialMeetingSync.status,'uncertain');
+ assert.equal(afterFailure.initialMeetingSync.zoomMeetingId,null);
+ assert.match(afterFailure.initialMeetingSync.error,/会議が実際に作成されたか不明/);
+ assert.match(afterFailure.initialMeetingSync.error,/Zoom管理画面/);
+ // uncertain状態は、確定したエラー（'error'）とは違い通常の「再試行する」ボタン対象には含めない
+ // （public/org-sales.jsのSYNC_LABEL／ボタン表示ロジック）。ただしUIがボタンを隠すだけではAPIを
+ // 直接呼ぶ経路を防げないため、サーバー側でもcreate/updateを明示的に拒否する（Codex独立レビュー
+ // 指摘：確認前の再試行による重複作成を、UIだけでなくAPI境界でも防ぐ）。
+ const stillStuckRevision=(await store.doc('workspace')).revision;
+ await assert.rejects(syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision:stillStuckRevision}),/作成結果が不明です/);
+ await assert.rejects(syncMeeting(store,{orgId:'org-1',kind:'initial',action:'update',revision:stillStuckRevision}),/作成結果が不明です/);
+ // 管理者がZoom側を確認してから「MTGを取消」でこの記録をクリアできることだけを保証する
+ // （zoomMeetingIdがnullなのでZoomへの削除呼び出しは発生せず、ローカルの記録だけが安全にクリアされる）。
+ global.fetch=fakeFetch({});
+ const latest=await store.doc('workspace');
+ const cancelled=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'cancel',revision:latest.revision,externalResultsChecked:true});
+ assert.equal(cancelled.org.initialMeetingSync,null,'uncertain状態は取消でローカルの記録を安全にクリアできる（Zoomへの削除呼び出しは発生しない）');
+});
+
+test('トークン更新（会議作成リクエストより前の段階）の通信失敗は、会議作成リクエスト自体が送られていないため曖昧さが無く、確定失敗（error）として記録し再試行をブロックしない（Codex独立レビュー指摘の回帰：token_refresh段階の失敗まで誤ってuncertainにしていた）',async t=>{
+ const env={...process.env};process.env.ZOOM_CLIENT_ID='c';process.env.ZOOM_CLIENT_SECRET='s';process.env.GOOGLE_CLIENT_ID='c';process.env.GOOGLE_CLIENT_SECRET='s';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-meeting-token-refresh-fail-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
+ t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
+ const org={...newOrg(),id:'org-1',name:'FC Example',updatedAt:new Date().toISOString(),deletedAt:null,history:[{stage:'DM送信',at:new Date().toISOString(),note:''}],initialZoomAt:'2026-10-28T14:00'};
+ const revision=await seed(store,org);
+ global.fetch=fakeFetch({zoomTokenRefreshFails:true});
+ await assert.rejects(syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision}),/Zoom API/);
+ const afterFailure=JSON.parse((await store.doc('workspace')).body).orgSales[0];
+ assert.equal(afterFailure.initialMeetingSync.status,'error','会議作成リクエスト自体が送られていないため、uncertainではなく確定失敗として記録される');
+ // uncertainではないため、サーバー側のuncertain専用ガードに拒否されず、通常の再試行が進む。
+ global.fetch=fakeFetch({});
+ const latest=await store.doc('workspace');
+ const retried=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision:latest.revision});
+ assert.equal(retried.org.initialMeetingSync.status,'synced');
+});
+
+test('カレンダー予定の新規作成がタイムアウト等の通信失敗で終わった場合、予定が実際に作成されたか不明なため「確定失敗」とは別の状態（uncertain）として記録する（Zoom会議は作成済みのIDを保持する、Codex独立レビュー指摘の回帰）',async t=>{
+ const env={...process.env};process.env.ZOOM_CLIENT_ID='c';process.env.ZOOM_CLIENT_SECRET='s';process.env.GOOGLE_CLIENT_ID='c';process.env.GOOGLE_CLIENT_SECRET='s';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-meeting-calendar-create-uncertain-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
+ t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
+ const org={...newOrg(),id:'org-1',name:'FC Example',updatedAt:new Date().toISOString(),deletedAt:null,history:[{stage:'DM送信',at:new Date().toISOString(),note:''}],initialZoomAt:'2026-10-28T14:00'};
+ const revision=await seed(store,org);
+ global.fetch=fakeFetch({calendarNetworkFails:true});
+ const result=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision});
+ assert.equal(result.org.initialMeetingSync.status,'uncertain');
+ assert.ok(result.org.initialMeetingSync.zoomMeetingId,'Zoom会議は確定して作成済みのため、そのIDは保持される');
+ assert.equal(result.org.initialMeetingSync.calendarEventId,null,'カレンダー予定は実際の作成が確認できないためIDを持たない');
+ assert.match(result.warnings.join(' / '),/予定が実際に作成されたか不明/);
+ // uncertain状態はpublic/org-sales.jsで通常の「再試行する」ボタン対象に含まれない（無言の重複作成防止）。
+ const html=renderMeetingEditor(result.org,'initial',x=>String(x),{zoomConnected:true,calendarConnected:true});
+ assert.doesNotMatch(html,/data-mtgsync="initial:create"/);
+ assert.match(html,/data-mtgsync="initial:cancel"/);
+});
+
+test('Googleトークン更新（予定作成リクエストより前の段階）の通信失敗は、予定作成リクエスト自体が送られていないため曖昧さが無く、確定失敗（error）として記録し、通常の再試行ボタン対象になる（Codex独立レビュー指摘の回帰：Zoom側と同じ指摘がGoogleカレンダー側にも残っていた）',async t=>{
+ const env={...process.env};process.env.ZOOM_CLIENT_ID='c';process.env.ZOOM_CLIENT_SECRET='s';process.env.GOOGLE_CLIENT_ID='c';process.env.GOOGLE_CLIENT_SECRET='s';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-meeting-calendar-token-refresh-fail-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
+ t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
+ const org={...newOrg(),id:'org-1',name:'FC Example',updatedAt:new Date().toISOString(),deletedAt:null,history:[{stage:'DM送信',at:new Date().toISOString(),note:''}],initialZoomAt:'2026-10-28T14:00'};
+ const revision=await seed(store,org);
+ global.fetch=fakeFetch({calendarTokenRefreshFails:true});
+ const result=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision});
+ assert.equal(result.org.initialMeetingSync.status,'error','予定作成リクエスト自体が送られていないため、uncertainではなく確定失敗として記録される');
+ assert.ok(result.org.initialMeetingSync.zoomMeetingId,'Zoom会議は作成済みのため、そのIDは保持される');
+ // uncertainではないため、サーバー側のuncertain専用ガードに拒否されず、通常の再試行（「再試行する」ボタン対象）が進む。
+ const html=renderMeetingEditor(result.org,'initial',x=>String(x),{zoomConnected:true,calendarConnected:true});
+ assert.match(html,/data-mtgsync="initial:create"/,'uncertainではないため通常の再試行ボタンが表示される');
+ global.fetch=fakeFetch({});
+ const latest=await store.doc('workspace');
+ const retried=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision:latest.revision});
+ assert.equal(retried.org.initialMeetingSync.status,'synced');
+});
+
+test('カレンダー予定の新規作成自体は成功しても、その保存が2回続けて失敗した場合、creating状態のまま固着させず最終的に保存できる（round16・17と同じ固着パターンの自己点検での発見）',async t=>{
+ const env={...process.env};process.env.ZOOM_CLIENT_ID='c';process.env.ZOOM_CLIENT_SECRET='s';process.env.GOOGLE_CLIENT_ID='c';process.env.GOOGLE_CLIENT_SECRET='s';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-meeting-calendar-create-save-fail-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
+ t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
+ const org={...newOrg(),id:'org-1',name:'FC Example',updatedAt:new Date().toISOString(),deletedAt:null,history:[{stage:'DM送信',at:new Date().toISOString(),note:''}],initialZoomAt:'2026-10-28T14:00'};
+ const revision=await seed(store,org);
+ let failRemaining=0;
+ const realQuery=store.query.bind(store);
+ store.query=(text,values)=>{
+  if(failRemaining>0&&typeof text==='string'&&text.startsWith('UPDATE ss_documents')&&values?.[1]==='workspace'){failRemaining--;return [];}
+  return realQuery(text,values);
+ };
+ const okFetch=fakeFetch({});
+ global.fetch=async(u,o)=>{
+  const p=new URL(u).pathname;
+  const res=await okFetch(u,o);
+  // カレンダー予定の新規作成が成功した直後から、保存を4回（最初の保存系列2回＋1回目のフォールバック
+  // 保存系列2回）だけ失敗させ、2回目のフォールバック保存で初めて成功させる。
+  if(p==='/calendar/v3/calendars/primary/events'&&o?.method==='POST')failRemaining=4;
+  return res;
+ };
+ const result=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision});
+ assert.equal(failRemaining,0,'想定した4回の保存失敗が実際に発生した');
+ // カレンダー作成自体は成功しているが、保存系列の失敗を検知したcatch経路を通るため、既存の挙動と同じく
+ // status:'error'として記録される（ここでの検証ポイントは、それでもcalendarEventIdが孤立せず保存され、
+ // creating状態のまま固着しないこと）。
+ assert.equal(result.org.initialMeetingSync.status,'error');
+ assert.ok(result.org.initialMeetingSync.calendarEventId,'作成済みのカレンダー予定IDが孤立せず、最終的なフォールバック保存で記録される');
+ const finalOrg=JSON.parse((await store.doc('workspace')).body).orgSales[0];
+ assert.notEqual(finalOrg.initialMeetingSync.status,'creating','creating状態のまま固着していない（以前は以後のcreate/update/cancelが全てブロックされていた）');
+ // 固着していないことを実際に確認：次の操作（再試行）がブロックされずに進む。
+ global.fetch=fakeFetch({});
+ const latest=await store.doc('workspace');
+ const retried=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision:latest.revision});
+ assert.equal(retried.org.initialMeetingSync.status,'synced','固着していれば「会議を作成処理中です」で拒否されるはずの再試行が正常に完了する');
+});
+
+test('同じ更新番号の2重送信で外部Zoom会議は1件しか作成しない',async t=>{
+ const env={...process.env};process.env.ZOOM_CLIENT_ID='c';process.env.ZOOM_CLIENT_SECRET='s';process.env.GOOGLE_CLIENT_ID='c';process.env.GOOGLE_CLIENT_SECRET='s';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-meeting-concurrent-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
+ t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
+ const org={...newOrg(),id:'org-1',name:'Test FC',updatedAt:new Date().toISOString(),deletedAt:null,history:[{stage:'DM送信',at:new Date().toISOString(),note:''}],initialZoomAt:'2026-11-03T14:00'};
+ const revision=await seed(store,org);
+ const fetchMock=fakeFetch({});let meetingCreated=0;
+ global.fetch=async(u,o)=>{if(String(u).includes('/v2/users/me/meetings')&&o?.method==='POST')meetingCreated++;return fetchMock(u,o);};
+ const results=await Promise.allSettled([
+  syncMeeting(store,{orgId:org.id,kind:'initial',action:'create',revision}),
+  syncMeeting(store,{orgId:org.id,kind:'initial',action:'create',revision})
+ ]);
+ assert.equal(meetingCreated,1);
+ assert.equal(results.filter(x=>x.status==='fulfilled').length,1);
+ assert.equal(results.filter(x=>x.status==='rejected').length,1);
+});
+
+test('既存会議への同時「日程変更」と「取消」は、片方だけが外部呼び出しへ進み、同期済み表示のまま削除済みIDを指す不整合にならない（Codex指摘の回帰）',async t=>{
+ const env={...process.env};process.env.ZOOM_CLIENT_ID='c';process.env.ZOOM_CLIENT_SECRET='s';process.env.GOOGLE_CLIENT_ID='c';process.env.GOOGLE_CLIENT_SECRET='s';process.env.APP_ORIGIN='http://127.0.0.1:3000';process.env.TOKEN_ENCRYPTION_KEY=randomBytes(32).toString('base64');
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-meeting-update-cancel-race-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
+ t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
+ const org={...newOrg(),id:'org-1',name:'FC Example',updatedAt:new Date().toISOString(),deletedAt:null,history:[{stage:'DM送信',at:new Date().toISOString(),note:''}],initialZoomAt:'2026-10-28T14:00'};
+ const revision=await seed(store,org);
+ global.fetch=fakeFetch({});
+ const created=await syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision});
+ assert.equal(created.org.initialMeetingSync.status,'synced');
+ let zoomPatched=0,zoomDeleted=0,calendarPatched=0,calendarDeleted=0;
+ const okFetch=fakeFetch({});
+ global.fetch=async(u,o)=>{
+  const path=new URL(u).pathname;
+  if(/^\/v2\/meetings\/\d+$/.test(path)&&o?.method==='PATCH')zoomPatched++;
+  if(/^\/v2\/meetings\/\d+$/.test(path)&&o?.method==='DELETE')zoomDeleted++;
+  if(/^\/calendar\/v3\/calendars\/primary\/events\/.+$/.test(path)&&o?.method==='PATCH')calendarPatched++;
+  if(/^\/calendar\/v3\/calendars\/primary\/events\/.+$/.test(path)&&o?.method==='DELETE')calendarDeleted++;
+  return okFetch(u,o);
+ };
+ // 同じrevisionに対して、同時に「日程変更」と「取消」を投げる。
+ const results=await Promise.allSettled([
+  syncMeeting(store,{orgId:'org-1',kind:'initial',action:'update',revision:created.revision}),
+  syncMeeting(store,{orgId:'org-1',kind:'initial',action:'cancel',revision:created.revision})
+ ]);
+ assert.equal(results.filter(x=>x.status==='fulfilled').length,1,'予約のCAS競合により、片方だけが成功する');
+ assert.equal(results.filter(x=>x.status==='rejected').length,1);
+ // 先に予約を取れた側だけが実際に外部呼び出しを行う：更新のPATCHと取消のDELETEが両方とも発生することはない。
+ assert.equal(zoomPatched>0&&zoomDeleted>0,false,'Zoom側でPATCHとDELETEの両方が実行されることはない');
+ assert.equal(calendarPatched>0&&calendarDeleted>0,false,'カレンダー側でPATCHとDELETEの両方が実行されることはない');
+ const finalOrg=JSON.parse((await store.doc('workspace')).body).orgSales[0];
+ const sync=finalOrg.initialMeetingSync;
+ // 最終状態は自己矛盾しない：同期済み（会議が実在）か、完全に取消済み（null）のどちらかのみ。
+ if(sync===null){assert.equal(finalOrg.initialZoomUrl,'');}
+ else{assert.equal(sync.status,'synced');assert.ok(sync.zoomMeetingId);assert.ok(sync.calendarEventId);}
+});
+test('初回Zoom作成中の日時・名前編集はIDを保持し古い内容のカレンダー作成を止める',async t=>{
+ const {withRuntime}=await import('../lib/runtime.js');const dir=await mkdtemp(path.join(tmpdir(),'ss-create-race-'));const store=await createStore({DATA_DIR:dir}),original=global.fetch;
+ t.after(async()=>{global.fetch=original;store.close();await rm(dir,{recursive:true,force:true});});
+ await withRuntime({TOKEN_ENCRYPTION_KEY:randomBytes(32).toString('base64'),ZOOM_CLIENT_ID:'qa',ZOOM_CLIENT_SECRET:'qa',GOOGLE_CLIENT_ID:'qa',GOOGLE_CLIENT_SECRET:'qa',APP_ORIGIN:'http://localhost'},async()=>{
+  for(const field of ['initialZoomAt','name']){
+   const org={...newOrg(),id:'org-1',name:'FC Example',updatedAt:new Date().toISOString(),deletedAt:null,history:[{stage:'DM送信',at:new Date().toISOString(),note:''}],initialZoomAt:'2026-10-28T14:00'};const revision=await seed(store,org);const fake=fakeFetch({});let calendarCreates=0;
+   global.fetch=async(u,o)=>{if(String(u).includes('/v2/users/me/meetings')&&o?.method==='POST'){const doc=await store.doc('workspace'),data=JSON.parse(doc.body);data.orgSales[0][field]=field==='name'?'Renamed':'2026-11-05T10:00';await store.put('workspace',data);}if(String(u).includes('/calendar/v3/calendars/primary/events')&&o?.method==='POST')calendarCreates++;return fake(u,o);};
+   await assert.rejects(syncMeeting(store,{orgId:'org-1',kind:'initial',action:'create',revision}),/変更しました/);
+   const saved=JSON.parse((await store.doc('workspace')).body).orgSales[0];assert.ok(saved.initialMeetingSync.zoomMeetingId);assert.equal(saved.initialMeetingSync.status,'zoom_only');assert.equal(calendarCreates,0);
+  }
+ });
+});
+
+for(const provider of ['zoom','calendar'])for(const status of [500,502,504])test(`${provider} create ${status} after provider acceptance is uncertain and cannot duplicate on retry/reload`,async t=>{
+ const env={...process.env};Object.assign(process.env,{ZOOM_CLIENT_ID:'c',ZOOM_CLIENT_SECRET:'s',GOOGLE_CLIENT_ID:'c',GOOGLE_CLIENT_SECRET:'s',APP_ORIGIN:'http://127.0.0.1:3000',TOKEN_ENCRYPTION_KEY:randomBytes(32).toString('base64')});
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-5xx-'));let store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
+ t.after(async()=>{global.fetch=realFetch;for(const k of Object.keys(process.env))if(!(k in env))delete process.env[k];Object.assign(process.env,env);store.close();await rm(dir,{recursive:true,force:true});});
+ const org={...newOrg(),id:'org-1',name:'FC Example',updatedAt:new Date().toISOString(),deletedAt:null,history:[{stage:'DM送信',at:new Date().toISOString(),note:''}],initialZoomAt:'2026-10-28T14:00'};const revision=await seed(store,org);
+ let accepted=0,posts=0;const normal=fakeFetch({});
+ global.fetch=async(url,options)=>{
+  const p=new URL(url).pathname;
+  if(options?.method==='POST'&&(p==='/v2/users/me/meetings'||p==='/calendar/v3/calendars/primary/events'))posts++;
+  if(options?.method==='POST'&&p===(provider==='zoom'?'/v2/users/me/meetings':'/calendar/v3/calendars/primary/events')){accepted++;return Response.json(provider==='zoom'?{code:123,message:'upstream error'}:{error:{code:123,message:'upstream error'}},{status});}
+  return normal(url,options);
+ };
+ const outcomes=await Promise.allSettled([syncMeeting(store,{orgId:org.id,kind:'initial',action:'create',revision}),syncMeeting(store,{orgId:org.id,kind:'initial',action:'create',revision})]);
+ assert.equal(accepted,1);if(provider==='zoom'){const error=outcomes.find(x=>x.status==='rejected'&&x.reason.httpStatus===status)?.reason;assert.equal(error?.stage,'create_meeting');}
+ store.close();store=await createStore({DATA_DIR:dir});const saved=await store.doc('workspace'),record=JSON.parse(saved.body).orgSales[0];
+ assert.equal(record.initialMeetingSync.status,'uncertain');if(provider==='calendar')assert.ok(record.initialMeetingSync.zoomMeetingId);
+ const before=posts;for(const action of ['create','update','prepare'])await assert.rejects(syncMeeting(store,{orgId:org.id,kind:'initial',action,revision:saved.revision}),/作成結果が不明/);
+ assert.equal(posts,before);assert.equal(accepted,1);
+ const html=renderMeetingEditor(record,'initial',String,{zoomConnected:true,calendarConnected:true});assert.doesNotMatch(html,/data-mtgsync="initial:create"/);assert.match(html,/不明|要確認/);
+});

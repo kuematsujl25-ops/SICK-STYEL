@@ -1,5 +1,9 @@
 # 公式API連携
 
-Instagramの実装は `instagram.js`、ルートは `api/index.js` です。[Meta設定手順](../docs/instagram-setup.md)に従ってアプリ設定と本人認可を行ってください。設定・認可前は取得済みとして表示しません。
+Instagramは`instagram.js`、Amazon SP-API/LWAは`amazon.js`、認証済みAPIルートは`api/index.js`です。既存の認可・暗号化・読み取り同期を使い、コードの存在だけで接続済みとしません。安全な本人認証の引き継ぎは[Issue #2の手順](../docs/integrations/issue-2-handoff.md)を参照してください。
 
-`index.js`のmanualAdapterは未設定サービス向けの明示的な拡張ポイントです。Amazon公式APIの認可・同期は未実装で、売上を手入力できます。将来のAmazonアダプターでは日付・通貨・重複更新を固定し、秘密情報をサーバー環境変数で管理してください。
+`safeStatus.connected`は保存済み認可・設定の有無であり、実データ取得の証明ではありません。`readiness`と`cache.syncVerified`で認証待ち・同期未検証・読み取り同期成功を区別します。AmazonはSales/Ordersごとに成功日時・期間・エラーを保存します。ダッシュボードはAPI値と手入力/CSVを合算しません。
+
+`index.js`のmanualAdapterは未設定サービス向けの拡張点です。BASE・TikTok・Metricoolのアプリ内アダプターやCanvaデザイン用MCPは未接続です。料金不明のAPIや有料機能を自動実行しません。
+
+Nottaは自動連携未接続です。現プランでのTXT取込と自動同期の承認事項は[Notta接続準備](../docs/integrations/notta-readiness.md)を参照してください。

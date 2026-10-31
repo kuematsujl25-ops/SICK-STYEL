@@ -2,12 +2,13 @@ name: Codex Review
 
 on:
   pull_request:
-    types: [opened]
+    types: [opened, synchronize, reopened, ready_for_review]
 
 jobs:
   codex:
-    # OPENAI_API_KEY が未設定の間は実行しない（Secrets未設定時の自動実行を防ぐ安全ゲート）
-    if: vars.ENABLE_CODEX_REVIEW == 'true'
+    # Subscription CLI review is the default. API billing requires separate explicit approval.
+    if: vars.ENABLE_CODEX_REVIEW == 'true' && vars.CODEX_API_BILLING_APPROVED == 'true' && github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -33,12 +34,12 @@ jobs:
         uses: openai/codex-action@v1
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
-          permission-profile: ":workspace"
+          permission-profile: ":read-only"
           prompt: |
             これは ${{ github.repository }} の PR #${{ github.event.pull_request.number }} です。
 
             このPRで導入された変更のみをレビューしてください（下記コマンドで差分を確認できます）:
-              git log --oneline ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}
+              git diff --no-color ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}
 
             重点的に見てほしい点（AGENTS.mdより）:
             - 管理者作成・パスワード処理・セッション管理のセキュリティ
@@ -49,12 +50,8 @@ jobs:
 
             バグの可能性・改善点を具体的かつ簡潔に日本語で指摘してください。問題がなければその旨を述べてください。
 
-            PRタイトルと本文:
-            ----
-            ${{ github.event.pull_request.title }}
-            ${{ github.event.pull_request.body }}
-
   post_feedback:
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     needs: codex
     if: needs.codex.outputs.final_message != ''
