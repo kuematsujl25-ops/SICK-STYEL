@@ -35,8 +35,9 @@ export default {
    const store=createD1Store(env.DB);
    const scheduledAt=new Date(event.scheduledTime??Date.now());
    const recurring=async()=>{if(env.RECURRING_TASKS_ENABLED==='true')await runRecurringTasks(store,scheduledAt);};
-   if(event.cron==='0 23 * * *'){await recurring();return;}
    if(event.cron==='* * * * *'){
+    // Reuse the existing minute cron: Free allows only five triggers/account.
+    // 23:00 UTC = 08:00 JST; quarter-hours also recover delayed generation.
     // Reminder delivery stays independent from recurring-task failures.
     const results=await Promise.allSettled([runMeetingReminders(store),scheduledAt.getUTCMinutes()%15===0?recurring():Promise.resolve()]);
     const failure=results.find(r=>r.status==='rejected');if(failure)throw failure.reason;return;

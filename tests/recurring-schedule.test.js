@@ -18,9 +18,9 @@ test('quarter-hour recurring failure waits for existing reminder delivery before
 test('08:00 handler and 15-minute recovery honor activation and maintenance; normal minutes only send reminders',async()=>{
  let reminders=0,recurring=0;const worker=scheduledHarness(async()=>{reminders++;},async()=>{recurring++;});
  async function run(cron,time,overrides={}){let work;await worker.scheduled({cron,scheduledTime:Date.parse(time)},{DB:{},RECURRING_TASKS_ENABLED:'true',...overrides},{waitUntil:p=>{work=p;}});await work;}
- await run('0 23 * * *','2026-10-30T23:00:00Z');assert.equal(recurring,1);assert.equal(reminders,0);
- await run('* * * * *','2026-10-30T23:01:00Z');assert.equal(recurring,1);assert.equal(reminders,1);
- await run('* * * * *','2026-10-30T23:15:00Z');assert.equal(recurring,2);assert.equal(reminders,2);
- await run('0 23 * * *','2026-10-30T23:00:00Z',{RECURRING_TASKS_ENABLED:'false'});assert.equal(recurring,2);
- await run('* * * * *','2026-10-30T23:15:00Z',{MAINTENANCE_MODE:'true'});assert.equal(recurring,2);assert.equal(reminders,2);
+ await run('* * * * *','2026-10-30T23:00:00Z');assert.equal(recurring,1);assert.equal(reminders,1);
+ await run('* * * * *','2026-10-30T23:01:00Z');assert.equal(recurring,1);assert.equal(reminders,2);
+ await run('* * * * *','2026-10-30T23:15:00Z');assert.equal(recurring,2);assert.equal(reminders,3);
+ await run('* * * * *','2026-10-30T23:00:00Z',{RECURRING_TASKS_ENABLED:'false'});assert.equal(recurring,2);
+ await run('* * * * *','2026-10-30T23:15:00Z',{MAINTENANCE_MODE:'true'});assert.equal(recurring,2);assert.equal(reminders,4);
 });
