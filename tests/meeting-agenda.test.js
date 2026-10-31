@@ -50,8 +50,9 @@ test('workspace revision guard rejects reminder when schedule changed between re
  assert.equal((await listNotifications(store)).length,0);
 });
 test('burst is bounded and next tick catches remaining meetings; late resume after start emits nothing',async t=>{
- const store=await fixture(t);await store.put('workspace',{orgSales:Array.from({length:5},(_,i)=>org({id:'org-'+i}))});
- for(let tick=0;tick<5;tick++)assert.equal((await runMeetingReminders(store,new Date(now.getTime()+tick*60000))).created,1);
+ const store=await fixture(t);await store.put('workspace',{orgSales:Array.from({length:13},(_,i)=>org({id:'org-'+i}))});
+ for(const [tick,count] of [6,6,1].entries())assert.equal((await runMeetingReminders(store,new Date(now.getTime()+tick*60000))).created,count);
+ assert.equal((await listNotifications(store)).length,13);
  assert.equal((await runMeetingReminders(store,new Date(now.getTime()+600000))).created,0);
 });
 test('service worker displays neutral fallback for stale/unverifiable pushes to preserve Safari subscriptions',async()=>{
@@ -91,10 +92,12 @@ test('transient push failure retries only affected devices; concurrent ticks pre
   assert.equal((await listNotifications(store))[0].detail.deliveryComplete,true);
   const remaining=await store.query('SELECT name FROM ss_documents WHERE name LIKE $1',['notify-device-v1:%']);assert.equal(remaining.length,3,'expired subscription is removed');
   for(const name of ['fourth','fifth'])await subscribe(store,{endpoint:'https://fcm.googleapis.com/fcm/send/'+name,keys});
-  await store.put('workspace',{orgSales:[org({id:'batch-a',initialZoomAt:at}),org({id:'batch-b',initialZoomAt:at})]});
-  let subrequests=0;const counted={...store,async doc(...args){subrequests++;return store.doc(...args);},async query(...args){subrequests++;return store.query(...args);}};
-  assert.equal((await runMeetingReminders(counted,new Date(),async()=>{subrequests++;return new Response(null,{status:201});})).created,1);
-  assert.equal(subrequests,34,'one meeting and five devices fit the 50-subrequest Free limit');
+  await store.put('workspace',{orgSales:Array.from({length:13},(_,i)=>org({id:'batch-'+i,initialZoomAt:at}))});
+  let internal=0,external=0,active=0,peak=0;const counted={...store,async doc(...args){internal++;return store.doc(...args);},async query(...args){internal++;return store.query(...args);}};
+  const send=async(url,init)=>{external++;active++;peak=Math.max(peak,active);assert.equal(init.redirect,'error');assert.ok(init.signal instanceof AbortSignal);await new Promise(resolve=>setImmediate(resolve));active--;return new Response(null,{status:201});};
+  for(const expected of [6,6,1]){internal=0;external=0;assert.equal((await runMeetingReminders(counted,new Date(),send)).created,expected);assert.equal(external,expected*5);assert.ok(external<=30);assert.ok(internal<=224);}
+  assert.ok(peak<=3,'only three push requests in flight');
+  assert.equal((await listNotifications(store)).filter(i=>i.detail?.token?.includes('batch-')&&i.detail.deliveryComplete).length,13,'13 simultaneous meetings delivered on all five devices before start');
   await store.put('workspace',{orgSales:[org({id:'cancel-between-devices',initialZoomAt:at})]});
   let sends=0;await runMeetingReminders(store,new Date(),async()=>{sends++;await store.put('workspace',{orgSales:[]});return new Response(null,{status:201});});
   assert.equal(sends,1,'cancellation during the first delivery prevents every subsequent device send');
@@ -114,4 +117,11 @@ test('transient push failure retries only affected devices; concurrent ticks pre
   assert.equal(legacySends,0,'legacy events without retry state must not be resent');
 
  });
+});
+
+test('one reminder insert failure does not prevent the other due meetings in the batch',async t=>{
+ const store=await fixture(t);await store.put('workspace',{orgSales:Array.from({length:6},(_,i)=>org({id:'isolated-'+i}))});let failed=false;
+ const wrapped={...store,async query(sql,args){if(!failed&&sql.startsWith('INSERT INTO')){failed=true;throw Error('synthetic insert failure');}return store.query(sql,args);}};
+ await assert.rejects(runMeetingReminders(wrapped,now),/synthetic/);assert.equal((await listNotifications(store)).length,5);
+ assert.equal((await runMeetingReminders(store,now)).created,1);assert.equal((await listNotifications(store)).length,6);
 });
