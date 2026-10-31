@@ -1,4 +1,4 @@
-import {prepareRecurringWrite} from '../lib/recurring-tasks.js';
+import {prepareRecurringWrite,restoreRecurringTasks,recurringTaskStatus} from '../lib/recurring-tasks.js';
 import {fulfillmentReadiness} from '../lib/amazon-fulfillment-gate.js';
 import {MeetingNoteError} from '../lib/meeting-notes.js';
 import * as amazonAds from '../integrations/amazon-ads.js';
@@ -24,7 +24,7 @@ function json(res,status,value){res.writeHead(status,{'Content-Type':'applicatio
 export async function rawBody(req){if(req._sickstyleRaw)return req._sickstyleRaw;let n=0;const chunks=[];for await(const c of req){const b=Buffer.from(c);n+=b.length;if(n>2_000_000)throw Error('データが大きすぎます');chunks.push(b);}return req._sickstyleRaw=Buffer.concat(chunks);}
 async function body(req){return JSON.parse((await rawBody(req)).toString()||'{}');}
 const cookie=(value,seconds)=>`session=${value}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${seconds}${(runtime().CLOUDFLARE&&runtime().CF_LOCAL_DEV!=='true')||runtime().VERCEL||runtime().COOKIE_SECURE==='true'?'; Secure':''}`;
-const revisionOf=async store=>{const r=await store.doc('workspace');return {...migrate(r?JSON.parse(r.body):empty()),revision:r?.revision||0,recurringTasksEnabled:runtime().RECURRING_TASKS_ENABLED==='true'};};
+const revisionOf=async store=>{const r=await store.doc('workspace');const data=migrate(r?JSON.parse(r.body):empty());return {...data,revision:r?.revision||0,recurringTasksEnabled:runtime().RECURRING_TASKS_ENABLED==='true',recurringTaskStatus:recurringTaskStatus(data)};};
 export default async function handler(req,res){
  res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('Cache-Control','no-store');
  try{
@@ -140,10 +140,12 @@ export default async function handler(req,res){
  }
  if(route==='/api/backup'&&req.method==='GET'){res.setHeader('Content-Disposition',`attachment; filename="sickstyle-backup-${new Date().toISOString().slice(0,10)}.json"`);const sd=await store.doc('site-draft');return json(res,200,{version:1,exportedAt:new Date().toISOString(),data:await revisionOf(store),site:sd?JSON.parse(sd.body):null});}
  if(route==='/api/restore'&&req.method==='POST'){
-  const b=await body(req);if(b.version!==1)throw Error('対応していないバックアップです');const data=validate(b.data);
+  const b=await body(req);if(b.version!==1)throw Error('対応していないバックアップです');let data=validate(b.data);
   if(!Number.isSafeInteger(b.revision))return json(res,400,{error:'現在の更新バージョンが必要です'});
-  assertMeetingRecordsRetained(await revisionOf(store),data,{restoreNotes:true});
-  prepareRecurringWrite(await revisionOf(store),data);
+  const current=await revisionOf(store);
+  if(b.revision!==current.revision)return json(res,409,{error:'他の端末で更新されました。再読み込み後に復元してください'});
+  assertMeetingRecordsRetained(current,data,{restoreNotes:true});
+  data=restoreRecurringTasks(current,data);
   const result=await store.transaction([
    ['INSERT INTO ss_documents(name,body,revision) VALUES ($1,$2,0) ON CONFLICT(name) DO NOTHING',['workspace',JSON.stringify(empty())]],
    ['INSERT INTO ss_documents(name,body) SELECT $1,body FROM ss_documents WHERE name=$2 AND revision=$3 ON CONFLICT(name) DO UPDATE SET body=excluded.body,revision=ss_documents.revision+1',['before-restore','workspace',b.revision]],

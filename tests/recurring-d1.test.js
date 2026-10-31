@@ -14,12 +14,19 @@ test('Workers API + D1: recurring configuration, generation, stale writes, backu
  const original=(await req('data')).data;assert.equal(original.recurringTasksEnabled,true);
  const day=jstDate(new Date());original.recurringTasks.push(recurringTemplate({id:'daily',title:'D1合成タスク',due:day,priority:'中'},'tasks'));
  assert.equal((await req('data','PUT',original)).status,200);
+ const oldBackup=(await req('backup')).data;
  const stale=(await req('data')).data;
  const store=createD1Store(db);assert.equal((await runRecurringTasks(store,new Date(day+'T08:00:00+09:00'))).created,1);
  assert.notEqual((await req('data','PUT',stale)).status,200);
  let current=(await req('data')).data;assert.equal(current.tasks.length,1);current.tasks[0].done=true;current.recurringTasks[0].enabled=false;
  assert.equal((await req('data','PUT',current)).status,200);
  await runRecurringTasks(store,new Date(Date.parse(day+'T08:00:00+09:00')+86400000));current=(await req('data')).data;assert.equal(current.tasks.length,1);assert.equal(current.tasks[0].done,true);
+ // A backup made before generation is now a valid restore: live completion,
+ // template stop state and advanced cursor must survive.
+ assert.equal((await req('restore','POST',{...oldBackup,revision:current.revision})).status,200);
+ current=(await req('data')).data;assert.equal(current.tasks.length,1);assert.equal(current.tasks[0].done,true);assert.equal(current.recurringTasks[0].enabled,false);
+ const legacyBackup=structuredClone(oldBackup);delete legacyBackup.data.recurringTasks;legacyBackup.data.tasks=[];
+ assert.equal((await req('restore','POST',{...legacyBackup,revision:current.revision})).status,200);current=(await req('data')).data;assert.equal(current.tasks.length,1);assert.equal(current.recurringTasks.length,1);
  const backup=(await req('backup')).data;assert.equal((await req('restore','POST',{...backup,revision:current.revision})).status,200);
  current=(await req('data')).data;delete current.recurringTasks;assert.notEqual((await req('data','PUT',current)).status,200);
 });
