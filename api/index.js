@@ -1,4 +1,4 @@
-import {retainKpiHistory} from '../lib/monthly-kpi.js';
+import {retainKpiHistory,restoreKpiHistory} from '../lib/monthly-kpi.js';
 import {prepareRecurringWrite,restoreRecurringTasks,recurringTaskStatus} from '../lib/recurring-tasks.js';
 import {fulfillmentReadiness} from '../lib/amazon-fulfillment-gate.js';
 import {MeetingNoteError} from '../lib/meeting-notes.js';
@@ -148,6 +148,7 @@ export default async function handler(req,res){
   if(b.revision!==current.revision)return json(res,409,{error:'他の端末で更新されました。再読み込み後に復元してください'});
   assertMeetingRecordsRetained(current,data,{restoreNotes:true});
   data=restoreRecurringTasks(current,data);
+  data=validate(restoreKpiHistory(current,data));
   retainKpiHistory(current,data);
   const result=await store.transaction([
    ['INSERT INTO ss_documents(name,body,revision) VALUES ($1,$2,0) ON CONFLICT(name) DO NOTHING',['workspace',JSON.stringify(empty())]],
