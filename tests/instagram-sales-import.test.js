@@ -63,3 +63,10 @@ test('explicit identity mapping deduplicates manual records and preserves cancel
  assert.equal(salesKpiProjection(l,cancelled,'2026-10',l.mappings,now).linkageReason,'manual_correction_conflict');
  assert.deepEqual(JSON.parse((await s.doc('workspace')).body).salesKpiRecords,manual);
 });
+
+test('changed provenance and additional confirmations replay without blocking unrelated new facts',async()=>{
+ const s=await setup();await importSalesEvents(s,{...batch(),source:'manual'},'example_owner',now);
+ const r=await importSalesEvents(s,batch([{...event(),historyStartConfirmed:true,firstOutboundConfirmed:true},event('reply','2026-10-21','example_second')]),'example_owner',now);
+ assert.equal(r.replayed,1);assert.equal(r.added,1);
+ const l=await readSalesLedger(s,'example_owner');assert.equal(l.events[0].source,'manual');assert.equal(l.events.length,2);
+});
