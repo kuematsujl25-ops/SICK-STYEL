@@ -30,8 +30,8 @@ async function refresh(){
 }
 addEventListener('instagram-staged',e=>{staged=e.detail; $('save-confirm').checked=false;enabled();});
 addEventListener('instagram-invalidated',()=>{staged=[];$('save-confirm').checked=false;enabled();});
-$('sample').addEventListener('click',()=>{$('owner-confirm').checked=false;sampleMode=true;enabled();note('合成サンプルは保存できません。');});
-$('input').addEventListener('input',()=>{sampleMode=false;});
+$('sample').addEventListener('click',()=>{$('owner-confirm').checked=false;sampleMode=true;enabled();note('合成サンプルは編集後も保存できません。「試算を消去して実観測へ」で切り替えてください。');});
+addEventListener('instagram-reset',()=>{sampleMode=false;staged=[];$('owner-confirm').checked=false;$('save-confirm').checked=false;enabled();note('試算を消去しました。新しい観測候補を入力してください。');});
 $('owner').addEventListener('input',()=>{$('owner-confirm').checked=false;});
 $('save-confirm').onchange=enabled;
 $('configure-owner').onclick=()=>safely(async()=>{if(sampleMode||!$('owner-confirm').checked)throw Error('対象アカウントの確認が必要です');await api('owner',{owner:$('owner').value.replace(/^@/,'').toLowerCase(),confirmed:true});await refresh();note('保存対象を登録しました。');});

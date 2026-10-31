@@ -22,3 +22,5 @@ $('stage').onclick=()=>safely(()=>{if(!preview||!$('confirm').checked)throw Erro
 
 // Do not retain candidate text in the back/forward cache. No storage or network writes.
 addEventListener('pagehide',()=>{ledger=[];preview=null;$('input').value='';$('rows').replaceChildren();$('result').textContent='一時データを消去しました';$('cohort').textContent='';$('scope').textContent='未読込';$('owner').value='';$('confirm').checked=false;$('stage').disabled=true;});
+
+$('reset-trial')?.addEventListener('click',()=>{ledger=[];synthetic=false;$('owner').value='';$('input').value='';invalidate();safely(show);dispatchEvent(new Event('instagram-reset'));});
