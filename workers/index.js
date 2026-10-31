@@ -1,3 +1,4 @@
+import {runRecurringTasks} from '../lib/recurring-tasks.js';
 import {runProactive} from '../lib/proactive-staff.js';
 import * as amazonAds from '../integrations/amazon-ads.js';
 import {createServer} from 'node:http';
@@ -32,7 +33,13 @@ export default {
   if(env.MAINTENANCE_MODE==='true'||!env.DB)return;
   ctx.waitUntil(withRuntime({...env,CLOUDFLARE:true,STORE:createD1Store(env.DB)},async()=>{
    const store=createD1Store(env.DB);
-   if(event.cron==='* * * * *'){await runMeetingReminders(store);return;}
+   const scheduledAt=new Date(event.scheduledTime??Date.now());
+   const recurring=async()=>{if(env.RECURRING_TASKS_ENABLED==='true')await runRecurringTasks(store,scheduledAt);};
+   if(event.cron==='0 23 * * *'){await recurring();return;}
+   if(event.cron==='* * * * *'){
+    // Reminder delivery stays independent from recurring-task failures.
+    await Promise.all([runMeetingReminders(store),scheduledAt.getUTCMinutes()%15===0?recurring():Promise.resolve()]);return;
+   }
    // Cron Triggers are UTC. 09:00 / 20:00 / 22:00 Asia/Tokyo = 00:00 / 11:00 / 13:00 UTC.
    const kind=scheduledKind(event.cron);
    if(kind==='analysis'){try{await runProactive(store,{trigger:'scheduled'});}catch{console.error(JSON.stringify({event:'proactive_analysis_failed'}));}}

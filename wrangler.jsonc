@@ -25,6 +25,7 @@
   ],
   "vars": {
     "COOKIE_SECURE": "true",
+    "RECURRING_TASKS_ENABLED": "false",
     "META_API_VERSION": "v26.0",
     "INSTAGRAM_ENABLE_MESSAGING": "true",
     "MAINTENANCE_MODE": "false",
@@ -33,6 +34,7 @@
   "triggers": {
     "crons": [
       "* * * * *",
+      "0 23 * * *",
       "0 0 * * *",
       "10 0 * * *",
       "0 11 * * *",
