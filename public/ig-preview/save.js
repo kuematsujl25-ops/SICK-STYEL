@@ -22,7 +22,7 @@ async function refresh(){
    const reason=document.createElement('select');for(const [value,text] of Object.entries({incorrect_date:'日付誤り',incorrect_identity:'相手誤り',incorrect_direction:'方向誤り',not_invitation:'案内ではない',duplicate:'重複'})){const option=document.createElement('option');option.value=value;option.textContent=text;reason.append(option);}
    const cancel=document.createElement('button');cancel.textContent='この記録を取り消す';cancel.onclick=()=>safely(async()=>{if(!confirm('この記録を集計から除外します。根拠と取消履歴は保持します。'))return;await api('void',{owner:status.owner,key:e.key,revision:ledger.revision,reason:reason.value});await refresh();note('取消を記録しました。再取込でも復活しません。');});row.append(reason,cancel);
   }
-  if(ledger.mappings[e.peer]){const mapped=document.createElement('p');mapped.textContent='対応済み営業先ID：'+ledger.mappings[e.peer];row.append(mapped);}
+  if(Object.hasOwn(ledger.mappings,e.peer)){const mapped=document.createElement('p');mapped.textContent='対応済み営業先ID：'+ledger.mappings[e.peer];row.append(mapped);}
   else {const party=document.createElement('input');party.placeholder='既存手入力の送信先ID';party.maxLength=100;const link=document.createElement('button');link.textContent='同じ相手と確認して対応付け';link.onclick=()=>safely(async()=>{if(!confirm('既存手入力と同一の相手であることを確認しましたか？'))return;await api('mapping',{owner:status.owner,peer:e.peer,party:party.value,confirmed:true,revision:ledger.revision});await refresh();note('対応付けを保存しました。');});row.append(party,link);}
   $('saved-rows').append(row);
  }
@@ -30,8 +30,9 @@ async function refresh(){
 }
 addEventListener('instagram-staged',e=>{staged=e.detail; $('save-confirm').checked=false;enabled();});
 addEventListener('instagram-invalidated',()=>{staged=[];$('save-confirm').checked=false;enabled();});
-$('sample').addEventListener('click',()=>{sampleMode=true;enabled();note('合成サンプルは保存できません。');});
+$('sample').addEventListener('click',()=>{$('owner-confirm').checked=false;sampleMode=true;enabled();note('合成サンプルは保存できません。');});
 $('input').addEventListener('input',()=>{sampleMode=false;});
+$('owner').addEventListener('input',()=>{$('owner-confirm').checked=false;});
 $('save-confirm').onchange=enabled;
 $('configure-owner').onclick=()=>safely(async()=>{if(sampleMode||!$('owner-confirm').checked)throw Error('対象アカウントの確認が必要です');await api('owner',{owner:$('owner').value.replace(/^@/,'').toLowerCase(),confirmed:true});await refresh();note('保存対象を登録しました。');});
 $('save').onclick=()=>safely(async()=>{
