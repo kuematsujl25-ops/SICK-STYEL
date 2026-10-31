@@ -1,4 +1,4 @@
-import {retainKpiHistory,restoreKpiHistory} from '../lib/monthly-kpi.js';
+import {retainKpiHistory,restoreKpiHistory,KpiValidationError} from '../lib/monthly-kpi.js';
 import {prepareRecurringWrite,restoreRecurringTasks,recurringTaskStatus} from '../lib/recurring-tasks.js';
 import {fulfillmentReadiness} from '../lib/amazon-fulfillment-gate.js';
 import {MeetingNoteError} from '../lib/meeting-notes.js';
@@ -192,7 +192,7 @@ export default async function handler(req,res){
  if(route==='/api/instagram/resolve'&&req.method==='POST'){const b=await body(req);await instagram.resolveConversation(store,String(b.peer||''));return json(res,200,{ok:true});}
  return json(res,404,{error:'見つかりません'});
  }catch(e){
-  if(e instanceof MeetingNoteError)return json(res,400,{error:e.message});
+  if(e instanceof MeetingNoteError||e instanceof KpiValidationError)return json(res,400,{error:e.message});
   if(e.conflict)return json(res,409,{error:e.message});
   const validation=/掲載|下書き|データ|形式|バックアップ|認可|Instagram|Meta|Amazon|Zoom|Google|カレンダー|MTG|団体|同期|トークン|アカウント|キー|コード|種別|操作|更新バージョン/.test(e.message);
   console.error(JSON.stringify({event:'api_error',type:e.name,code:e instanceof instagram.MetaError?e.code:undefined}));
