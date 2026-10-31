@@ -35,6 +35,7 @@ export function previewBatch(raw, expectedOwner, now){
 }
 // Append-only: identical observations are no-ops; corrections require a separate future review flow.
 export function stagePreview(ledger, preview){
+ if(ledger.some(e=>e.owner!==preview.batch.owner))throw Error("別の所有者の台帳には追加できません。再読込して別々に確認してください。");
  const next=ledger.slice();
  for(const row of preview.rows){
   if(row.reasons.length)continue;

@@ -36,3 +36,8 @@ test('case normalization dedupes; conflicting first date and mapping fail atomic
 test('zoom invitation never becomes appointment or touches salesKpiRecords',()=>{
  const l=stagePreview([],preview(sample()));assert.ok(!l.some(e=>e.type==='appointment'));assert.equal(l.filter(e=>e.type==='zoom_invite').length,1);
 });
+
+test('different owners cannot be silently combined in one ledger',()=>{
+ const l=stagePreview([],preview(sample())), b=sample();b.owner='demo_other';
+ assert.throws(()=>stagePreview(l,previewBatch(b,'demo_other','2026-10-31T10:00:00Z')));
+});
