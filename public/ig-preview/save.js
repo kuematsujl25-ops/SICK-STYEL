@@ -1,3 +1,4 @@
+import {persistenceBatches} from './model.js';
 // Explicit, same-origin persistence of confirmed metadata only. No browser/Instagram access.
 const $=id=>document.getElementById(id);
 let staged=[],status=null,sampleMode=false,busy=false;
@@ -36,13 +37,13 @@ $('owner').addEventListener('input',()=>{$('owner-confirm').checked=false;});
 $('save-confirm').onchange=enabled;
 $('configure-owner').onclick=()=>safely(async()=>{if(sampleMode||!$('owner-confirm').checked)throw Error('対象アカウントの確認が必要です');await api('owner',{owner:$('owner').value.replace(/^@/,'').toLowerCase(),confirmed:true});await refresh();note('保存対象を登録しました。');});
 $('save').onclick=()=>safely(async()=>{
- if(sampleMode||!$('save-confirm').checked||!staged.length||staged.length>100)throw Error('1〜100件の確認済み候補が必要です');
+ if(sampleMode||!$('save-confirm').checked||!staged.length)throw Error('確認済み候補が必要です');
  if(staged.some(e=>e.owner!==status.owner))throw Error('保存対象が一致しません');
  // Each source/capture is retained; a retry of a partly completed submission is idempotent.
- const groups=new Map();for(const e of staged){const key=JSON.stringify([e.source,e.capturedAt,e.rangeStart,e.rangeEnd]);if(!groups.has(key))groups.set(key,[]);groups.get(key).push(e);}
+
  let added=0,replayed=0,suppressed=0;
- for(const group of groups.values()){
-  const result=await api('import',{owner:status.owner,source:group[0].source,capturedAt:new Date(group[0].capturedAt).toISOString(),rangeStart:group[0].rangeStart,rangeEnd:group[0].rangeEnd,events:group.map(e=>({peer:e.account,type:e.type,date:e.date,direction:e.direction,confirmed:true,historyStartConfirmed:e.historyStartSeen,firstOutboundConfirmed:e.firstOutboundConfirmed,inviteConfirmed:e.evidence==='explicit_zoom_invitation'}))});
+ for(const batch of persistenceBatches(staged)){
+  const result=await api('import',batch);
   added+=result.added;replayed+=result.replayed;suppressed+=result.suppressed;
  }
  $('save-confirm').checked=false;await refresh();note(`保存 ${added}件 ／ 重複 ${replayed}件 ／ 取消済み ${suppressed}件。本文は送信していません。`);

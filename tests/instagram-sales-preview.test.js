@@ -41,3 +41,9 @@ test('different owners cannot be silently combined in one ledger',()=>{
  const l=stagePreview([],preview(sample())), b=sample();b.owner='demo_other';
  assert.throws(()=>stagePreview(l,previewBatch(b,'demo_other','2026-10-31T10:00:00Z')));
 });
+
+test('saving 201 cumulative staged events splits requests without omission or private fields',async()=>{
+ const {persistenceBatches}=await import('../tools/instagram-preview/model.js');
+ const rows=Array.from({length:201},(_,i)=>({owner:'example_owner',account:'example_peer_'+i,source:'browser_observation',capturedAt:'2026-10-31T00:00:00Z',rangeStart:'2026-10-01',rangeEnd:'2026-10-31',type:'reply',date:'2026-10-20',direction:'inbound',historyStartSeen:false,firstOutboundConfirmed:false,evidence:'received_message',body:'SYNTHETIC_FORBIDDEN'}));
+ const batches=persistenceBatches(rows);assert.deepEqual(batches.map(b=>b.events.length),[100,100,1]);assert.equal(new Set(batches.flatMap(b=>b.events.map(e=>e.peer))).size,201);assert.ok(!JSON.stringify(batches).includes('SYNTHETIC_FORBIDDEN'));
+});

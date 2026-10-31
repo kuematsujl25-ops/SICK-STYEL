@@ -55,3 +55,15 @@ export function summarize(ledger,month){
  const follow=ledger.filter(e=>cohort.has(JSON.stringify([e.owner,e.account]))&&e.date>=ledger.find(x=>x.type==='new_dm'&&x.owner===e.owner&&x.account===e.account).date);
  return {monthly,cohort:{size:cohort.size,reply:unique(follow.filter(e=>e.type==='reply')),zoom_invite:unique(follow.filter(e=>e.type==='zoom_invite'))},coverage:'partial'};
 }
+
+// Preserve observation provenance while respecting the API's per-request limit.
+export function persistenceBatches(ledger){
+ if(!ledger.length||ledger.some(e=>e.owner!==ledger[0].owner))throw Error('保存対象を確認してください');
+ const groups=new Map();
+ for(const e of ledger){const key=JSON.stringify([e.source,e.capturedAt,e.rangeStart,e.rangeEnd]);if(!groups.has(key))groups.set(key,[]);groups.get(key).push(e);}
+ const batches=[];
+ for(const group of groups.values())for(let offset=0;offset<group.length;offset+=100){
+  batches.push({owner:group[0].owner,source:group[0].source,capturedAt:new Date(group[0].capturedAt).toISOString(),rangeStart:group[0].rangeStart,rangeEnd:group[0].rangeEnd,events:group.slice(offset,offset+100).map(e=>({peer:e.account,type:e.type,date:e.date,direction:e.direction,confirmed:true,historyStartConfirmed:e.historyStartSeen,firstOutboundConfirmed:e.firstOutboundConfirmed,inviteConfirmed:e.evidence==='explicit_zoom_invitation'}))});
+ }
+ return batches;
+}
