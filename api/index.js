@@ -1,3 +1,4 @@
+import {retainKpiHistory} from '../lib/monthly-kpi.js';
 import {prepareRecurringWrite,restoreRecurringTasks,recurringTaskStatus} from '../lib/recurring-tasks.js';
 import {fulfillmentReadiness} from '../lib/amazon-fulfillment-gate.js';
 import {MeetingNoteError} from '../lib/meeting-notes.js';
@@ -133,6 +134,7 @@ export default async function handler(req,res){
  if(route==='/api/data'&&req.method==='GET')return json(res,200,await revisionOf(store));
  if(route==='/api/data'&&req.method==='PUT'){
   const b=await body(req);const d=validate(b);if(!Number.isSafeInteger(b.revision)||b.revision<0)return json(res,400,{error:'更新バージョンが必要です'});
+  retainKpiHistory(await revisionOf(store),d);
   assertMeetingRecordsRetained(await revisionOf(store),d);
   prepareRecurringWrite(await revisionOf(store),d);
   await store.query('INSERT INTO ss_documents(name,body,revision) VALUES ($1,$2,0) ON CONFLICT(name) DO NOTHING',['workspace',JSON.stringify(empty())]);
@@ -146,6 +148,7 @@ export default async function handler(req,res){
   if(b.revision!==current.revision)return json(res,409,{error:'他の端末で更新されました。再読み込み後に復元してください'});
   assertMeetingRecordsRetained(current,data,{restoreNotes:true});
   data=restoreRecurringTasks(current,data);
+  retainKpiHistory(current,data);
   const result=await store.transaction([
    ['INSERT INTO ss_documents(name,body,revision) VALUES ($1,$2,0) ON CONFLICT(name) DO NOTHING',['workspace',JSON.stringify(empty())]],
    ['INSERT INTO ss_documents(name,body) SELECT $1,body FROM ss_documents WHERE name=$2 AND revision=$3 ON CONFLICT(name) DO UPDATE SET body=excluded.body,revision=ss_documents.revision+1',['before-restore','workspace',b.revision]],

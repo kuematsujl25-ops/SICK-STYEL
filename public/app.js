@@ -1,3 +1,5 @@
+import {renderKpi} from './monthly-kpi.js';
+let kpiMonth=new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'}).slice(0,7);
 import {renderAmazonAnalysis} from './amazon-analysis.js';
 import {renderRecurringTasks,recurringTemplate} from './recurring-tasks.js';
 import {renderTodayMeetings,renderMeetingReminder} from './meeting-agenda.js';
@@ -120,14 +122,14 @@ function auth(){
 // ---------- 画面 ----------
 // 団体営業・集める数字・購入実験・選手候補・利益在庫はメニューから削除（データ・コードは保持、いつでも復元可能）。
 // リール分析・参考アカウント・売上SNS実績（SNS側）はInstagram画面へ、売上SNS実績（Amazon側）・利益在庫の広告費のみAmazon画面へ統合。
-const nav=[['overview','◈','ダッシュボード'],['goals','◎','目標'],['tasks','☑','タスク'],['staffTasks','▤','担当タスク'],['shipments','▣','発送管理'],['team','♙','AI社員'],['meetings','▦','会議'],['amazon','◆','Amazon連携'],['instagram','◉','Instagram連携'],['site','◇','サイト掲載'],['brand','✳','ブランド'],['settings','⚙','設定・バックアップ']];
+const nav=[['overview','◈','ダッシュボード'],['monthlyKpi','▥','月次営業KPI'],['goals','◎','目標'],['tasks','☑','タスク'],['staffTasks','▤','担当タスク'],['shipments','▣','発送管理'],['team','♙','AI社員'],['meetings','▦','会議'],['amazon','◆','Amazon連携'],['instagram','◉','Instagram連携'],['site','◇','サイト掲載'],['brand','✳','ブランド'],['settings','⚙','設定・バックアップ']];
 const names={...Object.fromEntries(nav.map(([id,,name])=>[id,name])),orgSales:'団体営業・会議',overdue:'期限超過の通知'};
 const rate=g=>Math.min(100,Math.max(0,Math.round(Number(g.current||0)/Number(g.target||1)*100)));
 function render(){
  if(state!==overdueSource){overdueSource=state;overdue.set(state);}
  const previousNav=document.querySelector('#app aside nav');
  const navScrollTop=previousNav?.scrollTop||0,navScrollLeft=previousNav?.scrollLeft||0;
- const views={overdue:()=>'<div id="overdue-content"></div>',team:()=>renderTeam(team,esc),finance:()=>renderFinance(financeReport,esc),overview,instagram:instagramView,amazon:amazonView,brand,settings,site:siteView,staffTasks:()=>renderStaffTasks(state.staffTasks,staffUI,esc,today())+renderRecurringTasks(state.recurringTasks,'staffTasks',esc,state.recurringTasksEnabled,state.recurringTaskStatus),meetings:()=>renderMeetings(state.orgSales,esc),orgSales:orgSalesView,collectionTasks:()=>renderCollectionTasks(state.collectionTasks,collectUI,esc),
+ const views={monthlyKpi:()=>renderKpi(state.salesKpiRecords||[],kpiMonth,state.orgSales,monthSalesInfo(amz?.cache,state.metrics,kpiMonth,today()).value,esc),overdue:()=>'<div id="overdue-content"></div>',team:()=>renderTeam(team,esc),finance:()=>renderFinance(financeReport,esc),overview,instagram:instagramView,amazon:amazonView,brand,settings,site:siteView,staffTasks:()=>renderStaffTasks(state.staffTasks,staffUI,esc,today())+renderRecurringTasks(state.recurringTasks,'staffTasks',esc,state.recurringTasksEnabled,state.recurringTaskStatus),meetings:()=>renderMeetings(state.orgSales,esc),orgSales:orgSalesView,collectionTasks:()=>renderCollectionTasks(state.collectionTasks,collectUI,esc),
  reelPosts:()=>renderReels(state.reelPosts,reelUI,esc,today()),growthExperiments:()=>renderExperiments(state.growthExperiments,experimentUI,esc),competitorAccounts:()=>renderAccounts(state.competitorAccounts,accountUI,esc),playerCandidates:()=>renderPlayers(state.playerCandidates,playerUI,esc)};
  app.innerHTML=`<aside><div class="brandtop"><a href="#" class="brandmark" data-nav="overview">${LOGO}<span><b>SICKSTYLE</b><small>管理アプリ</small></span></a><span class="mobileonly"><button id="mrefresh" aria-label="最新データに更新">↻</button><button id="mlogout" aria-label="ログアウト">ログアウト</button></span></div><nav aria-label="メニュー">${nav.map(([id,icon,name])=>`<button data-nav="${id}" class="${section===id?'active':''}" ${section===id?'aria-current="page"':''}><span aria-hidden="true">${icon}</span>${name}</button>`).join('')}</nav><div class="sidebottom"><div>管理者<small>${esc(storageKind==='d1'?'クラウド保存（Cloudflare D1）':'このPCに保存（SQLite）')}</small></div><button id="logout">ログアウト</button></div></aside>
  <main><header><div class="breadcrumb">SICKSTYLE<span>/ ${names[section]}</span></div><div class="headeractions"><span class="live">保存先: ${storageKind==='d1'?'クラウド':'このPC'}</span><button id="refresh" aria-label="最新データに更新" title="最新データに更新">↻ 更新</button></div></header>
@@ -376,7 +378,11 @@ async function persist(next){if(busy)return;busy=true;try{const saved=await api(
 async function logout(){try{await api('logout','POST',{});}catch(e){toast(e.message);return;}state=null;ig=null;amz=null;configured=true;auth();}
 async function refresh(){if(confirm('保存していない入力内容は破棄されます。最新データを読み込みますか？'))try{await load();toast('最新データを読み込みました');}catch(e){toast(e.message);}}
 function bindMetricsPages(){document.querySelectorAll('[data-metricspage]').forEach(b=>b.onclick=()=>{metricsPage=Number(b.dataset.metricspage);render();});}
-function bind(){bindMetricsPages();if(section==='team')bindTeam({model:team,api,setModel:v=>team=v,render,toast});bindFinance();bindInstagram();bindAmazon();bindZoomCalendar();bindSite();if(section==='settings')mountNotifications();
+function bind(){
+ const km=document.querySelector('#kpimonth');if(km)km.onchange=()=>{if(km.value){kpiMonth=km.value;render();}};
+ const kf=document.querySelector('#kpiform');if(kf)kf.onsubmit=async e=>{e.preventDefault();try{const v=Object.fromEntries(new FormData(kf));if(v.type==='complete'&&!confirm('対象月の全活動・受注を確認しましたか？'))return;await persist({...state,salesKpiRecords:[...(state.salesKpiRecords||[]),{...v,id:crypto.randomUUID(),ref:'',amount:v.amount===''?null:Number(v.amount),qty:v.qty===''?null:Number(v.qty),createdAt:new Date().toISOString()}]});}catch(err){document.querySelector('#kpierror').textContent=err.message;}};
+ document.querySelectorAll('[data-kpivoid]').forEach(b=>b.onclick=async()=>{const r=state.salesKpiRecords.find(r=>r.id===b.dataset.kpivoid);if(!confirm('取消記録を追加しますか？'))return;try{await persist({...state,salesKpiRecords:[...state.salesKpiRecords,{...r,id:crypto.randomUUID(),type:'void',ref:r.id,title:'取消: '+r.title.slice(0,490),createdAt:new Date().toISOString()}]});}catch(err){toast(err.message);}});
+bindMetricsPages();if(section==='team')bindTeam({model:team,api,setModel:v=>team=v,render,toast});bindFinance();bindInstagram();bindAmazon();bindZoomCalendar();bindSite();if(section==='settings')mountNotifications();
  for(const id of ['#refresh','#mrefresh'])document.querySelector(id).onclick=refresh;for(const id of ['#logout','#mlogout'])document.querySelector(id).onclick=logout;
  document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=async e=>{e.preventDefault();section=b.dataset.nav;if(section==='team')try{team=await api('ai-team');}catch(x){toast(x.message);}if(section==='site'&&!site)try{site=await api('site');}catch(x){toast(x.message);}render();window.scrollTo(0,0);});
  document.querySelectorAll('[data-new]').forEach(b=>b.onclick=()=>editor(b.dataset.new));
