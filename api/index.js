@@ -1,3 +1,5 @@
+import {importSalesEvents,readSalesLedger,voidSalesEvent,configureSalesOwner,salesStatus,mapSalesPeer,InstagramImportError} from '../lib/instagram-sales-import.js';
+import {salesKpiProjection} from '../lib/instagram-sales-kpi.js';
 import {instagramPreviewPage} from '../lib/instagram-preview-page.js';
 import {retainKpiHistory,restoreKpiHistory,KpiValidationError} from '../lib/monthly-kpi.js';
 import {prepareRecurringWrite,restoreRecurringTasks,recurringTaskStatus} from '../lib/recurring-tasks.js';
@@ -84,9 +86,28 @@ export default async function handler(req,res){
  const redirect=location=>{res.writeHead(303,{Location:location,'Cache-Control':'no-store'});res.end();};
  if(['/api/amazon/login','/api/amazon/callback','/api/instagram/callback','/api/zoom/callback','/api/googlecalendar/callback'].includes(route)&&req.method==='GET'&&!authorized)return redirect('/?auth=required');
  if(!authorized)return json(res,401,{error:'ログインしてください'});
+ // Confirmed metadata only. No Instagram calls or message bodies are accepted here.
+ if(route==='/api/instagram-sales'||route.startsWith('/api/instagram-sales/')){
+  if(!['GET','HEAD'].includes(req.method)&&req.headers.origin!==(runtime().APP_ORIGIN||`http://${req.headers.host}`))return json(res,403,{error:'same_origin_required'});
+  try{
+   if(req._sickstyleRaw?.length>64000)throw new InstagramImportError(413,'batch_too_large');
+   if(route==='/api/instagram-sales/status'&&req.method==='GET')return json(res,200,await salesStatus(store));
+   if(route==='/api/instagram-sales/owner'&&req.method==='POST')return json(res,200,await configureSalesOwner(store,await body(req)));
+   const status=await salesStatus(store);if(!status.configured)return json(res,409,{error:'owner_not_configured'});const owner=status.owner;
+   if(route==='/api/instagram-sales/import'&&req.method==='POST')return json(res,200,await importSalesEvents(store,await body(req),owner));
+   if(route==='/api/instagram-sales/void'&&req.method==='POST')return json(res,200,await voidSalesEvent(store,await body(req),owner));
+   if(route==='/api/instagram-sales/mapping'&&req.method==='POST')return json(res,200,await mapSalesPeer(store,await body(req),owner));
+   if(route==='/api/instagram-sales/events'&&req.method==='GET')return json(res,200,await readSalesLedger(store,owner));
+   if(route==='/api/instagram-sales/kpi'&&req.method==='GET'){
+    const ledger=await readSalesLedger(store,owner),workspace=await revisionOf(store);
+    return json(res,200,salesKpiProjection(ledger,workspace.salesKpiRecords,url.searchParams.get('month'),ledger.mappings));
+   }
+   return json(res,405,{error:'unsupported_operation'});
+  }catch(error){if(error instanceof InstagramImportError)return json(res,error.status,{error:error.code});return json(res,400,{error:'invalid_import'});}
+ }
  if(route==='/api/instagram-sales-preview'){
   if(!['GET','HEAD'].includes(req.method))return json(res,405,{error:'プレビュー専用です。候補の保存はできません'});
-  res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'none'; img-src 'none'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
+  res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'none'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
   res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
   return res.end(req.method==='HEAD'?undefined:instagramPreviewPage);
  }

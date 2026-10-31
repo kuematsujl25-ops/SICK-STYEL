@@ -4,7 +4,7 @@ import {spawn} from 'node:child_process';
 import {mkdtemp,rm,readFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
-test('preview page requires session, disallows writes, uses no-network CSP and preserves workspace',async t=>{
+test('preview page requires session, disallows writes, uses same-origin CSP and preserves workspace',async t=>{
  const dir=await mkdtemp(path.join(tmpdir(),'ig-preview-http-'));
  const proc=spawn(process.execPath,['server.js'],{env:{...process.env,PORT:'0',DATA_DIR:dir,SETUP_TOKEN:'synthetic-preview-setup'},stdio:['ignore','pipe','pipe']});
  t.after(async()=>{if(proc.exitCode===null)await new Promise(r=>{proc.once('exit',r);proc.kill();});await rm(dir,{recursive:true,force:true});});
@@ -15,13 +15,27 @@ test('preview page requires session, disallows writes, uses no-network CSP and p
  assert.equal(signup.status,200);const headers={Cookie:signup.headers.get('set-cookie').split(';')[0]};
  const before=await(await fetch(base+'/api/data',{headers})).json();
  const r=await fetch(route,{headers}),html=await r.text();assert.equal(r.status,200);assert.match(r.headers.get('content-type'),/text\/html/);assert.equal(r.headers.get('cache-control'),'no-store');
- const csp=r.headers.get('content-security-policy');for(const value of ["connect-src 'none'","form-action 'none'","frame-ancestors 'none'","script-src 'self'"])assert.ok(csp.includes(value));
- assert.match(html,/収集未接続・手動観測JSON/);assert.match(html,/KPI保存なし/);assert.ok(!html.includes('<style>'));assert.ok(!html.includes('value="demo_business"'));
- for(const file of ['app.js','model.js','sample.js','style.css'])assert.equal((await fetch(base+'/ig-preview/'+file)).status,200);
+ const csp=r.headers.get('content-security-policy');for(const value of ["connect-src 'self'","form-action 'none'","frame-ancestors 'none'","script-src 'self'"])assert.ok(csp.includes(value));
+ assert.match(html,/アプリ単独の収集は未接続/);assert.match(html,/Cloudflare D1/);assert.ok(!html.includes('<style>'));assert.ok(!html.includes('value="demo_business"'));
+ for(const file of ['app.js','model.js','sample.js','style.css','save.js'])assert.equal((await fetch(base+'/ig-preview/'+file)).status,200);
  assert.equal((await fetch(base+'/ig-preview/index.html')).status,404);
  assert.equal((await fetch(base+'/ig-preview/dom-adapter.js')).status,404);
  assert.equal((await fetch(route,{method:'HEAD',headers})).status,200);
  assert.equal((await fetch(route,{method:'POST',headers,body:'{}'})).status,405);
+ assert.deepEqual(await(await fetch(base+'/api/data',{headers})).json(),before);
+
+ const post=async(path,data,h={...headers,Origin:base})=>fetch(base+'/api/instagram-sales/'+path,{method:'POST',headers:{'Content-Type':'application/json',...h},body:JSON.stringify(data)});
+ assert.equal((await fetch(base+'/api/instagram-sales/status')).status,401);
+ assert.equal((await post('owner',{owner:'example_owner',confirmed:true},headers)).status,403);
+ assert.equal((await post('owner',{owner:'example_owner',confirmed:true},{...headers,Origin:'https://other.example.com'})).status,403);
+ assert.equal((await post('owner',{owner:'example_owner',confirmed:true})).status,200);
+ const observation={owner:'example_owner',source:'browser_observation',capturedAt:'2026-10-01T00:00:00Z',rangeStart:'2026-09-01',rangeEnd:'2026-10-01',events:[{peer:'example_peer',type:'reply',date:'2026-09-30',direction:'inbound',confirmed:true,historyStartConfirmed:false,firstOutboundConfirmed:false,inviteConfirmed:false}]};
+ assert.equal((await post('import',{...observation,owner:'another_owner'})).status,403);
+ assert.equal((await post('import',{...observation,body:'synthetic forbidden content'})).status,400);
+ assert.equal((await post('import',{...observation,body:'x'.repeat(64000)})).status,413);
+ const imported=await post('import',observation);assert.equal(imported.status,200);assert.equal((await imported.json()).added,1);
+ assert.equal((await(await post('import',observation)).json()).replayed,1);
+ const kpi=await(await fetch(base+'/api/instagram-sales/kpi?month=2026-09',{headers})).json();assert.equal(kpi.imported.monthly.reply,1);assert.equal(kpi.combined,null);
  assert.deepEqual(await(await fetch(base+'/api/data',{headers})).json(),before);
  await fetch(base+'/api/logout',{method:'POST',headers});assert.equal((await fetch(route,{headers})).status,401);
 });
