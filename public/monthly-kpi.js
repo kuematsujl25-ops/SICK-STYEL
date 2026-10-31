@@ -12,7 +12,7 @@ export function kpiQuality(facts,month,orgs=[]){
    const start=first(a),end=first(b);
    if(start&&end&&end.date<start.date)warn(`${TYPES[b]}が${TYPES[a]}より前`,[start.id,end.id]);
   }
-  if(first('second')&&!first('reply'))warn('2回目Zoomの返信日が未記録',[first('second').id]);
+  for(const type of ['appointment','zoom','second'])if(first(type)&&!first('reply'))warn(`${TYPES[type]}の返信日が未記録（工程省略か履歴不足かを確認）`,[first(type).id]);
   for(const shipment of new Set(g.filter(r=>['sent','arrived'].includes(r.type)).map(r=>r.deal))){
    const sent=g.find(r=>r.type==='sent'&&r.deal===shipment),arrived=g.find(r=>r.type==='arrived'&&r.deal===shipment);
    if(arrived&&!sent)warn('到着に対応する発送日が未記録',[arrived.id]);

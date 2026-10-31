@@ -43,3 +43,10 @@ test('one recorded stage never establishes legacy or monthly stage completeness'
  assert.equal(k.quality.stages.find(s=>s.type==='reply').recorded,0);
  assert.match(renderKpi(rows,'2026-10',[{id:'example-org'}],null,s=>String(s??'')),/未発生と未入力は判別できず/);
 });
+test('first Zoom or appointment without reply stays unresolved despite monthly attestation',()=>{
+ for(const type of ['appointment','zoom','second']){
+  const rows=[e('dm','2026-10-01'),e(type,'2026-10-05'),e('complete','2026-10-31')];
+  const k=calc(rows);assert.equal(k.usable,false);assert.ok(k.quality.issues.some(q=>q.code.includes('返信日が未記録')));
+  const html=renderKpi(rows,'2026-10',[],null,s=>String(s??''));assert.match(html,/算出保留（品質確認）/);assert.match(html,/未取得（記録済み 0）/);
+ }
+});
