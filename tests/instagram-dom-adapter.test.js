@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {collectBoundConversation} from '../tools/instagram-preview/dom-adapter.js';
+import {collectBoundConversationBatches} from '../tools/instagram-preview/dom-adapter.js';
 import {previewBatch,stagePreview} from '../tools/instagram-preview/model.js';
 // Minimal synthetic DOM tree implementing only standard APIs consumed by the adapter.
 // These fixtures do not assert Instagram selectors or layout compatibility.
 function element(text='',left=0,width=100,attrs={},children=[]){return {textContent:text,getAttribute:k=>attrs[k]??null,getBoundingClientRect:()=>({left,right:left+width,width,height:20}),contains(n){return children.includes(n)||children.some(c=>c.contains(n));}};}
+const collectBoundConversation=(bindings,scope)=>collectBoundConversationBatches(bindings,scope)[0];
 const scope={capturedAt:'2026-10-30T12:00:00Z',rangeStart:'2026-10-01',rangeEnd:'2026-10-30',timeZone:'Asia/Tokyo'};
 const links=()=>({ownerLink:element('',0,100,{href:'/_demo_owner_/'}),peerLink:element('',0,100,{href:'/demo_peer/'})});
 const message=(text,left=0,dateText='2026/10/23 9:29',width=300)=>{const article=element(text,left,width);return {article,row:element('',0,1000,{},[article]),dateLabel:element(dateText)};};
@@ -51,4 +52,18 @@ test('invalid identity, oversized batches, hidden elements and non-contained art
 
 test('scope strings cannot leak arbitrary text through metadata',()=>{
  for(const key of ['capturedAt','rangeStart','rangeEnd'])assert.throws(()=>collectBoundConversation({...links(),messages:[]},{...scope,[key]:'SYNTHETIC_PRIVATE_ADDRESS'}));
+});
+
+test('100 messages yielding 101 candidates are split without omission into valid preview batches',()=>{
+ const messages=[message('Zoom',700),...Array.from({length:99},()=>message('synthetic reply'))];
+ const batches=collectBoundConversationBatches({...links(),messages},scope);
+ assert.deepEqual(batches.map(b=>b.events.length),[100,1]);
+ assert.equal(batches.flatMap(b=>b.events).filter(e=>e.type==='reply').length,99);
+ assert.equal(batches.flatMap(b=>b.events).filter(e=>e.type==='new_dm').length,1);
+ assert.equal(batches.flatMap(b=>b.events).filter(e=>e.type==='zoom_invite').length,1);
+ for(const b of batches)assert.doesNotThrow(()=>previewBatch(b,'_demo_owner_'));
+});
+test('empty observation still returns one valid empty batch for coverage review',()=>{
+ const batches=collectBoundConversationBatches({...links(),messages:[]},scope);
+ assert.equal(batches.length,1);assert.equal(batches[0].events.length,0);
 });

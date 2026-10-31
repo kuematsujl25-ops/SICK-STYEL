@@ -53,7 +53,7 @@ Zoomという語があるだけでは案内としない。明確な送信側の�
 
 ## 読取専用DOMアダプタ（合成検証のみ）
 
-`dom-adapter.js` の `collectBoundConversation(bindings, scope)` は、既に特定されたDOM要素参照を読み取り、既存 `previewBatch` が受け取れる許可リストJSONを返す。出力はvalidateBatchで検証する。本文はZoom語の候補検出にのみ使用し、自由文・住所・添付・DM URL・未知フィールドを返さない。全候補を本人未確認とし、初回送信・明確な招待を自動確定しない。
+`dom-adapter.js` の `collectBoundConversationBatches(bindings, scope)` は、既に特定されたDOM要素参照を読み取り、既存 `previewBatch` が受け取れる許可リストJSONの配列を返す。出力はvalidateBatchで検証する。本文はZoom語の候補検出にのみ使用し、自由文・住所・添付・DM URL・未知フィールドを返さない。全候補を本人未確認とし、初回送信・明確な招待を自動確定しない。
 
 bindings: `ownerLink`, `peerLink`, `messages: [{article, row, dateLabel}]`。
 scope: `capturedAt`, `rangeStart`, `rangeEnd`, `timeZone`。
@@ -66,3 +66,6 @@ rowはメッセージ配置領域、dateLabelは対応する独立UI日時ラベ
 追加7テスト：許可リスト出力、本文日付と曜日の排除、日時の非表示・包含・タイムゾーン、曖昧な左右配置、初回DM断定防止、要素不正・件数制限、メタデータ自由文漏洩防止。実本文や実アカウントをfixtureに使用しない。
 
 この追加後の全体検証は496テスト成功（既存482＋試算7＋DOMアダプタ7）、失敗0。ローカル画面の「収集未接続・手動観測JSON」表示をブラウザで確認。実会話の追加読取・実データ取込・外部レビューは行っていない。
+
+
+独立レビューの境界値指摘に対応：100メッセージから101候補になる場合も失わないよう、生成候補を最大100件ずつのバッチに分割する。呼出側は返された全バッチを順にプレビューする必要がある（先頭バッチだけを使わない）。空観測も範囲確認用に空バッチ1件を返す。

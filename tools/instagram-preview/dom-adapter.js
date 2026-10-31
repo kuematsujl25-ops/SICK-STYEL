@@ -27,7 +27,7 @@ function direction(article,row){
  const left=Math.abs(a.left-r.left)<=12,right=Math.abs(a.right-r.right)<=12;
  return left&&!right?'inbound':right&&!left?'outbound':'unknown';
 }
-export function collectBoundConversation({ownerLink,peerLink,messages},scope){
+export function collectBoundConversationBatches({ownerLink,peerLink,messages},scope){
  if(!visible(ownerLink)||!visible(peerLink)||!Array.isArray(messages)||messages.length>100)throw Error('表示範囲未確認');
  const owner=handle(ownerLink),account=handle(peerLink);
  if(owner===account)throw Error('会話相手未確認');
@@ -43,5 +43,9 @@ export function collectBoundConversation({ownerLink,peerLink,messages},scope){
   if(mentionsZoom&&dir!=='inbound')add('zoom_invite','ambiguous_zoom',dir==='unknown'?'direction_unknown':'ambiguous_invitation');
  }
  // Allowlist construction: no input spread, text, URL, attachments, selectors, or raw DOM.
- return validateBatch({version:1,owner,source:'browser_observation',capturedAt:scope.capturedAt,rangeStart:scope.rangeStart,rangeEnd:scope.rangeEnd,coverage:'partial',events});
+ const batches=[];
+ for(let offset=0;offset<Math.max(events.length,1);offset+=100){
+  batches.push(validateBatch({version:1,owner,source:'browser_observation',capturedAt:scope.capturedAt,rangeStart:scope.rangeStart,rangeEnd:scope.rangeEnd,coverage:'partial',events:events.slice(offset,offset+100)}));
+ }
+ return batches;
 }
