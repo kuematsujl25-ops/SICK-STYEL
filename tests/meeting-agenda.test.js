@@ -45,13 +45,13 @@ test('persisted reminders deduplicate concurrent ticks and survive reload; resch
 });
 test('workspace revision guard rejects reminder when schedule changed between read and insert',async t=>{
  const store=await fixture(t);await store.put('workspace',{orgSales:[org()]});
- const wrapped={...store,async query(sql,args){if(sql.startsWith('INSERT INTO'))await store.put('workspace',{orgSales:[]});return store.query(sql,args);}};
+ const wrapped={...store,async transaction(commands){if(commands[0][0].startsWith('INSERT INTO'))await store.put('workspace',{orgSales:[]});return store.transaction(commands);}};
  assert.equal((await runMeetingReminders(wrapped,now)).created,0);
  assert.equal((await listNotifications(store)).length,0);
 });
 test('burst is bounded and next tick catches remaining meetings; late resume after start emits nothing',async t=>{
  const store=await fixture(t);await store.put('workspace',{orgSales:Array.from({length:13},(_,i)=>org({id:'org-'+i}))});
- for(const [tick,count] of [6,6,1].entries())assert.equal((await runMeetingReminders(store,new Date(now.getTime()+tick*60000))).created,count);
+ for(const [tick,count] of [13,0,0].entries())assert.equal((await runMeetingReminders(store,new Date(now.getTime()+tick*60000))).created,count);
  assert.equal((await listNotifications(store)).length,13);
  assert.equal((await runMeetingReminders(store,new Date(now.getTime()+600000))).created,0);
 });
@@ -93,9 +93,9 @@ test('transient push failure retries only affected devices; concurrent ticks pre
   const remaining=await store.query('SELECT name FROM ss_documents WHERE name LIKE $1',['notify-device-v1:%']);assert.equal(remaining.length,3,'expired subscription is removed');
   for(const name of ['fourth','fifth'])await subscribe(store,{endpoint:'https://fcm.googleapis.com/fcm/send/'+name,keys});
   await store.put('workspace',{orgSales:Array.from({length:13},(_,i)=>org({id:'batch-'+i,initialZoomAt:at}))});
-  let internal=0,external=0,active=0,peak=0;const counted={...store,async doc(...args){internal++;return store.doc(...args);},async query(...args){internal++;return store.query(...args);}};
+  let internal=0,external=0,active=0,peak=0;const counted={...store,async doc(...args){internal++;return store.doc(...args);},async query(...args){internal++;return store.query(...args);},async transaction(...args){internal++;return store.transaction(...args);}};
   const send=async(url,init)=>{external++;active++;peak=Math.max(peak,active);assert.equal(init.redirect,'error');assert.ok(init.signal instanceof AbortSignal);await new Promise(resolve=>setImmediate(resolve));active--;return new Response(null,{status:201});};
-  for(const expected of [6,6,1]){internal=0;external=0;assert.equal((await runMeetingReminders(counted,new Date(),send)).created,expected);assert.equal(external,expected*5);assert.ok(external<=30);assert.ok(internal<=224);}
+  for(const [tick,expected] of [6,6,1].entries()){internal=0;external=0;assert.equal((await runMeetingReminders(counted,new Date(),send)).created,tick===0?13:0);assert.equal(external,expected*5);assert.ok(external<=30);assert.ok(internal<=28,'D1 API calls including each batch once: '+internal);}
   assert.ok(peak<=3,'only three push requests in flight');
   assert.equal((await listNotifications(store)).filter(i=>i.detail?.token?.includes('batch-')&&i.detail.deliveryComplete).length,13,'13 simultaneous meetings delivered on all five devices before start');
   await store.put('workspace',{orgSales:[org({id:'cancel-between-devices',initialZoomAt:at})]});
@@ -119,9 +119,9 @@ test('transient push failure retries only affected devices; concurrent ticks pre
  });
 });
 
-test('one reminder insert failure does not prevent the other due meetings in the batch',async t=>{
+test('atomic reminder capture retries all evidence after a transient insert failure',async t=>{
  const store=await fixture(t);await store.put('workspace',{orgSales:Array.from({length:6},(_,i)=>org({id:'isolated-'+i}))});let failed=false;
- const wrapped={...store,async query(sql,args){if(!failed&&sql.startsWith('INSERT INTO')){failed=true;throw Error('synthetic insert failure');}return store.query(sql,args);}};
- await assert.rejects(runMeetingReminders(wrapped,now),/synthetic/);assert.equal((await listNotifications(store)).length,5);
- assert.equal((await runMeetingReminders(store,now)).created,1);assert.equal((await listNotifications(store)).length,6);
+ const wrapped={...store,async transaction(commands){if(!failed&&commands[0][0].startsWith('INSERT INTO')){failed=true;throw Error('synthetic insert failure');}return store.transaction(commands);}};
+ await assert.rejects(runMeetingReminders(wrapped,now),/synthetic/);assert.equal((await listNotifications(store)).length,0);
+ assert.equal((await runMeetingReminders(store,now)).created,6);assert.equal((await listNotifications(store)).length,6);
 });

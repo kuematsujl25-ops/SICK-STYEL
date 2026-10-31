@@ -6,7 +6,7 @@ import {runInNewContext} from 'node:vm';
 // controlled jobs. Cloudflare HTTP imports cannot be loaded by Node directly.
 const source=readFileSync('workers/index.js','utf8').replace(/^import .*;\n/gm,'').replace('export default {','globalThis.worker = {');
 function scheduledHarness(reminders,recurring,proactive=async()=>{}){
- const context={Date,Promise,console,createServer:()=>({}),httpServerHandler:()=>({}),handler:()=>{},createD1Store:()=>({}),withRuntime:(_,fn)=>fn(),runProactive:proactive,runMeetingReminders:reminders,runRecurringTasks:recurring};runInNewContext(source,context);return context.worker;
+ const context={Date,Promise,console,fetch:()=>{},createServer:()=>({}),httpServerHandler:()=>({}),handler:()=>{},createD1Store:()=>({}),withRuntime:(_,fn)=>fn(),runProactive:proactive,runMeetingReminders:reminders,runRecurringTasks:recurring};runInNewContext(readFileSync('lib/scheduled-minute.js','utf8').replace(/^import .*;\n/gm,'').replace('export async function','async function')+'\n'+source,context);return context.worker;
 }
 test('quarter-hour recurring failure waits for existing reminder delivery before rejecting',async()=>{
  let finishReminder;const reminder=new Promise(resolve=>{finishReminder=resolve;});let called=false,settled=false,protectedWork;
