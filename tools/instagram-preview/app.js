@@ -2,7 +2,7 @@ import sample from './sample.js';
 import {previewBatch,stagePreview,summarize,TYPES} from './model.js';
 const $=id=>document.getElementById(id);
 let preview=null,ledger=[];
-function invalidate(){preview=null;$('stage').disabled=true;$('confirm').checked=false;$('scope').textContent='入力変更後は再検査してください';$('rows').replaceChildren();}
+function invalidate(){dispatchEvent(new Event('instagram-invalidated'));preview=null;$('stage').disabled=true;$('confirm').checked=false;$('scope').textContent='入力変更後は再検査してください';$('rows').replaceChildren();}
 for(const id of ['input','owner'])$(id).addEventListener('input',invalidate);
 $('confirm').onchange=()=>{$('stage').disabled=!preview||!$('confirm').checked;};
 function show(){const s=summarize(ledger,$('month').value);$('result').textContent=Object.entries(s.monthly).map(([t,n])=>`${TYPES[t]}：確認済み ${n}アカウント`).join(' ／ ')+'（部分確認）';$('cohort').textContent=`初回DM月コホート：${s.cohort.size}先 → 観測済み期間の返信 ${s.cohort.reply}先 ／ Zoom案内 ${s.cohort.zoom_invite}先。月内活動とは別集計。`;}
@@ -18,7 +18,7 @@ $('preview').onclick=()=>{invalidate();safely(()=>{
  const tr=table.insertRow();for(const v of values)tr.insertCell().textContent=v;
  }$('rows').append(table);
  });};
-$('stage').onclick=()=>safely(()=>{if(!preview||!$('confirm').checked)throw Error('confirm');ledger=stagePreview(ledger,preview);show();$('confirm').checked=false;$('stage').disabled=true;});
+$('stage').onclick=()=>safely(()=>{if(!preview||!$('confirm').checked)throw Error('confirm');ledger=stagePreview(ledger,preview);dispatchEvent(new CustomEvent('instagram-staged',{detail:ledger}));show();$('confirm').checked=false;$('stage').disabled=true;});
 
 // Do not retain candidate text in the back/forward cache. No storage or network writes.
 addEventListener('pagehide',()=>{ledger=[];preview=null;$('input').value='';$('rows').replaceChildren();$('result').textContent='一時データを消去しました';$('cohort').textContent='';$('scope').textContent='未読込';$('owner').value='';$('confirm').checked=false;$('stage').disabled=true;});
