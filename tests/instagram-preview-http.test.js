@@ -1,0 +1,33 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {spawn} from 'node:child_process';
+import {mkdtemp,rm,readFile} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import path from 'node:path';
+test('preview page requires session, disallows writes, uses no-network CSP and preserves workspace',async t=>{
+ const dir=await mkdtemp(path.join(tmpdir(),'ig-preview-http-'));
+ const proc=spawn(process.execPath,['server.js'],{env:{...process.env,PORT:'0',DATA_DIR:dir,SETUP_TOKEN:'synthetic-preview-setup'},stdio:['ignore','pipe','pipe']});
+ t.after(async()=>{if(proc.exitCode===null)await new Promise(r=>{proc.once('exit',r);proc.kill();});await rm(dir,{recursive:true,force:true});});
+ let out='';const base=await new Promise((resolve,reject)=>{proc.stdout.on('data',b=>{out+=b;const m=out.match(/http:\/\/127.0.0.1:\d+/);if(m)resolve(m[0]);});proc.on('error',reject);proc.on('exit',c=>reject(Error('server exit '+c)));});
+ const route=base+'/api/instagram-sales-preview';
+ assert.equal((await fetch(route)).status,401);
+ const signup=await fetch(base+'/api/setup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:'preview@example.com',password:'Synthetic-preview-password',setupToken:'synthetic-preview-setup'})});
+ assert.equal(signup.status,200);const headers={Cookie:signup.headers.get('set-cookie').split(';')[0]};
+ const before=await(await fetch(base+'/api/data',{headers})).json();
+ const r=await fetch(route,{headers}),html=await r.text();assert.equal(r.status,200);assert.match(r.headers.get('content-type'),/text\/html/);assert.equal(r.headers.get('cache-control'),'no-store');
+ const csp=r.headers.get('content-security-policy');for(const value of ["connect-src 'none'","form-action 'none'","frame-ancestors 'none'","script-src 'self'"])assert.ok(csp.includes(value));
+ assert.match(html,/収集未接続・手動観測JSON/);assert.match(html,/KPI保存なし/);assert.ok(!html.includes('<style>'));assert.ok(!html.includes('value="demo_business"'));
+ for(const file of ['app.js','model.js','sample.js','style.css'])assert.equal((await fetch(base+'/ig-preview/'+file)).status,200);
+ assert.equal((await fetch(base+'/ig-preview/index.html')).status,404);
+ assert.equal((await fetch(base+'/ig-preview/dom-adapter.js')).status,404);
+ assert.equal((await fetch(route,{method:'HEAD',headers})).status,200);
+ assert.equal((await fetch(route,{method:'POST',headers,body:'{}'})).status,405);
+ assert.deepEqual(await(await fetch(base+'/api/data',{headers})).json(),before);
+ await fetch(base+'/api/logout',{method:'POST',headers});assert.equal((await fetch(route,{headers})).status,401);
+});
+test('published modules match local prototype and contain no candidate transmission or persistence paths',async()=>{
+ for(const name of ['app.js','model.js','sample.js'])assert.equal(await readFile('public/ig-preview/'+name,'utf8'),await readFile('tools/instagram-preview/'+name,'utf8'));
+ const js=await readFile('public/ig-preview/app.js','utf8');
+ assert.doesNotMatch(js,/\b(fetch|XMLHttpRequest|WebSocket|sendBeacon|localStorage|sessionStorage|indexedDB)\b/);
+ assert.match(js,/pagehide/);
+});

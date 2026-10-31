@@ -19,7 +19,7 @@ const security={
  // 追跡・リファラ漏洩のリスクは抑えている。
  'Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
 };
-function secured(response){const r=new Response(response.body,response);for(const [k,v]of Object.entries(security))r.headers.set(k,v);return r;}
+function secured(response){const r=new Response(response.body,response);for(const [k,v]of Object.entries(security))if(k!=='Content-Security-Policy'||!r.headers.has(k))r.headers.set(k,v);return r;}
 export default {
  async fetch(request,env,ctx){
   const url=new URL(request.url);
