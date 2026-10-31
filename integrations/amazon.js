@@ -1,3 +1,4 @@
+import {productSnapshot,analyzeAmazon} from '../public/amazon-analysis.js';
 import {orderInsight} from '../public/amazon-insights.js';
 // Amazon Selling Partner API（日本: Far East リージョン）連携。
 // 公式のLWA認可（Webサイト認可フロー or セルフ認可）のみ使用し、Amazonのパスワードは扱いません。
@@ -48,7 +49,7 @@ export async function connect(store,session,url){
  await store.put('amazon-private',{sellerId:/^[A-Z0-9]{1,40}$/.test(seller)?seller:null,encrypted:encrypt({refresh:b.refresh_token}),connectedAt:new Date().toISOString()});
 }
 export async function safeStatus(store){const p=await privateData(store);const r=await store.doc('amazon-cache');const cache=r?JSON.parse(r.body):null;const self=!p&&!!env().AMAZON_REFRESH_TOKEN;
- const status={configured:config(),websiteFlow:websiteFlowReady(),connected:!!(config()&&(p||self)),authorization:p?'website':self?'self':null,sellerId:p?.sellerId||null,connectedAt:p?.connectedAt||null,marketplace:'Amazon.co.jp ('+MARKETPLACE_ID+')',salesDefinition:SALES_DEFINITION,ordersDefinition:ORDERS_DEFINITION,cache};return {...status,readiness:connectionReadiness(status,'amazon')};}
+ const status={configured:config(),websiteFlow:websiteFlowReady(),connected:!!(config()&&(p||self)),authorization:p?'website':self?'self':null,sellerId:p?.sellerId||null,connectedAt:p?.connectedAt||null,marketplace:'Amazon.co.jp ('+MARKETPLACE_ID+')',salesDefinition:SALES_DEFINITION,ordersDefinition:ORDERS_DEFINITION,cache};return {...status,analysis:analyzeAmazon(cache),readiness:connectionReadiness(status,'amazon')};}
 // --- 同期 ---
 const jstDate=d=>d.toLocaleDateString('sv-SE',{timeZone:TZ});
 function addDays(ymd,n){const d=new Date(ymd+'T00:00:00+09:00');d.setUTCDate(d.getUTCDate()+n);return jstDate(d);}
@@ -65,7 +66,7 @@ export async function sync(store,now=new Date()){
   const access=await accessToken(auth.token);const warnings=[];const range=salesInterval(now);let salesError=null,ordersError=null;
   let daily=null;try{const m=await sp('/sales/v1/orderMetrics',access,{marketplaceIds:MARKETPLACE_ID,interval:range.interval,granularity:'Day',granularityTimeZone:TZ});if(!Array.isArray(m?.payload))throw new AmazonError('invalid_response');daily=parseMetrics(m.payload);if(daily.length!==m.payload.length||new Set(daily.map(d=>d.date)).size!==daily.length||daily.some(d=>d.date<range.start||d.date>range.end))throw new AmazonError('invalid_response');if(daily.some(d=>d.sales===null||d.orders===null))warnings.push('Sales APIの一部金額・注文数は未取得またはJPY以外です。合計は未取得として扱います。');}catch(e){daily=null;salesError=e.message;warnings.push('売上（Sales API）: '+e.message);}
   // Orders API: 1分あたりの上限が小さいため最大5ページ（500件）まで。
-  let orders=null,truncated=false;try{const list=[];let next;const createdAfter=new Date(range.start+'T00:00:00+09:00').toISOString();for(let page=0;page<5;page++){const r=await sp('/orders/2026-01-01/orders',access,{marketplaceIds:MARKETPLACE_ID,createdAfter,maxResultsPerPage:'100',includedData:'FULFILLMENT,PACKAGES',paginationToken:next});if(!Array.isArray(r?.orders))throw new AmazonError('invalid_response');list.push(...r.orders);next=r.pagination?.nextToken;if(!next)break;}truncated=!!next;if(list.some(o=>!o||typeof o.fulfillment?.fulfillmentStatus!=='string'||!o.fulfillment.fulfillmentStatus.trim()))throw new AmazonError('fulfillment_missing','注文の配送状況を取得できませんでした。前回の取得結果を保持しています。');orders=summarizeOrders(list);}catch(e){ordersError=e.message;warnings.push('注文（Orders API）: '+e.message);}
+  let orders=null,products=null,truncated=false;try{const list=[];let next;const createdAfter=new Date(range.start+'T00:00:00+09:00').toISOString();for(let page=0;page<5;page++){const r=await sp('/orders/2026-01-01/orders',access,{marketplaceIds:MARKETPLACE_ID,createdAfter,maxResultsPerPage:'100',includedData:'FULFILLMENT,PACKAGES',paginationToken:next});if(!Array.isArray(r?.orders))throw new AmazonError('invalid_response');list.push(...r.orders);next=r.pagination?.nextToken;if(!next)break;}truncated=!!next;if(list.some(o=>!o||typeof o.fulfillment?.fulfillmentStatus!=='string'||!o.fulfillment.fulfillmentStatus.trim()))throw new AmazonError('fulfillment_missing','注文の配送状況を取得できませんでした。前回の取得結果を保持しています。');orders=summarizeOrders(list);products=productSnapshot(list);}catch(e){ordersError=e.message;warnings.push('注文（Orders API）: '+e.message);}
   if(!daily&&!orders)throw new AmazonError('all',warnings.join(' / '));
   const month=jstDate(now).slice(0,7);
   const stamp=new Date().toISOString(),period={start:range.start,end:range.end,timeZone:TZ};
@@ -78,7 +79,7 @@ export async function sync(store,now=new Date()){
    // dailyHistoryが存在しない場合はdailyを種にしてから新しいレスポンスをマージすることで、アップグレード時に
    // それまで取得済みだった日付が消えてしまわないようにする（Codex独立レビュー指摘）。
    daily:daily??cache.daily??null,dailyHistory:daily?mergeDailyHistory(cache.dailyHistory??cache.daily,daily):cache.dailyHistory??null,
-   ...monthly,month:daily?month:cache.month??null,orders:orders??cache.orders??null,ordersTruncated:orders?truncated:cache.ordersTruncated??false};
+   products:products??cache.products??null,...monthly,month:daily?month:cache.month??null,orders:orders??cache.orders??null,ordersTruncated:orders?truncated:cache.ordersTruncated??false};
   await store.put('amazon-cache',next);return next;
  }catch(e){await store.put('amazon-cache',{...cache,syncVerified:false,error:e.message,attemptedAt:new Date().toISOString()});throw e;}finally{await release();}
 }
