@@ -38,7 +38,8 @@ export default {
    if(event.cron==='0 23 * * *'){await recurring();return;}
    if(event.cron==='* * * * *'){
     // Reminder delivery stays independent from recurring-task failures.
-    await Promise.all([runMeetingReminders(store),scheduledAt.getUTCMinutes()%15===0?recurring():Promise.resolve()]);return;
+    const results=await Promise.allSettled([runMeetingReminders(store),scheduledAt.getUTCMinutes()%15===0?recurring():Promise.resolve()]);
+    const failure=results.find(r=>r.status==='rejected');if(failure)throw failure.reason;return;
    }
    // Cron Triggers are UTC. 09:00 / 20:00 / 22:00 Asia/Tokyo = 00:00 / 11:00 / 13:00 UTC.
    const kind=scheduledKind(event.cron);
