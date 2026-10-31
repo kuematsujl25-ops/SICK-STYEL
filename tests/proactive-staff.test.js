@@ -134,3 +134,14 @@ test('legacy manual queue cannot starve approved staff aggregate requests',async
  for(const title of ['旧依頼A','旧依頼B']){const current=await readTeam(store);await writeTeam(store,{revision:current.revision,command:{action:'create',job:{role:'coo',title,objective:'ローカル試験',facts:[]}}});}
  await runProactive(store,{now});const team=await readTeam(store);assert.equal(team.state.jobs.filter(j=>j.proactiveSource==='staffTasks').length,1);assert.equal(team.state.jobs.filter(j=>!j.proactiveSource).length,2);
 });
+
+test('Amazon is local-only, opt-in, CAS protected and deduplicated with original records unchanged',async t=>{
+ const store=await fixture(t);await store.put('workspace',workspace);await store.put('amazon-cache',{salesSyncedAt:now});
+ const original=await store.doc('amazon-cache');const c=await enable(store);
+ await configureProactive(store,{revision:c.revision,action:'configure',enabled:true,permissions:{...permissions,amazon:true}});
+ const r=await runProactive(store,{now});assert.ok(r.state.tasks.some(t=>t.source==='amazon'));assert.ok(r.state.tasks.filter(t=>t.source==='amazon').every(t=>t.assignee==='EC最適化'&&!t.modelJobId));assert.ok(r.state.amazonAnalysis);assert.equal((await store.doc('amazon-cache')).body,original.body);
+ assert.match((await runProactive(store,{now})).skipped,/本日/);
+ const current=await readProactive(store);await configureProactive(store,{revision:current.revision,action:'configure',enabled:true,permissions:{...permissions,amazon:true}});
+ const racing={...store,doc:async name=>{const r=await store.doc(name);if(name==='amazon-cache')await store.put(name,{salesSyncedAt:now});return r;}};
+ await assert.rejects(runProactive(racing,{now:'2026-10-25T09:00:00Z'}),/更新/);
+});

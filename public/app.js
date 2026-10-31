@@ -1,3 +1,4 @@
+import {renderAmazonAnalysis} from './amazon-analysis.js';
 import {renderRecurringTasks,recurringTemplate} from './recurring-tasks.js';
 import {renderTodayMeetings,renderMeetingReminder} from './meeting-agenda.js';
 import {bindNottaText} from './meeting-notes-ui.js';
@@ -268,6 +269,7 @@ function amazonView(){const c=amz?.cache;const o=c?.orders;const t=today();const
    return `<div class="barchart" role="img" aria-label="月別売上の棒グラフ（直近12か月）">${rows.map(r=>barDiv(r.month,r.value,max,r.month===month()?'today':'')).join('')}</div><p class="note">右端が今月（進行中・未完了月）です。データが揃っていない過去月は「未取得」（点線）で、0円として扱っていません。</p>`;})()}
  </section>
  <section class="panel"><h2>注文・発送状況</h2><p>${esc(amz?.ordersDefinition||'')}</p>${o?`<div class="tablewrap"><table class="data"><thead><tr><th>状況</th><th>件数</th></tr></thead><tbody>${Object.entries(o.counts).map(([k,v])=>`<tr><td>${esc(statusJa[k]||k)}</td><td>${v}</td></tr>`).join('')}</tbody></table></div>${o.open.length?`<h3>未発送の注文（古い順）</h3>${o.open.map(x=>`<div class="listrow"><div class="grow"><b>${esc(x.orderId)}</b><small>${fmtTime(x.createdTime)} · ${esc(statusJa[x.status]||x.status)} · ${x.fulfilledBy==='AMAZON'?'FBA':'自己発送'} · ${x.items}点</small></div></div>`).join('')}`:''}`:'<p class="note">未取得（Orders API未同期）</p>'}</section>
+ ${renderAmazonAnalysis(amz?.analysis,esc)}
  ${renderOrderInsights(amz)}
  ${renderAdInsights(adsStatus)}
  ${renderRoas()}

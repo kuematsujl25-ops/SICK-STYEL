@@ -39,12 +39,11 @@ export default {
     // Reuse the existing minute cron: Free allows only five triggers/account.
     // 23:00 UTC = 08:00 JST; quarter-hours also recover delayed generation.
     // Reminder delivery stays independent from recurring-task failures.
-    const results=await Promise.allSettled([runMeetingReminders(store),scheduledAt.getUTCMinutes()%15===0?recurring():Promise.resolve()]);
+    const results=await Promise.allSettled([runMeetingReminders(store),scheduledAt.getUTCMinutes()%15===0?recurring():Promise.resolve(),scheduledAt.getUTCHours()===23&&[0,15].includes(scheduledAt.getUTCMinutes())?runProactive(store,{now:scheduledAt.toISOString(),trigger:'morning'}):Promise.resolve()]);
     const failure=results.find(r=>r.status==='rejected');if(failure)throw failure.reason;return;
    }
    // Cron Triggers are UTC. 09:00 / 20:00 / 22:00 Asia/Tokyo = 00:00 / 11:00 / 13:00 UTC.
    const kind=scheduledKind(event.cron);
-   if(kind==='analysis'){try{await runProactive(store,{trigger:'scheduled'});}catch{console.error(JSON.stringify({event:'proactive_analysis_failed'}));}}
    if(event.cron==='10 0 * * *'||['sales','analysis'].includes(kind)) {
     try{if((await amazon.safeStatus(store)).connected)await amazon.sync(store);}
     catch{console.error(JSON.stringify({event:'scheduled_sync_failed',service:'amazon'}));}
