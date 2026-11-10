@@ -31,7 +31,7 @@ npm run cloud:setup
 7. 管理者作成（`npm run admin:create:remote` と同じ）。
 8. 任意で公開URLの動作確認（`npm run verify:deployment`）。
 
-再デプロイは `npm run deploy`（無料プラン確認の記録が24時間以内である必要があります。古い場合は `npm run cloud:setup` を再実行）。
+既存本番の更新は `npm run deploy` で計画確認、`npm run deploy -- --dry-run` でビルド確認。最新SHAの独立レビュー後に `npm run deploy:preflight` で本人認証・無料条件・Version記録・D1バックアップ/ローカル復元・復旧手順を確認し、1時間以内に `npm run deploy -- --apply` を実行する。旧Secret登録・マイグレーションを含むスクリプトや `cloud:setup` は既存本番のコード更新に使わない。詳細は[AI社員の本番手順](ai-team-runtime.md)を参照。
 
 ## 無料枠の上限と、上限時の動作
 

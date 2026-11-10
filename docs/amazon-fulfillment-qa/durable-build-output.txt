@@ -1,0 +1,5 @@
+
+> sickstyle-manager@1.0.0 build
+> node scripts/build.js
+
+Build checks passed: static assets, manifest, API imports, syntax, domain validation. No database is touched at build time.

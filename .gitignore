@@ -16,3 +16,7 @@ node_modules/
 .local-admin-input*
 .cloudflare-free.json
 .deployment.json
+
+.local-amazon-demo/
+# Local dependency symlink in worktrees
+/node_modules

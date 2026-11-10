@@ -37,3 +37,19 @@ test('Amazon認可: state固定・トークン暗号化・同期・失敗時の�
  await amazon.disconnect(store);st=await amazon.safeStatus(store);assert.equal(st.connected,false);assert.equal(st.cache,null);
  assert.equal(calls.every(h=>h.startsWith('api.amazon.com')||h.startsWith('sellingpartnerapi-fe.amazon.com')),true);
 });
+test('dailyHistory導入前の旧いキャッシュ（dailyだけ）からアップグレードしても、過去のローリングウィンドウの日付を消さずに種とする（Codex独立レビュー指摘の回帰）',async t=>{
+ const saved={...process.env};Object.assign(process.env,{AMAZON_LWA_CLIENT_ID:'amzn1.application-oa2-client.test',AMAZON_LWA_CLIENT_SECRET:'test-client-secret',AMAZON_REFRESH_TOKEN:'self-refresh-token',TOKEN_ENCRYPTION_KEY:randomBytes(32).toString('base64')});
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-amz-history-upgrade-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
+ t.after(async()=>{global.fetch=realFetch;process.env=saved;store.close();await rm(dir,{recursive:true,force:true});});
+ // dailyHistory導入前の旧いキャッシュ：dailyに過去のローリングウィンドウ（今回の新しい取得範囲の外）が入っている。
+ await store.put('amazon-cache',{daily:[{date:'2026-08-01',sales:1000,currency:'JPY',orders:1,units:1}]});
+ global.fetch=async(url,opt={})=>{const u=new URL(url);
+  if(u.href==='https://api.amazon.com/auth/o2/token')return Response.json({access_token:'Atza|access',expires_in:3600});
+  if(u.pathname==='/sales/v1/orderMetrics')return Response.json({payload:[{interval:'2026-10-16T00:00:00+09:00--2026-10-17T00:00:00+09:00',totalSales:{amount:'5000',currencyCode:'JPY'},orderCount:2,unitCount:2}]});
+  if(u.pathname==='/orders/2026-01-01/orders')return Response.json({orders:[]});
+  throw Error('unexpected '+u.href);};
+ await amazon.sync(store,new Date('2026-10-16T05:00:00Z'));
+ const st=await amazon.safeStatus(store);
+ assert.ok(st.cache.dailyHistory.some(d=>d.date==='2026-08-01'),'アップグレード前にdailyへ入っていた過去の日付が、dailyHistoryから失われていない');
+ assert.ok(st.cache.dailyHistory.some(d=>d.date==='2026-10-16'),'新しく取得した日付も含まれる');
+});
