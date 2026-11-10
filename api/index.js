@@ -1,3 +1,4 @@
+import {prepareTaskRetention} from '../lib/task-retention.js';
 import {importSalesEvents,readSalesLedger,voidSalesEvent,configureSalesOwner,salesStatus,mapSalesPeer,InstagramImportError} from '../lib/instagram-sales-import.js';
 import {salesKpiProjection} from '../lib/instagram-sales-kpi.js';
 import {instagramPreviewPage} from '../lib/instagram-preview-page.js';
@@ -166,8 +167,10 @@ export default async function handler(req,res){
   retainKpiHistory(await revisionOf(store),d);
   assertMeetingRecordsRetained(await revisionOf(store),d);
   prepareRecurringWrite(await revisionOf(store),d);
+  prepareTaskRetention(await revisionOf(store),d);
+  validate(d);
   await store.query('INSERT INTO ss_documents(name,body,revision) VALUES ($1,$2,0) ON CONFLICT(name) DO NOTHING',['workspace',JSON.stringify(empty())]);
-  const rows=await store.query('UPDATE ss_documents SET body=$1,revision=revision+1 WHERE name=$2 AND revision=$3 RETURNING revision',[JSON.stringify(d),'workspace',b.revision]);if(!rows.length)return json(res,409,{error:'他の端末で更新されました。再読み込みしてから編集してください'});return json(res,200,{ok:true,revision:rows[0].revision,recurringTasks:d.recurringTasks});
+  const rows=await store.query('UPDATE ss_documents SET body=$1,revision=revision+1 WHERE name=$2 AND revision=$3 RETURNING revision',[JSON.stringify(d),'workspace',b.revision]);if(!rows.length)return json(res,409,{error:'他の端末で更新されました。再読み込みしてから編集してください'});return json(res,200,{ok:true,revision:rows[0].revision,recurringTasks:d.recurringTasks,tasks:d.tasks,staffTasks:d.staffTasks});
  }
  if(route==='/api/backup'&&req.method==='GET'){res.setHeader('Content-Disposition',`attachment; filename="sickstyle-backup-${new Date().toISOString().slice(0,10)}.json"`);const sd=await store.doc('site-draft');return json(res,200,{version:1,exportedAt:new Date().toISOString(),data:await revisionOf(store),site:sd?JSON.parse(sd.body):null});}
  if(route==='/api/restore'&&req.method==='POST'){
@@ -178,6 +181,8 @@ export default async function handler(req,res){
   assertMeetingRecordsRetained(current,data,{restoreNotes:true});
   data=restoreRecurringTasks(current,data);
   data=validate(restoreKpiHistory(current,data));
+  prepareTaskRetention(current,data);
+  validate(data);
   retainKpiHistory(current,data);
   const result=await store.transaction([
    ['INSERT INTO ss_documents(name,body,revision) VALUES ($1,$2,0) ON CONFLICT(name) DO NOTHING',['workspace',JSON.stringify(empty())]],
