@@ -42,6 +42,7 @@ export function renderStaffTasks(tasks,ui,esc,today){
  <article><small>今日やること</small><strong>${dueToday}<em> 件</em></strong></article>
  <article><small>担当未設定</small><strong>${unassigned}<em> 件</em></strong></article></div>
  <section class="panel"><div class="panelhead"><h2>担当者別タスク <small id="stafftaskcount">${sorted.length} / ${active.length} 件</small></h2><button class="primary" data-new="staffTasks">＋ タスクを追加</button></div>
+ <p class="note">完了から7日後に自動でゴミ箱へ移動します。復元できます。</p>
  <div class="actions" role="tablist">${tabs.map(([k,l])=>`<button class="${ui.assignee===k?'primary':'secondary'}" data-stafftab="${k}">${esc(l)}</button>`).join('')}</div>
  <div class="formfields"><label>検索<input id="stafftaskq" value="${esc(ui.q||'')}" placeholder="件名・関連先・メモ"></label><label>並べ替え<select id="stafftasksort"><option value="due" ${ui.sort==='due'?'selected':''}>期限順</option><option value="priority" ${ui.sort==='priority'?'selected':''}>優先度順</option><option value="updated" ${ui.sort==='updated'?'selected':''}>更新順</option></select></label></div>
  ${sorted.length?`<div class="records">${sorted.map(x=>row(x,today,esc)).join('')}</div>`:'<div class="empty"><div aria-hidden="true">＋</div><b>該当するタスクはありません。</b><p>タスクを追加できます。</p></div>'}</section>
