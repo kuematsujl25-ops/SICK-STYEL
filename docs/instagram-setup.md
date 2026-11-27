@@ -1,5 +1,7 @@
 # Instagram本人認可・Metaアプリ設定
 
+> Issue #2: 現在は本番変更・Secrets変更が未承認です。[本人認証の引き継ぎ](integrations/issue-2-handoff.md)を優先してください。本PR修正版の登録コマンドは既定で計画表示のみ。旧版のコマンドをそのまま実行しないでください。`--apply`と本番反映は別途承認が必要です。
+
 2026-10-16にMeta公式ドキュメントをブラウザーで確認しました。Business Loginは2026-03-13更新、Media Insightsは2026-09-11更新、Webhook権限表は2026-10-14更新の内容を参照しています。APIは公式リファレンスに記載の `v26.0` を明示して利用します。
 
 ## 現在の状態と再開手順（2026-10-17）
@@ -75,3 +77,13 @@ InstagramのパスワードはSICKSTYLEでは入力・使用・保存しませ�
 - [Webhookのイベント形式](https://developers.facebook.com/documentation/instagram-platform/webhooks/examples)
 
 公開先は無料のworkers.dev URLです。OAuth callback / privacy / data-deletion / webhookの登録先は、その実URLに合わせて設定してください。無料枠停止中のWebhook受信漏れは遡って補完できないため、画面の観測範囲を確認してください。
+
+## 新しいMetaアプリ：統合ログイン（本人・読み取り専用）
+
+Metaの[統合ログインの手順](https://developers.facebook.com/documentation/instagram-platform/instagram-api-with-unified-login/get-started)に対応する別モードです。旧Instagramログイン・Metricool取り込みは変更せず、既定では統合モードを有効にしません。
+
+- Metaで既存のカスタム構成が統合ログインに対応していることを確認します。Instagramアカウントのみ、60日、`instagram_basic` と `instagram_manage_insights` のみ。投稿・DM・広告・コメントやビジネスポートフォリオ管理権限が必須なら進めません。Webhooksはこの接続では登録しません。
+- HTTPSリダイレクトは既存の `/api/instagram/callback`。本番設定の明示承認を得るまでは Meta への登録や本番Secrets更新を行いません。
+- `node scripts/set-secrets.js instagram-unified --plan` は確認だけです。本番で対応版が稼働し、管理者が承認した後だけ、同コマンドの `--apply` を端末で実行します。旧Instagram用ではなくMeta App ID / App Secret、構成 ID、対象ポートフォリオ ID、対象Instagramユーザー名を使用。秘密値をチャットやGitに貼らないでください。`INSTAGRAM_LOGIN_MODE=unified` は最後に設定されます。
+- 管理アプリの「Instagramを接続」から管理者本人が同意し、対象アカウントは1件のみ選びます。接続時にMetaから返る権限・期限・ポートフォリオ・対象アカウントを照合します。接続後「今すぐ同期」で成功時刻と分析値を確認します。期限切れは本人の再認可が必要。自動延長はしません。
+- 接続解除は管理アプリの保存データを削除します。Meta側の権限取り消しはBusiness Suiteの「ビジネス連携」で本人が行ってください。

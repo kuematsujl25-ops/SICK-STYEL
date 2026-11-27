@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img" aria-labelledby="title desc">
+<title id="title">SICK STYLE 接続状態の表示仕様</title><desc id="desc">コードで作成した検討用素材。実際の接続状態を示すものではありません。</desc>
+<rect width="1200" height="420" fill="#0a0a0b"/>
+<g fill="#f4f4f5" font-family="sans-serif"><text x="40" y="60" font-size="24" letter-spacing="4">SICK STYLE</text><text x="40" y="103" font-size="16" fill="#9a9aa1">外部連携 / 状態表示の検討素材</text></g>
+<g fill="#141416" stroke="#2c2c31"><rect x="40" y="140" width="352" height="206" rx="12"/><rect x="424" y="140" width="352" height="206" rx="12"/><rect x="808" y="140" width="352" height="206" rx="12"/></g>
+<g font-family="sans-serif" fill="#f4f4f5"><text x="64" y="184" font-size="15">APP SETTINGS</text><text x="448" y="184" font-size="15">READ VERIFICATION</text><text x="832" y="184" font-size="15">VERIFIED READ</text><text x="64" y="240" font-size="28">認証待ち</text><text x="448" y="240" font-size="28">同期未検証</text><text x="832" y="240" font-size="28">接続済み</text></g>
+<g font-family="sans-serif" fill="#9a9aa1" font-size="14"><text x="64" y="285">本人が公式画面で設定・認可</text><text x="448" y="285">最終試行・未取得・エラーを確認</text><text x="832" y="285">取得元・最終成功日時を表示</text><text x="40" y="389">表示仕様の例です。実接続・Canva制作済みを意味しません。</text></g></svg>

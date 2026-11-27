@@ -1,0 +1,4 @@
+service,date_jst,metric,value,unit,source,observed_at
+base,,sales,,JPY,official_dashboard_manual,
+base,,orders,,count,official_dashboard_manual,
+base,,visits,,count,official_dashboard_manual,

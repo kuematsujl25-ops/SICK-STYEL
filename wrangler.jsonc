@@ -23,8 +23,15 @@
       "migrations_dir": "migrations"
     }
   ],
+  "r2_buckets": [
+    {
+      "binding": "OWNER_MEDIA",
+      "bucket_name": "sickstyle-owner-media"
+    }
+  ],
   "vars": {
     "COOKIE_SECURE": "true",
+    "RECURRING_TASKS_ENABLED": "false",
     "META_API_VERSION": "v26.0",
     "INSTAGRAM_ENABLE_MESSAGING": "true",
     "MAINTENANCE_MODE": "false",
@@ -32,8 +39,11 @@
   },
   "triggers": {
     "crons": [
+      "* * * * *",
       "0 0 * * *",
-      "10 0 * * *"
+      "10 0 * * *",
+      "0 11 * * *",
+      "0 13 * * *"
     ]
   },
   "observability": {

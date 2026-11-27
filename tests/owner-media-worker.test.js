@@ -1,0 +1,80 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
+import {resolve,dirname} from 'node:path';
+import {readFileSync} from 'node:fs';
+import {Miniflare,convertV4MiniflareOptions} from 'miniflare';
+
+test('Worker: owner sends an explicit request, scoped receiver returns results; video never becomes public',async t=>{
+ const script=resolve('.wrangler/build/index.js'),secret='a2'.repeat(32),origin='https://example.com';
+ const mf=new Miniflare(convertV4MiniflareOptions({workers:[{
+  name:'sickstyle-owner-media-test',scriptPath:script,modules:true,modulesRoot:dirname(script),compatibilityDate:'2026-10-16',compatibilityFlags:['nodejs_compat'],
+  d1Databases:{DB:'owner-test'},r2Buckets:{OWNER_MEDIA:'private-owner-test'},assets:{directory:resolve('public'),binding:'ASSETS',routerConfig:{has_user_worker:true},run_worker_first:['/api/*']},
+  bindings:{APP_ORIGIN:origin,SETUP_TOKEN:'synthetic-setup-token',OWNER_DOT_BRIDGE_TOKEN:secret,CF_LOCAL_DEV:'true'},
+ }]}));
+ t.after(()=>mf.dispose());
+ const d1=await mf.getD1Database('DB');
+ await d1.exec(readFileSync('migrations/0001_initial.sql','utf8').replaceAll('\n',' '));
+ const go=(p,opts)=>mf.dispatchFetch(origin+p,opts);
+ const prefix='/api/owner-media',files=prefix+'/files',requests=prefix+'/requests',dot=prefix+'/dot';
+ const json=(method,headers,body)=>({method,headers:{'Content-Type':'application/json',...headers},body:JSON.stringify(body)});
+ const setup=await go('/api/setup',json('POST',{}, {setupToken:'synthetic-setup-token',email:'owner@example.com',password:'synthetic-local-password'}));
+ assert.equal(setup.status,200);const headers={Cookie:setup.headers.get('set-cookie').split(';')[0],Origin:origin};
+ const auth={Authorization:'Bearer '+secret};
+ assert.equal((await go(requests)).status,401);
+ assert.equal((await go(dot+'/queue',{headers})).status,401);
+ assert.equal((await go(dot+'/queue',{headers:{...auth,Origin:origin}})).status,403);
+ const config=await (await go(requests,{headers})).json();assert.equal(config.bridge,true);
+ assert.equal((await go('/owner-media.js')).status,200);
+ const video=new Uint8Array([0,0,0,16,102,116,121,112,109,112,52,50,0,0,0,0]);
+ const opts={method:'POST',headers:{...headers,'Content-Type':'video/mp4','X-Sickstyle-Media-Name':'demo.mp4'},body:video};
+ let res=await go(files,opts);assert.equal(res.status,201,await res.clone().text());
+ const clip=await res.json();
+ assert.equal((await go(files+'/'+clip.id)).status,401);
+ assert.equal((await go(files+'/'+clip.id,{headers:{...headers,Range:'bytes=0-7'}})).status,206);
+ assert.equal((await go(dot+'/files/'+clip.id,{headers:auth})).status,404);
+ assert.equal((await go(dot+'/files',{headers:auth})).status,404);
+ const id=randomUUID(),input={type:'修正',id,note:'タイトルを大きく。',assetId:clip.id,scheduledJst:null};
+ assert.equal((await go(requests,json('POST',{Cookie:headers.Cookie},input))).status,403);
+ res=await go(requests,json('POST',headers,input));assert.equal(res.status,201,await res.clone().text());
+ assert.equal((await res.json()).state,'draft');
+ assert.deepEqual((await (await go(dot+'/queue',{headers:auth})).json()).requests,[]);
+ assert.equal((await go(requests+'/send',json('POST',auth,{id}))).status,401);
+ const action=state=>({method:'PATCH',headers:{...headers,'X-Sickstyle-Media-State':state}});
+ const clipRoute=files+'/'+clip.id;
+ assert.equal((await go(clipRoute,{method:'PATCH',headers:{'X-Sickstyle-Media-State':'archived'}})).status,401);
+ assert.equal((await go(clipRoute,{...action('archived'),headers:{...action('archived').headers,Origin:'https://other.example.com'}})).status,403);
+ assert.equal((await go(dot+'/files/'+clip.id,{method:'PATCH',headers:{...auth,'X-Sickstyle-Media-State':'archived'}})).status,405);
+ assert.equal((await go(clipRoute,action('bad'))).status,400);
+ assert.deepEqual(await (await go(clipRoute,action('archived'))).json(),{id:clip.id,state:'archived'});
+ assert.equal((await go(clipRoute,action('archived'))).status,200);
+ assert.deepEqual((await (await go(files,{headers})).json()).files,[]);
+ assert.equal((await (await go(files+'?view=archived',{headers})).json()).files[0].id,clip.id);
+ assert.equal((await go(clipRoute,{method:'HEAD',headers})).status,200);
+ assert.equal((await go(requests,json('POST',headers,{...input,id:randomUUID()}))).status,409);
+ assert.equal((await go(requests+'/send',json('POST',headers,{id}))).status,409);
+ assert.deepEqual(await (await go(clipRoute,action('active'))).json(),{id:clip.id,state:'active'});
+ assert.equal((await (await go(files,{headers})).json()).files[0].id,clip.id);
+ assert.deepEqual((await (await go(files+'?view=archived',{headers})).json()).files,[]);
+
+ res=await go(requests+'/send',json('POST',headers,{id}));assert.equal(res.status,200,await res.clone().text());
+ assert.equal((await res.json()).state,'queued');
+ const queue=await (await go(dot+'/queue',{headers:auth})).json();assert.equal(queue.requests[0].id,id);
+ res=await go(dot+'/files/'+clip.id,{headers:auth});assert.equal(res.status,200);assert.deepEqual(new Uint8Array(await res.arrayBuffer()),video);
+ assert.equal((await go(dot+'/complete',json('POST',auth,{id,result:'not yet'}))).status,409);
+ res=await go(dot+'/receive',json('POST',auth,{id}));assert.equal((await res.json()).state,'received');
+ res=await go(dot+'/complete',json('POST',auth,{id,result:'サンプル結果'}));assert.equal((await res.json()).state,'complete');
+ assert.equal((await go(dot+'/complete',json('POST',auth,{id,result:'changed'}))).status,409);
+ assert.equal((await go(dot+'/files/'+clip.id,{headers:auth})).status,404);
+ assert.deepEqual((await (await go(dot+'/queue',{headers:auth})).json()).requests,[]);
+ assert.equal((await (await go(requests,{headers})).json()).requests[0].result,'サンプル結果');
+ const booking={...input,id:randomUUID(),type:'投稿予約',scheduledJst:'2099-01-01T10:00',music:{mode:'instagram',track:'Fixture song / Artist'}};
+ assert.equal((await go(requests,json('POST',headers,booking))).status,201);
+ assert.equal((await go(requests+'/send',json('POST',headers,{id:booking.id}))).status,200);
+ const bookingQueue=(await (await go(dot+'/queue',{headers:auth})).json()).requests;
+ assert.deepEqual(bookingQueue[0].music,booking.music);
+ assert.equal((await go(clipRoute,action('archived'))).status,200);
+ assert.equal((await (await go(dot+'/queue',{headers:auth})).json()).requests[0].id,booking.id);
+ assert.equal(bookingQueue[0].state,'queued');
+ const publicPage=await (await go('/api/public/site')).text();assert.doesNotMatch(publicPage,/サンプル結果|demo\.mp4|Fixture song/);
+});

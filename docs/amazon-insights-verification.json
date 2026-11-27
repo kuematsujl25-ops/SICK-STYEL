@@ -1,0 +1,28 @@
+{
+  "verificationDate": "2026-10-27",
+  "baseCommit": "a02250e3ca904ec4d5d6673c2c32a1ee32070eea",
+  "target": "Commit containing this manifest; code hashes match the 408-test successful run before commit.",
+  "tests": {
+    "command": "npm test",
+    "passed": 408,
+    "failed": 0,
+    "logSha256": "6740d7a78c2828ce6f4486065819d37708f85972bcad6095edd521de2111722f"
+  },
+  "build": "npm run build PASS",
+  "review": "Independent review: no unresolved major findings after owner-unknown fix",
+  "codeSha256": {
+    "integrations/amazon-ads.js": "79a9791a64507a6fa4a87ef44a9755e536764cdd8badc0b596461d5be07bfc6d",
+    "integrations/amazon.js": "96d3bc64ae9d8d2f7aae041eb1dca6670c0dc63c675757ea433d1dcf76812f34",
+    "public/app.js": "40f11f456aebb6002c081917645199704ecd7be8b9ea15ffd9f333042e583830",
+    "scripts/build.js": "b8458b32e48d47ca6b18221fa1434b1574f578f654ec99742e8a4737035ce4b3",
+    "server.js": "ccc94c7ba06258756f80c28fec5cf048cd6dcad5600c47789d58df14dbd07095",
+    "tests/amazon-ads.test.js": "43e92ec87b12fc32e8278310f4fec38e33fb1fc122a1b666d22682f3bedd1ed4",
+    "tests/amazon-fulfillment.test.js": "89c0e05fdbff73f0fffe5c76580ef4685c181880a8ec4a33111e818921e75566",
+    "public/amazon-insights.js": "367fc37f6c62ed68b702858af7b691b5f7fc8f0be03f93b4219938bc2a0acd31",
+    "tests/amazon-insights.test.js": "1c618b0dad0e9d37bddeed140b7ca5a02326b3752e62a98b7a4ae7dc896cfe5d",
+    "local/amazon-insights-qa.mjs": "8bcaec60ee53f037172c9f032eb9a638921aa3de4ccfa46a78b5aa20e0fe861d"
+  },
+  "liveApiVerified": false,
+  "addressGate": "403",
+  "authorization": "pending user login/grant confirmation"
+}

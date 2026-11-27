@@ -1,0 +1,4 @@
+service,date_jst,metric,value,unit,source,observed_at
+tiktok,,views,,count,official_dashboard_manual,
+tiktok,,profile_views,,count,official_dashboard_manual,
+tiktok,,followers,,count,official_dashboard_manual,

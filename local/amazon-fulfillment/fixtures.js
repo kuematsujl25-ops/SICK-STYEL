@@ -1,0 +1,6 @@
+// Entirely fabricated. These identifiers cannot be mistaken for Amazon order IDs.
+export const fixtures = () => [
+ {id:'DEMO-ORDER-1',status:'UNSHIPPED',channel:'MFN',shipPlus:false,buyShipping:false,cod:false,createdAt:'2026-10-01T00:00:00Z',marketplaceId:'A1VC38T7YXB528',items:[{id:'DEMO-ITEM-1',name:'合成 Tシャツ',quantity:3},{id:'DEMO-ITEM-2',name:'合成 ソックス',quantity:2}],address:{name:'合成データ 配送テスト様',postalCode:'000-0000',address:'架空県テスト市 サンプル住所 0-0（配送不可）'}},
+ ...['PARTIALLY_SHIPPED','PENDING','CANCELLED','SHIPPED'].map((status,i)=>({id:`DEMO-ORDER-${i+2}`,status,channel:'MFN',shipPlus:false,buyShipping:false,cod:false,createdAt:'2026-10-01T00:00:00Z',marketplaceId:'A1VC38T7YXB528',items:[{id:'DEMO-ITEM-1',name:'合成 Tシャツ',quantity:3}],address:{name:'合成 テスト様',postalCode:'000-0000',address:'架空県（配送不可）'},previousShipped:status==='PARTIALLY_SHIPPED'?{'DEMO-ITEM-1':1}:{}})),
+ ...['FBA','Ship+','BuyShipping','COD'].map((type,i)=>({id:`DEMO-ORDER-${i+6}`,status:'UNSHIPPED',channel:type==='FBA'?'AFN':'MFN',shipPlus:type==='Ship+',buyShipping:type==='BuyShipping',cod:type==='COD',createdAt:'2026-10-01T00:00:00Z',marketplaceId:'A1VC38T7YXB528',items:[{id:'DEMO-ITEM-1',name:`合成 ${type}`,quantity:1}],address:{name:'合成のみ',address:'配送不可'}}))
+];

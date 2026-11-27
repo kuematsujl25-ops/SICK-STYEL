@@ -1,5 +1,7 @@
 # Amazon Selling Partner API（SP-API）連携の手順
 
+> Issue #2: 現在は本番変更・Secrets変更が未承認です。[本人認証の引き継ぎ](integrations/issue-2-handoff.md)を優先してください。本PR修正版の登録コマンドは既定で計画表示のみ。旧版のコマンドをそのまま実行しないでください。`--apply`と本番反映は別途承認が必要です。
+
 2026-10-17 に Amazon 公式ドキュメント（developer-docs.amazon.com/sp-api）で確認した内容です。
 
 ## 対象と方式

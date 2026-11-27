@@ -16,7 +16,7 @@
     "dev:cloudflare": "wrangler dev",
     "build:cloudflare": "wrangler deploy --dry-run --outdir .wrangler/build",
     "db:local": "wrangler d1 migrations apply sickstyle-db --local",
-    "deploy": "npm test && node scripts/cloudflare-deploy.js",
+    "deploy": "node scripts/deploy-existing.js",
     "migrate:export:d1": "node scripts/export-d1.js",
     "admin:create:remote": "node scripts/create-admin-remote.js",
     "test:node": "node --test tests/app.test.js tests/instagram.test.js tests/amazon.test.js tests/password.test.js",
@@ -24,7 +24,15 @@
     "admin:reset:remote": "node scripts/create-admin-remote.js --reset",
     "integrations:instagram": "node scripts/set-secrets.js instagram",
     "integrations:amazon": "node scripts/set-secrets.js amazon",
-    "integrations:amazon-refresh": "node scripts/set-secrets.js amazon-refresh"
+    "integrations:amazon-refresh": "node scripts/set-secrets.js amazon-refresh",
+    "integrations:zoom": "node scripts/set-secrets.js zoom",
+    "integrations:googlecalendar": "node scripts/set-secrets.js googlecalendar",
+    "ai:task": "node scripts/ai-staff/run-task.js",
+    "ai:review": "node scripts/ai-staff/review-code.js",
+    "deploy:existing": "node scripts/deploy-existing.js",
+    "verify:existing": "node scripts/verify-existing.js",
+    "deploy:preflight": "node scripts/deploy-existing.js --preflight",
+    "ai:runner": "node scripts/ai-staff/auto-runner.js"
   },
   "engines": {
     "node": "24.x"

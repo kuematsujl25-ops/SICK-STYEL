@@ -1,0 +1,6 @@
+
+body{font:16px/1.6 system-ui;background:#f5f6f8;color:#202b3a;margin:0}main{max-width:1050px;margin:auto;padding:32px}section{background:white;padding:24px;margin:20px 0;border:1px solid #d8dfe7;border-radius:12px}h1{font-size:28px}h2{font-size:20px}label{display:block;margin:12px 0}input,textarea,button{font:inherit;padding:9px;border:1px solid #9caabc;border-radius:6px}textarea{box-sizing:border-box;width:100%;min-height:140px}button{cursor:pointer;background:#eaf0f8;margin:6px}button:disabled{opacity:.5;cursor:default}table{border-collapse:collapse;width:100%}th,td{padding:10px;text-align:left;border-bottom:1px solid #d8dfe7}.scroll{overflow:auto}.notice{border-left:4px solid #ab7414;padding:12px;background:#fff6df}#error{color:#a31919}small{color:#536276}
+
+small{display:block}textarea{overflow-wrap:anywhere}input{max-width:100%;box-sizing:border-box}@media(max-width:600px){main{padding:12px}section{padding:16px}h1{font-size:24px}button{max-width:100%}}
+
+table{min-width:640px}

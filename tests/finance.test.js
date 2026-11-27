@@ -1,0 +1,15 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {validateFinanceReport,renderFinance} from '../public/finance.js';
+const stat={revenue_jpy:4000,cogs_jpy:1200,fees_jpy:600,shipping_jpy:300,packaging_jpy:100,returns_jpy:0,advertising_jpy:0,units:2,orders:1,gross_profit_jpy:2800,contribution_profit_jpy:1800,gross_margin:.7,contribution_margin:.45,profit_per_unit_jpy:900,profit_per_order_jpy:1800,average_order_jpy:4000};
+const sample=()=>({version:1,business_unit:'sickstyle',source:'synthetic',fetched_at:'2026-10-18T00:00:00Z',period:{start:'2026-10-16T15:00:00Z',end:'2026-10-17T15:00:00Z'},timezone:'Asia/Tokyo',currency:'JPY',status:'analyzed',totals:{...stat},skus:[{...stat,sku:'DEMO-SOCKS',inventory_units:12,promotion_status:'candidate'}],limitations:['実データ未接続']});
+test('valid imported report renders SKU profit',()=>{const r=validateFinanceReport(sample());assert.match(renderFinance(r,String),/DEMO-SOCKS/);assert.match(renderFinance(r,String),/1,800/)});
+test('cross-business report is rejected',()=>assert.throws(()=>validateFinanceReport({...sample(),business_unit:'kpi'})));
+test('credential fields rejected',()=>assert.throws(()=>validateFinanceReport({...sample(),token:'fixture-only'})));
+test('incorrect profit arithmetic rejected',()=>{const r=sample();r.totals.gross_profit_jpy=999;assert.throws(()=>validateFinanceReport(r))});
+test('unknown cost never displays false measured zero',()=>{const r=sample();for(const s of [r.totals,...r.skus]){s.shipping_jpy=null;s.contribution_profit_jpy=null;}r.skus[0].promotion_status='investigate_costs';assert.match(renderFinance(validateFinanceReport(r),String),/未取得/)});
+test('stock zero cannot be declared promotion candidate',()=>{const r=sample();r.skus[0].inventory_units=0;assert.throws(()=>validateFinanceReport(r))});
+test('duplicate SKU rejected',()=>{const r=sample();r.skus.push({...r.skus[0]});assert.throws(()=>validateFinanceReport(r))});
+test('SKU totals must equal report totals',()=>{const r=sample();r.totals.revenue_jpy+=1;r.totals.gross_profit_jpy+=1;r.totals.contribution_profit_jpy+=1;assert.throws(()=>validateFinanceReport(r))});
+test('unacquired report has no totals',()=>{const r={...sample(),status:'no_data',totals:null,skus:[]};assert.equal(validateFinanceReport(r).totals,null);assert.match(renderFinance(r,String),/未取得/)});
+test('strings are passed through HTML escaping',()=>{const r=sample();r.source='<img src=x onerror=alert(1)>';r.skus[0].sku='<script>alert(1)</script>';const esc=s=>String(s).replaceAll('<','&lt;').replaceAll('>','&gt;');const html=renderFinance(validateFinanceReport(r),esc);assert.doesNotMatch(html,/<script>|<img src=x/)});

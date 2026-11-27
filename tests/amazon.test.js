@@ -21,7 +21,7 @@ test('Amazon認可: state固定・トークン暗号化・同期・失敗時の�
   if(u.href==='https://api.amazon.com/auth/o2/token'){const b=new URLSearchParams(opt.body);if(b.get('grant_type')==='authorization_code'){assert.equal(b.get('redirect_uri'),'https://example.workers.dev/api/amazon/callback');return Response.json({refresh_token:'Atzr|refresh-secret',access_token:'x'});}assert.equal(b.get('refresh_token'),'Atzr|refresh-secret');return Response.json({access_token:'Atza|access',expires_in:3600});}
   assert.equal(u.hostname,'sellingpartnerapi-fe.amazon.com');assert.equal(opt.headers['x-amz-access-token'],'Atza|access');assert.equal(u.searchParams.get('marketplaceIds'),'A1VC38T7YXB528');
   if(fail)return Response.json({errors:[{code:'Unauthorized'}]},{status:403});
-  if(u.pathname==='/sales/v1/orderMetrics'){assert.equal(u.searchParams.get('granularityTimeZone'),'Asia/Tokyo');return Response.json({payload:[{interval:'2026-10-16T00:00:00+09:00--2026-10-17T00:00:00+09:00',totalSales:{amount:'5000',currencyCode:'JPY'},orderCount:2,unitCount:2}]});}
+  if(u.pathname==='/sales/v1/orderMetrics'){assert.equal(u.searchParams.get('granularityTimeZone'),'Asia/Tokyo');return Response.json({payload:Array.from({length:16},(_,i)=>({interval:'2026-10-'+String(i+1).padStart(2,'0'),totalSales:{amount:(i===15?'5000':0),currencyCode:'JPY'},orderCount:i===15?2:0,unitCount:i===15?2:0}))});}
   if(u.pathname==='/orders/2026-01-01/orders')return Response.json({orders:[{orderId:'503-1',fulfillment:{fulfillmentStatus:'UNSHIPPED'},orderItems:[{quantityOrdered:1}]}]});
   throw Error('unexpected '+u.href);};
  const consent=new URL(await amazon.begin(store,'session-a'));assert.equal(consent.origin,'https://sellercentral.amazon.co.jp');assert.equal(consent.searchParams.get('version'),'beta');const state=consent.searchParams.get('state');
@@ -36,4 +36,20 @@ test('Amazon認可: state固定・トークン暗号化・同期・失敗時の�
  fail=true;await assert.rejects(amazon.sync(store),/Amazon/);st=await amazon.safeStatus(store);assert.equal(st.cache.monthSales,5000);assert.match(st.cache.error,/403|Unauthorized|権限/);
  await amazon.disconnect(store);st=await amazon.safeStatus(store);assert.equal(st.connected,false);assert.equal(st.cache,null);
  assert.equal(calls.every(h=>h.startsWith('api.amazon.com')||h.startsWith('sellingpartnerapi-fe.amazon.com')),true);
+});
+test('dailyHistory導入前の旧いキャッシュ（dailyだけ）からアップグレードしても、過去のローリングウィンドウの日付を消さずに種とする（Codex独立レビュー指摘の回帰）',async t=>{
+ const saved={...process.env};Object.assign(process.env,{AMAZON_LWA_CLIENT_ID:'amzn1.application-oa2-client.test',AMAZON_LWA_CLIENT_SECRET:'test-client-secret',AMAZON_REFRESH_TOKEN:'self-refresh-token',TOKEN_ENCRYPTION_KEY:randomBytes(32).toString('base64')});
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-amz-history-upgrade-'));const store=await createStore({DATA_DIR:dir});const realFetch=global.fetch;
+ t.after(async()=>{global.fetch=realFetch;process.env=saved;store.close();await rm(dir,{recursive:true,force:true});});
+ // dailyHistory導入前の旧いキャッシュ：dailyに過去のローリングウィンドウ（今回の新しい取得範囲の外）が入っている。
+ await store.put('amazon-cache',{daily:[{date:'2026-08-01',sales:1000,currency:'JPY',orders:1,units:1}]});
+ global.fetch=async(url,opt={})=>{const u=new URL(url);
+  if(u.href==='https://api.amazon.com/auth/o2/token')return Response.json({access_token:'Atza|access',expires_in:3600});
+  if(u.pathname==='/sales/v1/orderMetrics')return Response.json({payload:[{interval:'2026-10-16T00:00:00+09:00--2026-10-17T00:00:00+09:00',totalSales:{amount:'5000',currencyCode:'JPY'},orderCount:2,unitCount:2}]});
+  if(u.pathname==='/orders/2026-01-01/orders')return Response.json({orders:[]});
+  throw Error('unexpected '+u.href);};
+ await amazon.sync(store,new Date('2026-10-16T05:00:00Z'));
+ const st=await amazon.safeStatus(store);
+ assert.ok(st.cache.dailyHistory.some(d=>d.date==='2026-08-01'),'アップグレード前にdailyへ入っていた過去の日付が、dailyHistoryから失われていない');
+ assert.ok(st.cache.dailyHistory.some(d=>d.date==='2026-10-16'),'新しく取得した日付も含まれる');
 });
