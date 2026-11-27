@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {validateInstagramReview,readInstagramReview,saveInstagramReview} from '../lib/instagram-review.js';
-import {reviewContent} from '../public/instagram-review.js';
+import {reviewContent,nativeReviewContent,summarizeNativeReels,renderInstagramReview} from '../public/instagram-review.js';
 const now=Date.parse('2026-01-02T00:01:00Z');
 const esc=s=>String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');
 const input=()=>({version:1,source:'metricool',account:'@Sample',observedAt:'2026-01-02T09:00:00+09:00',
@@ -42,4 +42,25 @@ test('merge preserves missing sections, rejects older snapshots, account switche
  await assert.rejects(saveInstagramReview(store,{snapshot:input(),revision:1}),{status:409});
  const wrong=input();wrong.account='other';
  await assert.rejects(saveInstagramReview(store,{snapshot:wrong,revision:1}),{status:400});
+});
+
+
+test('native Instagram analysis stays separate from imports and counts actual zero and missing metrics',()=>{
+ const t='2026-11-27T00:00:00.000Z';
+ const cache={syncedAt:t,attemptedAt:t,syncVerified:true,hasMore:true,reels:[
+  {caption:'<img src=x>',timestamp:t,permalink:'https://www.instagram.com/reel/ABC/?tracking=1',values:{views:9,reach:7,saved:0,shares:null}},
+  {caption:'two',timestamp:t,permalink:'https://example.com/reel/ABC/',values:{views:2,reach:null,saves:999,saved:2,shares:0}},
+  {caption:'three',timestamp:t,values:{views:null,reach:0,saved:null,shares:3}}
+ ]};
+ const summary=summarizeNativeReels(cache);
+ assert.deepEqual(summary.metrics.map(r=>[r.key,r.value,r.known]),[['views',5.5,2],['reach',3.5,2],['saved',2,2],['shares',3,2]]);
+ const html=nativeReviewContent({connected:true,cache},esc,Date.parse(t)+1000);
+ assert.match(html,/取得 2\/3本/);assert.match(html,/累計/);assert.match(html,/&lt;img/);assert.doesNotMatch(html,/<img src=x>|example\.com|tracking=/);
+ assert.match(html,/https:\/\/www\.instagram\.com\/reel\/ABC\//);
+ assert.match(nativeReviewContent({connected:true,cache:{...cache,error:'failed'}},esc),/前回の同期に失敗/);
+ assert.match(nativeReviewContent({connected:true,cache},esc,Date.parse(t)+2*86_400_000),/24時間以上/);
+ assert.match(nativeReviewContent({connected:true,cache:{reels:[]}},esc),/未取得/);
+ assert.match(nativeReviewContent({connected:false},esc),/Instagramを接続/);
+ assert.match(renderInstagramReview({connected:true,cache},esc),/今すぐ分析を更新/);
+ assert.match(renderInstagramReview({connected:true,expiresAt:0,cache},esc),/認可期限切れ/);
 });

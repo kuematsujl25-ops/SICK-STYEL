@@ -227,7 +227,7 @@ function settings(){return `<div class="settingsgrid"><section class="panel"><h2
 // ---------- Instagram ----------
 function safeLink(value){try{const u=new URL(value);return u.protocol==='https:'&&['www.instagram.com','instagram.com'].includes(u.hostname)?esc(u.href):'#';}catch{return '#';}}
 function instagramView(){const c=ig?.cache;const expired=ig?.expiresAt&&ig.expiresAt<Date.now();const dm=c?.dm;const unified=ig?.provider==='unified';
- return `${instagramAuthNotice?`<p class="errorbox" role="alert">Instagram接続未完了：${esc(instagramAuthNotice)}${ig?.expectedUsername?`<br>アプリに登録されている対象：@${esc(ig.expectedUsername)}`:''}</p>`:''}${renderOwnerMedia()}${renderInstagramReview()}<section class="panel"><div class="panelhead"><h2>接続状態</h2>${expired?'<span class="badge warn">認可期限切れ</span>':statusBadge(ig)}</div><p>${unified?'Metaの統合ログインで、プロフィールとインサイトのみ読み取ります。認可は最大60日で、更新には再認可が必要です。':'Meta公式のInstagramログイン（ビジネス／クリエイターアカウント）で接続します。'}Instagramのパスワードをこのアプリに入力・保存することはありません。</p>
+ return `${instagramAuthNotice?`<p class="errorbox" role="alert">Instagram接続未完了：${esc(instagramAuthNotice)}${ig?.expectedUsername?`<br>アプリに登録されている対象：@${esc(ig.expectedUsername)}`:''}</p>`:''}${renderOwnerMedia()}${renderInstagramReview(ig,esc)}<section class="panel"><div class="panelhead"><h2>接続状態</h2>${expired?'<span class="badge warn">認可期限切れ</span>':statusBadge(ig)}</div><p>${unified?'Metaの統合ログインで、プロフィールとインサイトのみ読み取ります。認可は最大60日で、更新には再認可が必要です。':'Meta公式のInstagramログイン（ビジネス／クリエイターアカウント）で接続します。'}Instagramのパスワードをこのアプリに入力・保存することはありません。</p>
 
  ${unified?'<details class="guide"><summary><b>統合ログインの使い方</b></summary><p>本人がMeta公式画面で対象のInstagramアカウント1件だけを選び、読み取りを承認してから「今すぐ同期」を押してください。投稿・DM・広告は接続しません。</p></details>':`<details class="guide" ${!ig?.configured?'open':''}><summary><b>Instagram連携の手順（5ステップ）</b></summary><ol>
  <li>接続するInstagramを「ビジネス」または「クリエイター」のプロアカウントにします。個人アカウントではInsightsを取得できません。</li>
@@ -261,7 +261,15 @@ function renderSnsMetrics(metrics,esc){
  <p class="note">Amazon売上・注文件数のグラフはAmazon連携画面に表示します。日付ごとに1件の記録です。CSV取込等でInstagram指標が未入力の記録もここから編集・削除できます。</p>
  ${rows.length?`<div class="records">${rows.slice(metricsPage*SHOWN,(metricsPage+1)*SHOWN).map(r=>`<article class="record"><div class="recordtop"><span class="badge">${esc(r.date)}</span><button data-edit="metrics:${esc(r.id)}">編集</button></div><p class="note">売上 ${yen(r.sales)} ・ 注文 ${esc(r.orders)} 件${r.source==='csv'?' · CSV取込':''}</p>${r.instagramEntered===false?'<p class="note">Instagram指標は未入力</p>':`<div class="metricmini"><span>フォロワー<b>${esc(r.followers)}</b></span><span>リーチ<b>${esc(r.reach)}</b></span><span>反応<b>${esc(r.engagement)}</b></span></div>`}${r.notes?`<p class="note">${esc(r.notes)}</p>`:''}</article>`).join('')}</div>${rows.length>SHOWN?`<div class="actions" aria-label="日次記録のページ送り"><button data-metricspage="${metricsPage-1}" ${metricsPage===0?'disabled':''}>前へ</button><span role="status">${metricsPage+1} / ${pages} ページ</span><button data-metricspage="${metricsPage+1}" ${metricsPage===pages-1?'disabled':''}>次へ</button></div>`:''}`:empty('日次記録はまだありません。','日次の売上・Instagram指標を記録できます。','metrics')}</section>`;}
 function bindInstagram(){const connect=document.querySelector('#igconnect');if(connect)connect.onclick=async()=>{connect.disabled=true;try{location.assign((await api('instagram/connect','POST',{})).url);}catch(e){toast(e.message);connect.disabled=false;}};
- const sync=document.querySelector('#igsync');if(sync)sync.onclick=async()=>{sync.disabled=true;sync.textContent='同期しています…';try{ig=await api('instagram/sync','POST',{});conversations=(await api('instagram/conversations')).data;render();toast(syncMessage(ig));}catch(e){try{ig=await api('instagram/status');render();}catch{}toast(e.message);}};
+ const syncButtons=[...document.querySelectorAll('#igsync,[data-review-sync]')];
+ for(const sync of syncButtons)sync.onclick=async()=>{
+  const labels=syncButtons.map(b=>b.textContent);
+  for(const b of syncButtons)b.disabled=true;
+  sync.textContent='同期しています…';
+  try{ig=await api('instagram/sync','POST',{});conversations=(await api('instagram/conversations')).data;render();toast(syncMessage(ig));}
+  catch(e){try{ig=await api('instagram/status');render();}catch{}toast(e.message);}
+  finally{syncButtons.forEach((b,i)=>{if(b.isConnected){b.disabled=false;b.textContent=labels[i];}});}
+ };
  const dis=document.querySelector('#igdisconnect');if(dis)dis.onclick=async()=>{if(!confirm('Instagram接続を解除し、取得データとDM観測履歴を削除しますか？手入力データは残ります。'))return;try{const r=await api('instagram/disconnect','POST',{});ig=await api('instagram/status');conversations=[];render();toast(r.warning||'接続を解除しました');}catch(e){toast(e.message);}};
  document.querySelectorAll('[data-resolve]').forEach(b=>b.onclick=async()=>{try{await api('instagram/resolve','POST',{peer:b.dataset.resolve});ig=await api('instagram/status');conversations=(await api('instagram/conversations')).data;render();}catch(e){toast(e.message);}});}
 // ---------- Amazon ----------
