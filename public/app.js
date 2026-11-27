@@ -84,9 +84,10 @@ function updateOverdue(){
 setInterval(()=>{if(state&&!document.hidden)overdue.refresh();},60000);
 document.addEventListener('visibilitychange',()=>{if(state&&!document.hidden)overdue.refresh();});
 window.addEventListener('focus',()=>{if(state)overdue.refresh();});
+let instagramAuthNotice=null;
 function instagramCallbackMessage(q){
  const step=q.get('instagram_step'),code=q.get('instagram_code');
- const messages={state_mode:'認可の戻り情報が一致しません',state_session:'認可の期限切れ、または別のログイン画面に戻っています',meta_declined:'Metaが認可を完了しませんでした',missing_code:'Metaから認可コードが届きませんでした',code_exchange:'Metaの認可コード交換に失敗しました',token_debug:'Metaで認可情報を照会できませんでした',token_identity:'対象のアプリに発行された有効な認可を確認できませんでした',token_scope:'承認された読み取り権限が設定と一致しません',token_expiry:'認可が期限切れ、または60日以内の有効期限を確認できませんでした',portfolio_lookup:'Metaでポートフォリオを照会できませんでした',portfolio_policy:'指定のビジネスポートフォリオと一致しません',account_lookup:'Metaで共有アカウントを照会できませんでした',account_policy:'指定のInstagramアカウント1件だけを確認できませんでした',account_missing:'Metaから共有済みInstagramアカウントが返りませんでした',account_multiple:'複数のInstagramアカウントが共有されています',account_identity:'Metaから返された共有アカウント名が設定と一致しません',account_shape:'Metaの共有アカウント一覧またはIDを確認できませんでした',account_paging:'Metaの共有アカウント一覧の続きを確認できませんでした',connection_conflict:'既存の接続と一致しません',save_connection:'アプリに接続を保存できませんでした'};
+ const messages={state_mode:'認可の戻り情報が一致しません',state_session:'認可の期限切れ、または別のログイン画面に戻っています',meta_declined:'Metaが認可を完了しませんでした',missing_code:'Metaから認可コードが届きませんでした',code_exchange:'Metaの認可コード交換に失敗しました',token_debug:'Metaで認可情報を照会できませんでした',token_identity:'対象のアプリに発行された有効な認可を確認できませんでした',token_scope:'承認された読み取り権限が設定と一致しません',token_expiry:'認可が期限切れ、または60日以内の有効期限を確認できませんでした',portfolio_lookup:'Metaでポートフォリオを照会できませんでした',portfolio_policy:'指定のビジネスポートフォリオと一致しません',account_lookup:'Metaで共有アカウントを照会できませんでした',account_policy:'指定のInstagramアカウント1件だけを確認できませんでした',account_missing:'Metaから共有済みInstagramアカウントが返りませんでした',account_multiple:'複数のInstagramアカウントが共有されています',account_identity:'共有されたInstagramのユーザー名が設定と一致しません。Meta側で選んだアカウントと、管理アプリに登録したユーザー名の前後の記号も含めて確認してください',account_profile_lookup:'Metaから共有アカウントのプロフィールを取得できませんでした',account_profile_identity:'共有アカウントのプロフィールが設定と一致しません。Meta側で選んだアカウントと、管理アプリに登録したユーザー名を確認してください',account_shape:'Metaの共有アカウント一覧またはIDを確認できませんでした',account_paging:'Metaの共有アカウント一覧の続きを確認できませんでした',connection_conflict:'既存の接続と一致しません',save_connection:'アプリに接続を保存できませんでした'};
  const message=Object.hasOwn(messages,step)?messages[step]:'Instagramの認可を完了できませんでした';
  return message+(/^\d{1,6}$/.test(code||'')?'（Metaコード '+code+'）':'')+'。';
 }
@@ -98,7 +99,7 @@ async function load(){
  const q=new URLSearchParams(location.search);
  if(q.has('meetings')){section='meetings';render();}
  if(q.has('notifications')){section='settings';render();}
- if(q.has('instagram')){section='instagram';render();toast(q.get('instagram')==='connected'?'Instagramの認可が完了しました。「今すぐ同期」で読み取りを検証してください。':instagramCallbackMessage(q));}
+ if(q.has('instagram')){section='instagram';const ok=q.get('instagram')==='connected';instagramAuthNotice=ok?null:instagramCallbackMessage(q);render();if(ok)toast('Instagramの認可が完了しました。「今すぐ同期」で読み取りを検証してください。');}
  if(q.has('amazon')){section='amazon';render();toast(q.get('amazon')==='connected'?'Amazonの認可が完了しました。「今すぐ同期」でデータを取得してください。':'Amazonの認可を完了できませんでした。アプリ設定・リダイレクトURIを確認してください。');}
  if(q.has('zoom')){section='settings';render();const zStage=q.get('zoom_stage'),zCode=q.get('zoom_code');const diag=zStage&&/^[a-z_]{1,30}$/.test(zStage)&&zCode&&/^[a-zA-Z0-9_-]{1,40}$/.test(zCode)?'（'+zStage+' / '+zCode+'）':'';toast(q.get('zoom')==='connected'?'Zoomの認可が完了しました。会議タブからMTGを作成できます。':'Zoomの認可未完了'+diag+'。設定を確認してください。');}
  if(q.has('googlecalendar')){section='settings';render();toast(q.get('googlecalendar')==='connected'?'Googleカレンダーの認可が完了しました。':'Googleカレンダーの認可を完了できませんでした。アプリ設定・リダイレクトURIを確認してください。');}
@@ -226,7 +227,7 @@ function settings(){return `<div class="settingsgrid"><section class="panel"><h2
 // ---------- Instagram ----------
 function safeLink(value){try{const u=new URL(value);return u.protocol==='https:'&&['www.instagram.com','instagram.com'].includes(u.hostname)?esc(u.href):'#';}catch{return '#';}}
 function instagramView(){const c=ig?.cache;const expired=ig?.expiresAt&&ig.expiresAt<Date.now();const dm=c?.dm;const unified=ig?.provider==='unified';
- return `${renderOwnerMedia()}${renderInstagramReview()}<section class="panel"><div class="panelhead"><h2>接続状態</h2>${expired?'<span class="badge warn">認可期限切れ</span>':statusBadge(ig)}</div><p>${unified?'Metaの統合ログインで、プロフィールとインサイトのみ読み取ります。認可は最大60日で、更新には再認可が必要です。':'Meta公式のInstagramログイン（ビジネス／クリエイターアカウント）で接続します。'}Instagramのパスワードをこのアプリに入力・保存することはありません。</p>
+ return `${instagramAuthNotice?`<p class="errorbox" role="alert">Instagram接続未完了：${esc(instagramAuthNotice)}${ig?.expectedUsername?`<br>アプリに登録されている対象：@${esc(ig.expectedUsername)}`:''}</p>`:''}${renderOwnerMedia()}${renderInstagramReview()}<section class="panel"><div class="panelhead"><h2>接続状態</h2>${expired?'<span class="badge warn">認可期限切れ</span>':statusBadge(ig)}</div><p>${unified?'Metaの統合ログインで、プロフィールとインサイトのみ読み取ります。認可は最大60日で、更新には再認可が必要です。':'Meta公式のInstagramログイン（ビジネス／クリエイターアカウント）で接続します。'}Instagramのパスワードをこのアプリに入力・保存することはありません。</p>
 
  ${unified?'<details class="guide"><summary><b>統合ログインの使い方</b></summary><p>本人がMeta公式画面で対象のInstagramアカウント1件だけを選び、読み取りを承認してから「今すぐ同期」を押してください。投稿・DM・広告は接続しません。</p></details>':`<details class="guide" ${!ig?.configured?'open':''}><summary><b>Instagram連携の手順（5ステップ）</b></summary><ol>
  <li>接続するInstagramを「ビジネス」または「クリエイター」のプロアカウントにします。個人アカウントではInsightsを取得できません。</li>

@@ -65,6 +65,32 @@ test('checks every assignment page without using Meta paging URLs or accepting a
  await assert.rejects(exchangeUnified(expects,'fixture-code',run([{data:[{id:'654321',username:'other'}]}])),{step:'account_identity'});
 });
 
+test('missing assigned handle is checked only for the sole assigned ID and still fails closed',async()=>{
+ let calls=0;
+ const run=(accounts,profile)=>async(u,req)=>{
+  if(u.pathname!=='/v27.0/654321')return fake({accounts})(u,req);
+  calls++;
+  assert.equal(u.origin,'https://graph.facebook.com');
+  assert.equal(u.searchParams.get('fields'),'id,username');
+  assert.equal(req.headers.Authorization,'Bearer fixture-user-token');
+  if(profile instanceof Error)throw profile;
+  return profile;
+ };
+ const accounts={data:[{id:'654321'}]};
+ const original={id:'654321',username:'sample_account'};
+ assert.equal((await exchangeUnified(expects,'fixture-code',run(accounts,original))).username,original.username);
+ for(const profile of [{...original,id:'999999'},{...original,username:'other'},{id:'654321'}])
+  await assert.rejects(exchangeUnified(expects,'fixture-code',run(accounts,profile)),{step:'account_profile_identity'});
+ await assert.rejects(exchangeUnified(expects,'fixture-code',run(accounts,new Error('test provider detail'))),{step:'account_profile_lookup'});
+ assert.equal(calls,5);
+ for(const [rows,step] of [
+  [[{id:'654321',username:'other'}],'account_identity'],
+  [[{id:'654321'},{id:'999999'}],'account_multiple'],
+  [[{id:'654321',username:123}],'account_shape']
+ ])await assert.rejects(exchangeUnified(expects,'fixture-code',run({data:rows},original)),{step});
+ assert.equal(calls,5);
+});
+
 test('callback diagnoses failure stages without exposing tokens, Meta messages or URLs',async()=>{
  const expected=[
   [{debug:{app_id:'111111'}},'token_identity'],
@@ -100,6 +126,7 @@ test('owner session only, one-shot state, encrypted and read-only Unified sync',
  global.fetch=async(u,o)=>{fetches++;return Response.json(await fake()(u,o));};
  await withRuntime(env,async()=>{
   assert.ok(config());
+  assert.equal((await safeStatus(store)).expectedUsername,'sample_account');
   const login=new URL(await begin(store,'owner'));
   assert.equal(login.hostname,'www.facebook.com');
   assert.equal(login.searchParams.get('config_id'),'223456');
@@ -118,6 +145,23 @@ test('owner session only, one-shot state, encrypted and read-only Unified sync',
   assert.equal(metrics.followers,123);
   assert.equal(metrics.account.reach,0);assert.equal(metrics.dm,null);
   assert.equal((await safeStatus(store)).readiness.state,'connected');
+  let paths=[];
+  global.fetch=async(u,o)=>{
+   paths.push(new URL(u).pathname);
+   return Response.json(new URL(u).pathname==='/v27.0/654321'?{id:'654321',username:'other',followers_count:456}:await fake()(u,o));
+  };
+  await assert.rejects(sync(store),/プロフィールが接続済みのアカウントと一致しません/);
+  assert.deepEqual(paths,['/v27.0/654321']);
+  const failed=await safeStatus(store);
+  assert.equal(failed.cache.followers,123);assert.equal(failed.cache.syncVerified,false);
+  assert.equal(failed.readiness.state,'sync_unverified');
+  global.fetch=async(u,o)=>{
+   const path=new URL(u).pathname;
+   return Response.json(path.endsWith('/insights')?{data:[]}:await fake()(u,o));
+  };
+  const partial=await sync(store);
+  assert.equal(partial.syncVerified,false);
+  assert.ok(partial.warnings.some(w=>w.includes('数値として確認できるインサイト')));
   const {provider:_,...legacy}=p;
   await store.put('instagram-private',legacy);
   assert.equal((await safeStatus(store)).provider,'legacy');
