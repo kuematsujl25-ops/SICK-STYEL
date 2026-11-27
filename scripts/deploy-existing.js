@@ -4,11 +4,12 @@ import {readFileSync,writeFileSync,mkdirSync,rmSync} from 'node:fs';
 import {resolve,dirname,relative} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {randomUUID} from 'node:crypto';
-import {ensureFree} from './lib/free-check.js';
+import {ensureFree,cfToken} from './lib/free-check.js';
 import {requireWranglerLogin} from './lib/wrangler-auth.js';
 import {reviewForHeadOrWaiver,productionVersions,verifySqlBackup,checkReadiness} from './lib/release-readiness.js';
 import {remoteBranchTipFromLsRemote} from './lib/deploy-branch.js';
 import {ask} from './lib/prompt.js';
+import {verifyLiveCron} from './lib/deploy-cron.js';
 
 // 本番反映を許可する統合ブランチと、独立レビューの比較元ブランチ。AGENTS.mdの運用方針（作業ブランチ→PR→
 // CI/Codexレビュー→マージ）のもと、このリポジトリでは一本の統合ブランチにPRをマージしてから本番反映する
@@ -101,6 +102,7 @@ try {
       }
       await confirmed('上記SHAのGitHub CI成功、Secrets検査、PC/iPhone相当表示を確認しましたか？');
       await confirmed('本人のCloudflare画面でWorkers・D1がFree、追加契約・従量課金が発生しないことを確認しましたか？');
+      console.log('本番Cron: '+await verifyLiveCron(config,cfToken())+'件が設定と一致（読み取りのみ）');
       const previous=currentVersions();
       const directory=resolve(root,'data/deployment-backups',head+'-'+randomUUID());
       mkdirSync(directory,{recursive:true,mode:0o700});
@@ -126,6 +128,7 @@ try {
     try{receipt=JSON.parse(readFileSync(receiptPath,'utf8'));}catch{throw Error('最新SHAの事前確認がありません。npm run deploy:preflight が必要です');}
     checkReadiness(root,head,config,receipt,reviewBase);
     if(JSON.stringify(currentVersions())!==JSON.stringify(receipt.previous_versions))throw Error('本番Versionが事前確認後に変わりました。再確認が必要です');
+    await verifyLiveCron(config,cfToken());
     if (run('npm',['test'],{stdio:'inherit'}).status !== 0) throw Error('テスト失敗のため停止しました');
     if (run('npm',['run','build'],{stdio:'inherit'}).status !== 0) throw Error('ビルド失敗のため停止しました');
     if (git(['rev-parse','HEAD']) !== head || git(['status','--porcelain'])) throw Error('テスト中にコードが変更されました');
@@ -145,6 +148,7 @@ try {
           remoteBranchTip(REVIEW_BASE_BRANCH)!==reviewBase||
           JSON.stringify(currentVersions())!==JSON.stringify(receipt.previous_versions))
         throw Error('コードまたは本番Versionが変わりました。切り替えず停止します');
+      await verifyLiveCron(config,cfToken());
       if (wrangler(['versions','deploy','--config',path,'--version-tag',tag+'@100',
           '--yes','--message','SICK STYLE '+head.slice(0,12)],{stdio:'inherit'}).status !== 0)
         throw Error('本番切り替え未確認。CloudflareのDeploymentsで状態を確認してください');
