@@ -1,3 +1,4 @@
+import {readReplyDrafts,saveReplyDraft} from '../lib/instagram-reply-drafts.js';
 import {instagramCallbackDiagnostic} from '../integrations/instagram-unified.js';
 import {OwnerMediaError,readOwnerRequests,addOwnerRequest,validAssetId,bridgeConfigured,bridgeAuthorized,updateOwnerRequest,archivedMedia} from '../lib/owner-media-requests.js';
 import {InstagramReviewError,REVIEW_LIMIT,readInstagramReview,saveInstagramReview} from '../lib/instagram-review.js';
@@ -60,6 +61,14 @@ export default async function handler(req,res){
   if(req.headers.origin&&req.headers.origin!==allowed)return json(res,403,{error:'許可されていないアクセスです'});
   if(req.headers['sec-fetch-site']==='cross-site')return json(res,403,{error:'許可されていないアクセスです'});
  }
+ if(route==='/api/owner-media/dot/instagram-reply-drafts'){
+  if(!bridgeAuthorized(runtime().OWNER_DOT_BRIDGE_TOKEN,req.headers.authorization))return json(res,401,{error:'認証が必要です。'});
+  if(req.headers.origin||req.headers.cookie)return json(res,403,{error:'機械連携専用です。'});
+  if(req.method!=='POST')return json(res,405,{error:'この操作には対応していません。'});
+  if(req._sickstyleRaw.length>8192)return json(res,413,{error:'返信案が長すぎます。'});
+  try{return json(res,200,await saveReplyDraft(store,await body(req)));}
+  catch(e){if(e instanceof OwnerMediaError)return json(res,e.status,{error:e.message});if(e instanceof SyntaxError)return json(res,400,{error:'返信案の形式が正しくありません。'});throw e;}
+ }
  if(route==='/api/owner-media/dot/queue'||route==='/api/owner-media/dot/receive'||route==='/api/owner-media/dot/complete'){
   if(!bridgeAuthorized(runtime().OWNER_DOT_BRIDGE_TOKEN,req.headers.authorization))return json(res,401,{error:'認証が必要です。'});
   if(req.headers.origin||req.headers.cookie)return json(res,403,{error:'機械連携専用です。'});
@@ -99,6 +108,10 @@ export default async function handler(req,res){
  const redirect=location=>{res.writeHead(303,{Location:location,'Cache-Control':'no-store'});res.end();};
  if(['/api/amazon/login','/api/amazon/callback','/api/instagram/callback','/api/zoom/callback','/api/googlecalendar/callback'].includes(route)&&req.method==='GET'&&!authorized)return redirect('/?auth=required');
  if(!authorized)return json(res,401,{error:'ログインしてください'});
+ if(route==='/api/instagram/reply-drafts'){
+  if(req.method!=='GET')return json(res,405,{error:'アプリでは閲覧とコピーのみできます。'});
+  return json(res,200,await readReplyDrafts(store));
+ }
  if(route==='/api/owner-media/requests'||route==='/api/owner-media/requests/send'){
   if(req.method==='GET'&&route==='/api/owner-media/requests')return json(res,200,{...await readOwnerRequests(store),bridge:bridgeConfigured(runtime().OWNER_DOT_BRIDGE_TOKEN)});
   if(req.method!=='POST')return json(res,405,{error:'この操作には対応していません。'});

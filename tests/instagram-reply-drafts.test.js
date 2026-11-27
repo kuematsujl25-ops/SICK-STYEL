@@ -1,0 +1,52 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {spawn} from 'node:child_process';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import path from 'node:path';
+import {bridgeRequest} from '../scripts/lib/owner-dot-bridge.js';
+import {renderInstagramReplyDrafts} from '../public/instagram-reply-drafts.js';
+const key='a'.repeat(64);
+const example={id:'b'.repeat(64),peer:'Example FC',text:'Sample available.\nThank you.',note:'Verify stock first.'};
+test('app renders a review and copy surface, not a send action',()=>{
+ const html=renderInstagramReplyDrafts();
+ assert.match(html,/DM返信案/);assert.match(html,/手動で送信/);
+ assert.doesNotMatch(html,/<form|type="submit"/);
+});
+test('Dot publication uses only the fixed private manager endpoint',async()=>{
+ const result=await bridgeRequest('instagram-reply-drafts',example,key,async(url,opts)=>{
+  assert.equal(url.href,'https://sickstyle-manager.sickstyle-74h4.workers.dev/api/owner-media/dot/instagram-reply-drafts');
+  assert.equal(opts.method,'POST');assert.equal(opts.redirect,'error');assert.equal(opts.headers.Authorization,'Bearer '+key);
+  assert.deepEqual(JSON.parse(opts.body),example);
+  return Response.json({id:example.id,created:true});
+ });
+ assert.deepEqual(result,{id:example.id,created:true});
+ await assert.rejects(bridgeRequest('instagram-reply-drafts',{...example,raw:'Do not store'},key,()=>assert.fail()));
+});
+test('Instagram drafts are private, bridge-write only, and deduplicate concurrent retries',async t=>{
+ const dir=await mkdtemp(path.join(tmpdir(),'ig-reply-drafts-'));
+ const proc=spawn(process.execPath,['server.js'],{env:{...process.env,PORT:'0',DATA_DIR:dir,SETUP_TOKEN:'synthetic-dm-draft',OWNER_DOT_BRIDGE_TOKEN:key},stdio:['ignore','pipe','inherit']});
+ t.after(async()=>{if(proc.exitCode===null)await new Promise(r=>{proc.once('exit',r);proc.kill();});await rm(dir,{recursive:true,force:true});});
+ let out='';const base=await new Promise((resolve,reject)=>{proc.stdout.on('data',b=>{out+=b;const m=out.match(/http:\/\/127\.0\.0\.1:\d+/);if(m)resolve(m[0]);});proc.on('error',reject);proc.on('exit',c=>reject(Error('server exit '+c)));});
+ const calls=(route,method='GET',headers={},data)=>fetch(base+route,{method,headers:{'Content-Type':'application/json',...headers},body:data===undefined?undefined:JSON.stringify(data)});
+ const read='/api/instagram/reply-drafts',write='/api/owner-media/dot/instagram-reply-drafts',auth={Authorization:'Bearer '+key};
+ assert.equal((await calls(read)).status,401);
+ assert.equal((await calls(read,'GET',auth)).status,401);
+ assert.equal((await calls(write,'POST',{},example)).status,401);
+ assert.equal((await calls(write,'GET',auth)).status,405);
+ assert.equal((await calls(write,'POST',{...auth,Origin:base},example)).status,403);
+ assert.equal((await calls(write,'POST',auth,{...example,rawMessage:'private'})).status,400);
+ assert.equal((await calls(write,'POST',auth,{...example,text:'x'.repeat(9000)})).status,413);
+ const setup=await calls('/api/setup','POST',{}, {email:'owner@example.com',password:'example-password-1',setupToken:'synthetic-dm-draft'});
+ assert.equal(setup.status,200);const Cookie=setup.headers.get('set-cookie').split(';')[0];
+ assert.equal((await calls(write,'POST',{...auth,Cookie},example)).status,403);
+ assert.equal((await calls(read,'POST',{Cookie,Origin:base},example)).status,405);
+ const responses=await Promise.all([...Array(4)].map(()=>calls(write,'POST',auth,example)));
+ assert.ok(responses.every(r=>r.ok));
+ assert.equal((await Promise.all(responses.map(r=>r.json()))).filter(r=>r.created).length,1);
+ const saved=await calls(read,'GET',{Cookie});
+ assert.equal(saved.status,200);assert.equal(saved.headers.get('cache-control'),'no-store');
+ const {drafts}=await saved.json();assert.equal(drafts.length,1);
+ assert.deepEqual({...drafts[0],createdAt:undefined},{...example,createdAt:undefined});
+ assert.doesNotMatch(await(await calls('/api/public/site')).text(),/Example FC|Sample available/);
+});
