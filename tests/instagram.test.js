@@ -53,7 +53,7 @@ test('shared morning budget preserves complete profile and reel reads before opt
  t.after(async()=>{global.fetch=real;store.close();await rm(dir,{recursive:true,force:true});});
  const now=Date.now();
  global.fetch=async(url,options)=>{
-  calls++;assert.equal(options.redirect,'error');
+  calls++;assert.equal(options.redirect,'manual');
   const u=new URL(url), endpoint=u.pathname.split('/').pop();
   let data={};
   if(endpoint==='refresh_access_token')data={access_token:'fixture-next',expires_in:5184000};

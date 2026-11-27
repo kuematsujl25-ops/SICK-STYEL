@@ -94,7 +94,7 @@ test('transient push failure retries only affected devices; concurrent ticks pre
   for(const name of ['fourth','fifth'])await subscribe(store,{endpoint:'https://fcm.googleapis.com/fcm/send/'+name,keys});
   await store.put('workspace',{orgSales:Array.from({length:13},(_,i)=>org({id:'batch-'+i,initialZoomAt:at}))});
   let internal=0,external=0,active=0,peak=0;const counted={...store,async doc(...args){internal++;return store.doc(...args);},async query(...args){internal++;return store.query(...args);},async transaction(...args){internal++;return store.transaction(...args);}};
-  const send=async(url,init)=>{external++;active++;peak=Math.max(peak,active);assert.equal(init.redirect,'error');assert.ok(init.signal instanceof AbortSignal);await new Promise(resolve=>setImmediate(resolve));active--;return new Response(null,{status:201});};
+  const send=async(url,init)=>{external++;active++;peak=Math.max(peak,active);assert.equal(init.redirect,'manual');assert.ok(init.signal instanceof AbortSignal);await new Promise(resolve=>setImmediate(resolve));active--;return new Response(null,{status:201});};
   for(const [tick,expected] of [6,6,1].entries()){internal=0;external=0;assert.equal((await runMeetingReminders(counted,new Date(),send)).created,tick===0?13:0);assert.equal(external,expected*5);assert.ok(external<=30);assert.ok(internal<=28,'D1 API calls including each batch once: '+internal);}
   assert.ok(peak<=3,'only three push requests in flight');
   assert.equal((await listNotifications(store)).filter(i=>i.detail?.token?.includes('batch-')&&i.detail.deliveryComplete).length,13,'13 simultaneous meetings delivered on all five devices before start');

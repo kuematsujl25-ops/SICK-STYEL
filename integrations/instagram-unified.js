@@ -48,12 +48,12 @@ export function unifiedGraph(path,access,params,remote){
 export async function exchangeUnified(settings,code,remote,now=Date.now()){
  const exchange=new URL(`${graphBase}/oauth/access_token`);
  exchange.search=new URLSearchParams({client_id:settings.appId,client_secret:settings.secret,code,redirect_uri:settings.redirect});
- const grant=await atCallbackStep('code_exchange',()=>remote(exchange,{method:'GET',redirect:'error',cache:'no-store'}));
+ const grant=await atCallbackStep('code_exchange',()=>remote(exchange,{method:'GET',cache:'no-store'}));
  if(typeof grant.access_token!=='string'||!grant.access_token)throw new InstagramCallbackError('code_exchange','認可トークンを取得できませんでした');
  const access=grant.access_token;
  const debugURL=new URL(`${graphBase}/debug_token`);
  debugURL.searchParams.set('input_token',access);
- const {data}=await atCallbackStep('token_debug',()=>remote(debugURL,{method:'GET',headers:{Authorization:`Bearer ${settings.appId}|${settings.secret}`},redirect:'error',cache:'no-store'}));
+ const {data}=await atCallbackStep('token_debug',()=>remote(debugURL,{method:'GET',headers:{Authorization:`Bearer ${settings.appId}|${settings.secret}`},cache:'no-store'}));
  const actual=Array.isArray(data?.scopes)?data.scopes:[];
  const tokenExpires=Number(data?.expires_at)*1000;
  const dataExpiry=data?.data_access_expires_at==null?0:Number(data.data_access_expires_at)*1000;

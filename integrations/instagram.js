@@ -1,3 +1,4 @@
+import {fetchNoRedirect} from '../lib/fetch-no-redirect.js';
 import {InstagramCallbackError,atCallbackStep,exchangeUnified,unifiedGraph,unifiedLogin,unifiedSettings} from './instagram-unified.js';
 import {runtime} from '../lib/runtime.js';
 import {connectionReadiness} from '../public/integration-status.js';
@@ -9,7 +10,7 @@ const mode=()=>runtime().INSTAGRAM_LOGIN_MODE||'legacy';
 export function config(){const e=runtime();return mode()==='unified'?!!unifiedSettings(e):mode()==='legacy'&&!!(e.INSTAGRAM_APP_ID&&e.INSTAGRAM_APP_SECRET&&e.APP_ORIGIN&&e.TOKEN_ENCRYPTION_KEY);}
 const callback=()=>new URL('/api/instagram/callback',runtime().APP_ORIGIN).href;
 export class MetaError extends Error{constructor(code){super(`Meta API エラー (${code})。権限・期限・対象データを確認してください。`);this.code=code;}}
-async function remote(url,options={}){let response;try{response=await fetch(url,{redirect:'error',cache:'no-store',...options,signal:AbortSignal.timeout(12000)});}catch{throw new MetaError('通信失敗');}let b;try{b=await response.json();}catch{throw new MetaError(response.status);}if(!response.ok||b.error||b.error_type)throw new MetaError(Number.isSafeInteger(b.error?.code)?b.error.code:Number.isSafeInteger(b.code)?b.code:response.status);return b;}
+async function remote(url,options={}){let response;try{response=await fetchNoRedirect(url,{cache:'no-store',...options,signal:AbortSignal.timeout(12000)});}catch{throw new MetaError('通信失敗');}let b;try{b=await response.json();}catch{throw new MetaError(response.status);}if(!response.ok||b.error||b.error_type)throw new MetaError(Number.isSafeInteger(b.error?.code)?b.error.code:Number.isSafeInteger(b.code)?b.code:response.status);return b;}
 export function graph(id,access,params={},method='GET'){
  const u=new URL(`https://graph.instagram.com/${version()}/${id}`);for(const [k,v]of Object.entries(params))u.searchParams.set(k,v);
  return remote(u,{method,headers:{Authorization:`Bearer ${access}`}});

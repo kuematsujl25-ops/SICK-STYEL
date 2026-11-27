@@ -1,3 +1,4 @@
+import {fetchNoRedirect} from '../lib/fetch-no-redirect.js';
 // Amazon Ads is independent from SP-API. No campaign/advertising writes are implemented.
 import {runtime} from '../lib/runtime.js';
 import {randomUUID,createHash} from 'node:crypto';
@@ -39,7 +40,7 @@ export async function sync(store,{fetcher=fetch,now=new Date()}={}){
  if(!configured())throw Error('Amazon Ads専用の認可・プロフィール設定が未完了です。SP-API認証は流用しません');
  await store.query('INSERT INTO ss_documents(name,body,revision) VALUES ($1,$2,0) ON CONFLICT(name) DO NOTHING',[NAME,JSON.stringify({rows:[],job:null,lastSuccess:null,error:null})]);
  let {state,revision}=await read(store);if(state.retryAt&&Date.parse(state.retryAt)>now.getTime())throw Error('広告APIの再試行待ちです。しばらくしてから確認してください');if(state.profileVerified&&state.profileVerified!==runtime().AMAZON_ADS_PROFILE_ID)throw Error('広告プロフィールが変わりました。既存データの移行確認が必要です');if(state.job?.status==='requesting'||state.job?.status==='uncertain')throw Error('前回のレポート要求の結果確認が必要です。再要求しません');
- const api=async(url,opts={},allowDuplicate=false)=>{const r=await fetcher(url,{...opts,redirect:'error',signal:AbortSignal.timeout(15000)});if(allowDuplicate&&r.status===425)return r;if(!r.ok)throw Object.assign(Error('Amazon Ads応答 '+r.status),{httpStatus:r.status});return r;};
+ const api=async(url,opts={},allowDuplicate=false)=>{const r=await fetchNoRedirect(url,{...opts,signal:AbortSignal.timeout(15000)},fetcher);if(allowDuplicate&&r.status===425)return r;if(!r.ok)throw Object.assign(Error('Amazon Ads応答 '+r.status),{httpStatus:r.status});return r;};
  try{
   const tokens=await (await api('https://api.amazon.com/auth/o2/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({grant_type:'refresh_token',client_id:runtime().AMAZON_ADS_CLIENT_ID,client_secret:runtime().AMAZON_ADS_CLIENT_SECRET,refresh_token:runtime().AMAZON_ADS_REFRESH_TOKEN})})).json();
   if(!tokens.access_token)throw Error('Amazon Ads認証応答が不正です');
