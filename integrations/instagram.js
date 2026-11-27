@@ -1,4 +1,4 @@
-import {exchangeUnified,unifiedGraph,unifiedLogin,unifiedSettings} from './instagram-unified.js';
+import {InstagramCallbackError,atCallbackStep,exchangeUnified,unifiedGraph,unifiedLogin,unifiedSettings} from './instagram-unified.js';
 import {runtime} from '../lib/runtime.js';
 import {connectionReadiness} from '../public/integration-status.js';
 import {createHmac} from 'node:crypto';
@@ -23,19 +23,21 @@ export async function begin(store,session){
 export async function connect(store,session,url){
  if(!config())throw Error('Metaアプリの環境変数が未設定です');
  const selected=mode(), state=url.searchParams.get('state')||'';
- if(!state.startsWith(selected+'.'))throw Error('認可stateの接続方式が一致しません');
+ if(!state.startsWith(selected+'.'))throw new InstagramCallbackError('state_mode','認可stateの接続方式が一致しません');
  const release=await acquireConnectionLease(store);try{
- const rows=await store.query('DELETE FROM ss_oauth WHERE state=$1 AND session=$2 AND expires>$3 RETURNING state',[hash(state),session,Date.now()]);if(!rows.length)throw Error('認可の有効期限が切れたか、stateが一致しません');
- if(url.searchParams.has('error'))throw Error('Instagramの認可がキャンセルされました');
- const code=url.searchParams.get('code');if(!code)throw Error('認可コードがありません');
+ const rows=await store.query('DELETE FROM ss_oauth WHERE state=$1 AND session=$2 AND expires>$3 RETURNING state',[hash(state),session,Date.now()]);if(!rows.length)throw new InstagramCallbackError('state_session','認可の有効期限が切れたか、stateが一致しません');
+ if(url.searchParams.has('error'))throw new InstagramCallbackError('meta_declined','Instagramの認可がキャンセルされました');
+ const code=url.searchParams.get('code');if(!code)throw new InstagramCallbackError('missing_code','認可コードがありません');
  const previous=await privateData(store);
- if(previous&&(previous.provider||'legacy')!==selected)throw Error('接続方式を変更する場合は、先に現在の接続を解除してください');
+ if(previous&&(previous.provider||'legacy')!==selected)throw new InstagramCallbackError('connection_conflict','接続方式を変更する場合は、先に現在の接続を解除してください');
  if(selected==='unified'){
   const material=await exchangeUnified(unifiedSettings(runtime()),code,remote);
-  if(previous&&previous.id!==material.id)throw Error('別のアカウントに切り替える場合は、先に現在の接続を解除してください');
+  if(previous&&previous.id!==material.id)throw new InstagramCallbackError('connection_conflict','別のアカウントに切り替える場合は、先に現在の接続を解除してください');
   const {access,...bound}=material;
-  const data={...bound,provider:'unified',scopedId:null,encrypted:encrypt({access}),issuedAt:Date.now(),connectedAt:previous?.connectedAt||new Date().toISOString(),dmStartedAt:null,webhookError:null};
-  await store.put('instagram-private',data);return data;
+  return await atCallbackStep('save_connection',async()=>{
+   const data={...bound,provider:'unified',scopedId:null,encrypted:encrypt({access}),issuedAt:Date.now(),connectedAt:previous?.connectedAt||new Date().toISOString(),dmStartedAt:null,webhookError:null};
+   await store.put('instagram-private',data);return data;
+  });
  }
  const form=new FormData();for(const [k,v]of Object.entries({client_id:runtime().INSTAGRAM_APP_ID,client_secret:runtime().INSTAGRAM_APP_SECRET,grant_type:'authorization_code',redirect_uri:callback(),code}))form.set(k,v);
  const raw=await remote('https://api.instagram.com/oauth/access_token',{method:'POST',body:form});const short=raw.data?.[0]||raw;

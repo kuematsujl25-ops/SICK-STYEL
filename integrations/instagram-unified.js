@@ -7,6 +7,24 @@ const name=v=>typeof v==='string'&&/^[a-z0-9_.]{1,30}$/.test(v);
 const graphBase='https://graph.facebook.com/v27.0';
 const sixtyDays=60*86400000;
 
+// Only fixed diagnostic labels and bounded numeric Meta codes may leave the callback.
+const callbackSteps=new Set(['state_mode','state_session','meta_declined','missing_code','code_exchange','token_debug','token_identity','token_scope','token_expiry','portfolio_lookup','portfolio_policy','account_lookup','account_policy','connection_conflict','save_connection']);
+export class InstagramCallbackError extends Error{
+ constructor(step,message,source){
+  super(message);
+  this.step=callbackSteps.has(step)?step:'unexpected';
+  this.metaCode=Number.isSafeInteger(source?.code)&&source.code>=1&&source.code<=999999?source.code:null;
+ }
+}
+export function instagramCallbackDiagnostic(error){
+ return error instanceof InstagramCallbackError?{step:error.step,metaCode:error.metaCode}:{step:'unexpected',metaCode:null};
+}
+export const atCallbackStep=async(step,run)=>{
+ try{return await run();}
+ catch(e){throw new InstagramCallbackError(step,'Instagramの認可を完了できませんでした。',e);}
+};
+
+
 export function unifiedSettings(env){
  const {INSTAGRAM_UNIFIED_APP_ID:appId,INSTAGRAM_UNIFIED_APP_SECRET:secret,INSTAGRAM_UNIFIED_CONFIG_ID:configId,INSTAGRAM_UNIFIED_BUSINESS_ID:businessId,INSTAGRAM_UNIFIED_USERNAME:username,APP_ORIGIN:origin}=env;
  if(!id(appId)||!id(configId)||!id(businessId)||!name(username)||typeof secret!=='string'||!secret||!env.TOKEN_ENCRYPTION_KEY)return null;
@@ -30,27 +48,26 @@ export function unifiedGraph(path,access,params,remote){
 export async function exchangeUnified(settings,code,remote,now=Date.now()){
  const exchange=new URL(`${graphBase}/oauth/access_token`);
  exchange.search=new URLSearchParams({client_id:settings.appId,client_secret:settings.secret,code,redirect_uri:settings.redirect});
- const grant=await remote(exchange,{method:'GET',redirect:'error',cache:'no-store'});
- if(typeof grant.access_token!=='string'||!grant.access_token)throw Error('認可トークンを取得できませんでした');
+ const grant=await atCallbackStep('code_exchange',()=>remote(exchange,{method:'GET',redirect:'error',cache:'no-store'}));
+ if(typeof grant.access_token!=='string'||!grant.access_token)throw new InstagramCallbackError('code_exchange','認可トークンを取得できませんでした');
  const access=grant.access_token;
  const debugURL=new URL(`${graphBase}/debug_token`);
  debugURL.searchParams.set('input_token',access);
- const {data}=await remote(debugURL,{method:'GET',headers:{Authorization:`Bearer ${settings.appId}|${settings.secret}`},redirect:'error',cache:'no-store'});
+ const {data}=await atCallbackStep('token_debug',()=>remote(debugURL,{method:'GET',headers:{Authorization:`Bearer ${settings.appId}|${settings.secret}`},redirect:'error',cache:'no-store'}));
  const actual=Array.isArray(data?.scopes)?data.scopes:[];
  const tokenExpires=Number(data?.expires_at)*1000;
  const dataExpiry=data?.data_access_expires_at==null?0:Number(data.data_access_expires_at)*1000;
  const expiresAt=dataExpiry>0?Math.min(tokenExpires,dataExpiry):tokenExpires;
- if(data?.is_valid!==true||String(data.app_id)!==settings.appId||!unifiedScopes.every(s=>actual.includes(s))||
-    actual.some(s=>!unifiedScopes.includes(s)&&!optionalScopes.includes(s))||!Number.isSafeInteger(tokenExpires)||tokenExpires>now+sixtyDays+60000||!Number.isSafeInteger(dataExpiry)||dataExpiry<0||expiresAt<=now){
-   throw Error('承認された読み取り権限・アプリ・60日以内の期限を確認できません');
- }
+ if(data?.is_valid!==true||String(data.app_id)!==settings.appId)throw new InstagramCallbackError('token_identity','対象のアプリに発行された有効な認可を確認できません');
+ if(!unifiedScopes.every(s=>actual.includes(s))||actual.some(s=>!unifiedScopes.includes(s)&&!optionalScopes.includes(s)))throw new InstagramCallbackError('token_scope','承認された読み取り権限を確認できません');
+ if(!Number.isSafeInteger(tokenExpires)||tokenExpires>now+sixtyDays+60000||!Number.isSafeInteger(dataExpiry)||dataExpiry<0||expiresAt<=now)throw new InstagramCallbackError('token_expiry','60日以内の有効期限を確認できません');
  const read=(path,params)=>unifiedGraph(path,access,params,remote);
- const business=await read('me',{fields:'client_business_id'});
- if(business.client_business_id!==settings.businessId)throw Error('許可されたビジネスポートフォリオと一致しません');
- const assigned=await read('me/assigned_instagram_accounts',{fields:'id,username',limit:'2'});
+ const business=await atCallbackStep('portfolio_lookup',()=>read('me',{fields:'client_business_id'}));
+ if(business.client_business_id!==settings.businessId)throw new InstagramCallbackError('portfolio_policy','許可されたビジネスポートフォリオと一致しません');
+ const assigned=await atCallbackStep('account_lookup',()=>read('me/assigned_instagram_accounts',{fields:'id,username',limit:'2'}));
  const account=assigned?.data?.[0];
  if(!Array.isArray(assigned?.data)||assigned.data.length!==1||assigned.paging?.next||!id(account?.id)||account.username?.toLowerCase()!==settings.username){
-  throw Error('許可されたInstagramアカウント1件だけを選択してください');
+  throw new InstagramCallbackError('account_policy','許可されたInstagramアカウント1件だけを選択してください');
  }
  return {access,id:account.id,username:account.username,granted:[...unifiedScopes],expiresAt,businessId:settings.businessId,configId:settings.configId};
 }
