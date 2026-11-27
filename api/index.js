@@ -1,3 +1,4 @@
+import {InstagramReviewError,REVIEW_LIMIT,readInstagramReview,saveInstagramReview} from '../lib/instagram-review.js';
 import {prepareTaskRetention} from '../lib/task-retention.js';
 import {importSalesEvents,readSalesLedger,voidSalesEvent,configureSalesOwner,salesStatus,mapSalesPeer,InstagramImportError} from '../lib/instagram-sales-import.js';
 import {salesKpiProjection} from '../lib/instagram-sales-kpi.js';
@@ -212,6 +213,17 @@ export default async function handler(req,res){
   const cur=await store.doc('site-public');
   await store.transaction([['INSERT INTO ss_documents(name,body) VALUES ($1,$2) ON CONFLICT(name) DO UPDATE SET body=excluded.body,revision=ss_documents.revision+1',['site-public',prev.body]],...(cur?[['INSERT INTO ss_documents(name,body) VALUES ($1,$2) ON CONFLICT(name) DO UPDATE SET body=excluded.body,revision=ss_documents.revision+1',['site-public-previous',cur.body]]]:[])]);
   return json(res,200,{ok:true,published:JSON.parse(prev.body)});
+ }
+ if(route==='/api/instagram/metricool-review'){
+  if(req.method==='GET')return json(res,200,await readInstagramReview(store));
+  if(req.method==='PUT'){
+   if(req.headers.origin!==(runtime().APP_ORIGIN||`http://${req.headers.host}`))return json(res,403,{error:'許可されていないアクセスです'});
+   if(req._sickstyleRaw?.length>REVIEW_LIMIT)return json(res,413,{error:'分析・予約ファイルは64KB以内にしてください。'});
+   let input;try{input=await body(req);}catch{return json(res,400,{error:'JSONファイルを確認してください。'});}
+   try{return json(res,200,await saveInstagramReview(store,input));}
+   catch(e){if(e instanceof InstagramReviewError)return json(res,e.status,{error:e.message});throw e;}
+  }
+  return json(res,405,{error:'対応していない操作です'});
  }
  if(route==='/api/instagram/status'&&req.method==='GET')return json(res,200,await instagram.safeStatus(store));
  if(route==='/api/instagram/connect'&&req.method==='POST')return json(res,200,{url:await instagram.begin(store,sessionHash)});
