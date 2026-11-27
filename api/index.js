@@ -251,7 +251,7 @@ export default async function handler(req,res){
  if(route==='/api/instagram/status'&&req.method==='GET')return json(res,200,await instagram.safeStatus(store));
  if(route==='/api/instagram/connect'&&req.method==='POST')return json(res,200,{url:await instagram.begin(store,sessionHash)});
  if(route==='/api/instagram/callback'&&req.method==='GET'){
-  try{await instagram.connect(store,sessionHash,url);res.writeHead(303,{Location:'/?instagram=connected'});res.end();}catch(e){console.error(JSON.stringify({event:'instagram_callback',error:e instanceof instagram.MetaError?e.code:'authorization_failed'}));res.writeHead(303,{Location:'/?instagram=error'});res.end();}return;
+  try{await instagram.connect(store,sessionHash,url);redirect('/?instagram=connected');}catch(e){console.error(JSON.stringify({event:'instagram_callback',error:e instanceof instagram.MetaError?e.code:'authorization_failed'}));redirect('/?instagram=error');}return;
  }
  if(route==='/api/instagram/sync'&&req.method==='POST'){await instagram.sync(store);return json(res,200,await instagram.safeStatus(store));}
  if(route==='/api/instagram/disconnect'&&req.method==='POST')return json(res,200,await instagram.disconnect(store));
