@@ -1,0 +1,76 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {randomBytes} from 'node:crypto';
+import {createStore} from '../lib/store.js';
+import {withRuntime} from '../lib/runtime.js';
+import {decrypt} from '../lib/security.js';
+import {begin,config,connect,disconnect,safeStatus,sync} from '../integrations/instagram.js';
+import {exchangeUnified,unifiedGraph,unifiedSettings} from '../integrations/instagram-unified.js';
+
+const env={INSTAGRAM_LOGIN_MODE:'unified',INSTAGRAM_UNIFIED_APP_ID:'123456',INSTAGRAM_UNIFIED_APP_SECRET:'fixture-app-secret',INSTAGRAM_UNIFIED_CONFIG_ID:'223456',INSTAGRAM_UNIFIED_BUSINESS_ID:'323456',INSTAGRAM_UNIFIED_USERNAME:'sample_account',APP_ORIGIN:'https://example.com',TOKEN_ENCRYPTION_KEY:randomBytes(32).toString('base64'),INSTAGRAM_ENABLE_MESSAGING:'true'};
+const expiry=()=>Math.floor(Date.now()/1000)+86400;
+const fake=(opts={})=>async (url,req)=>{
+ const u=new URL(url);assert.equal(u.hostname,'graph.facebook.com');
+ assert.equal(req.method,'GET');
+ if(u.pathname.endsWith('/oauth/access_token')){
+  assert.equal(u.searchParams.get('redirect_uri'),'https://example.com/api/instagram/callback');
+  return {access_token:'fixture-user-token'};
+ }
+ if(u.pathname.endsWith('/debug_token'))return {data:{is_valid:true,app_id:'123456',scopes:['instagram_basic','instagram_manage_insights'],expires_at:expiry(),...opts.debug}};
+ if(u.pathname.endsWith('/me'))return {client_business_id:opts.business||'323456'};
+ if(u.pathname.endsWith('/assigned_instagram_accounts'))return opts.accounts||{data:[{id:'654321',username:'sample_account'}]};
+ if(u.pathname.endsWith('/media'))return {data:[{id:'987654',media_product_type:'REELS',caption:'Test reel'}]};
+ if(u.pathname.endsWith('/insights'))return {data:[{name:'reach',total_value:{value:0}}]};
+ assert.equal(u.pathname,'/v27.0/654321');
+ return {id:'654321',username:'sample_account',followers_count:123};
+};
+const expects=unifiedSettings(env);
+test('Unified never configures without pinned business and account or HTTPS origin',()=>{
+ assert.ok(expects);
+ for(const [key,value] of [['APP_ORIGIN','http://example.com'],['APP_ORIGIN','https://example.com/path'],['INSTAGRAM_UNIFIED_BUSINESS_ID',''],['INSTAGRAM_UNIFIED_USERNAME','@sample_account']])assert.equal(unifiedSettings({...env,[key]:value}),null);
+ assert.throws(()=>unifiedGraph('654321/subscribed_apps','tok',{},fake()),/不正/);
+});
+
+test('Unified refuses wrong portfolio, account, multiple assets, extra rights, and unbounded expiry',async()=>{
+ for(const failure of [
+  {debug:{app_id:'999999'}},{debug:{scopes:['instagram_basic']}},
+  {debug:{scopes:['instagram_basic','instagram_manage_insights','instagram_manage_messages']}},
+  {debug:{expires_at:0}},{debug:{expires_at:expiry()+365*86400}},
+  {business:'456789'},{accounts:{data:[{id:'654321',username:'other'}]}},
+  {accounts:{data:[{id:'654321',username:'sample_account'},{id:'777777',username:'other'}]}},
+  {accounts:{data:[{id:'654321',username:'sample_account'}],paging:{next:'https://example.com'}}},
+ ])await assert.rejects(exchangeUnified(expects,'fixture-code',fake(failure)));
+});
+
+test('owner session only, one-shot state, encrypted and read-only Unified sync',async t=>{
+ const dir=await mkdtemp(join(tmpdir(),'ss-ig-unified-'));
+ const store=await createStore({DATA_DIR:dir});
+ const old=global.fetch;let fetches=0;
+ t.after(async()=>{global.fetch=old;store.close();await rm(dir,{recursive:true,force:true});});
+ global.fetch=async(u,o)=>{fetches++;return Response.json(await fake()(u,o));};
+ await withRuntime(env,async()=>{
+  assert.ok(config());
+  const login=new URL(await begin(store,'owner'));
+  assert.equal(login.hostname,'www.facebook.com');
+  assert.equal(login.searchParams.get('config_id'),'223456');
+  assert.equal(login.searchParams.has('scope'),false);
+  const callback=new URL('/api/instagram/callback',env.APP_ORIGIN);
+  callback.searchParams.set('code','fixture-code');
+  callback.searchParams.set('state',login.searchParams.get('state'));
+  await assert.rejects(connect(store,'other',callback),/state/);assert.equal(fetches,0);
+  await connect(store,'owner',callback);
+  await assert.rejects(connect(store,'owner',callback),/state/);
+  const p=JSON.parse((await store.doc('instagram-private')).body);
+  assert.equal(p.provider,'unified');assert.equal(decrypt(p.encrypted).access,'fixture-user-token');
+  assert.ok(!JSON.stringify(await safeStatus(store)).includes('fixture-user-token'));
+  assert.equal((await safeStatus(store)).readiness.state,'sync_unverified');
+  const metrics=await sync(store);
+  assert.equal(metrics.followers,123);
+  assert.equal(metrics.account.reach,0);assert.equal(metrics.dm,null);
+  assert.equal((await safeStatus(store)).readiness.state,'connected');
+  assert.ok((await disconnect(store)).warning.includes('Meta Business Suite'));
+ });
+});

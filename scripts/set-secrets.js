@@ -8,7 +8,7 @@ import {registrationPlan} from './lib/integration-plan.js';
 process.chdir(fileURLToPath(new URL('../',import.meta.url)));
 const cfg=JSON.parse(readFileSync('wrangler.jsonc','utf8'));const origin=cfg.vars?.APP_ORIGIN;
 const [target,...flags]=process.argv.slice(2);
-if(flags.some(f=>!['--plan','--apply'].includes(f))||new Set(flags).size!==flags.length||flags.length>1)throw Error('使い方: node scripts/set-secrets.js instagram|amazon|amazon-refresh|zoom|googlecalendar [--plan|--apply]');
+if(flags.some(f=>!['--plan','--apply'].includes(f))||new Set(flags).size!==flags.length||flags.length>1)throw Error('使い方: node scripts/set-secrets.js instagram|instagram-unified|amazon|amazon-refresh|zoom|googlecalendar [--plan|--apply]');
 const registration=registrationPlan(cfg,target);
 if(!flags.includes('--apply')){console.log(JSON.stringify(registration,null,2));process.exit(0);}
 requireTerminal();
@@ -17,13 +17,22 @@ console.log('変更先Worker: '+registration.worker+' / '+registration.origin);
 console.log('変更する設定名: '+[...registration.requiredNames,...registration.optionalNames].join(', '));
 if(await ask('承認済みの場合だけ REGISTER '+registration.worker+' と入力: ')!=='REGISTER '+registration.worker)throw Error('登録を中止しました。変更はありません。');
 const plans={
+ 'instagram-unified':{title:'Instagram統合ログイン（読み取りのみ）',fields:[
+  ['INSTAGRAM_UNIFIED_APP_ID','Meta App ID（数字）',false,/^\d{5,30}$/],
+  ['INSTAGRAM_UNIFIED_APP_SECRET','Meta App Secret（非表示で入力）',true,/^[0-9a-f]{16,64}$/i],
+  ['INSTAGRAM_UNIFIED_CONFIG_ID','統合ログイン構成 ID（数字）',false,/^\d{5,30}$/],
+  ['INSTAGRAM_UNIFIED_BUSINESS_ID','ひも付け先のビジネスポートフォリオID（数字）',false,/^\d{5,30}$/],
+  ['INSTAGRAM_UNIFIED_USERNAME','Instagramユーザー名（@なし、小文字）',false,/^[a-z0-9_.]{1,30}$/],
+  ['INSTAGRAM_LOGIN_MODE','上の登録が完了したら unified と入力',false,/^unified$/]
+ ],note:`本番 Worker が対応版であること、Meta構成が期限60日・Instagramのみ・基本情報とインサイトの読み取りのみであることを確認してください。
+リダイレクト: ${origin}/api/instagram/callback`},
  instagram:{title:'Instagram（Meta）',fields:[['INSTAGRAM_APP_ID','Instagram App ID（数字）',false,/^\d{5,30}$/],['INSTAGRAM_APP_SECRET','Instagram App Secret（非表示で入力）',true,/^[0-9a-f]{16,64}$/i]],note:`Metaの「Business login settings」の OAuth redirect URIs に次を登録済みか確認してください:\n  ${origin}/api/instagram/callback`},
  amazon:{title:'Amazon SP-API',fields:[['AMAZON_LWA_CLIENT_ID','LWA クライアントID（amzn1.application-oa2-client. で始まる）',false,/^amzn1\.application-oa2-client\.[0-9a-z]+$/],['AMAZON_LWA_CLIENT_SECRET','LWA クライアントシークレット（非表示で入力）',true,/^\S{20,}$/],['AMAZON_APP_ID','アプリID（amzn1.sp.solution. で始まる。セルフ認可のみなら空欄でEnter）',false,/^(amzn1\.sp\.solution\.[0-9a-z-]+)?$/]],note:`自社アカウントはセルフ認可を推奨します（アプリIDは空欄でEnter）。この後 npm run integrations:amazon-refresh でリフレッシュトークンを登録します。\n（Webサイト認可を使う場合のみ: OAuthログインURI ${origin}/api/amazon/login / リダイレクトURI ${origin}/api/amazon/callback）`},
  'amazon-refresh':{title:'Amazon セルフ認可のリフレッシュトークン',fields:[['AMAZON_REFRESH_TOKEN','リフレッシュトークン（Atzr| で始まる・非表示で入力）',true,/^Atzr\|\S+$/]],note:''},
  zoom:{title:'Zoom（団体営業MTGの自動発行）',fields:[['ZOOM_CLIENT_ID','Zoom OAuthアプリ Client ID',false,/^[A-Za-z0-9_-]{8,64}$/],['ZOOM_CLIENT_SECRET','Zoom OAuthアプリ Client Secret（非表示で入力）',true,/^[A-Za-z0-9_-]{8,128}$/]],note:`Zoom App MarketplaceのOAuthアプリ（ユーザー認可が必要なタイプ）で、Redirect URLに次を登録済みか確認してください:\n  ${origin}/api/zoom/callback\nScopesはmeeting:write:meeting / meeting:update:meeting / meeting:delete:meeting / meeting:read:meeting / user:read:userの最小権限のみにしてください（user:read:user:meはZoomの表記ゆれで実在する場合がありますが、integrations/zoom.jsはuser:read:userの表記を要求します）。`},
  googlecalendar:{title:'Googleカレンダー（団体営業MTGの自動登録）',fields:[['GOOGLE_CLIENT_ID','Google OAuthクライアントID（.apps.googleusercontent.com で終わる）',false,/^\d+-[0-9a-zA-Z]+\.apps\.googleusercontent\.com$/],['GOOGLE_CLIENT_SECRET','Google OAuthクライアントシークレット（非表示で入力）',true,/^\S{10,100}$/]],note:`Google Cloud ConsoleのOAuthクライアント（ウェブアプリケーション）で、承認済みのリダイレクトURIに次を登録済みか確認してください:\n  ${origin}/api/googlecalendar/callback\nスコープは https://www.googleapis.com/auth/calendar.events のみ。OAuth同意画面の公開ステータスは「本番環境」にしてください（「テスト中」のままだとリフレッシュトークンが7日で失効します）。`},
 };
-const plan=plans[target];if(!plan)throw Error('使い方: node scripts/set-secrets.js instagram|amazon|amazon-refresh|zoom|googlecalendar');
+const plan=plans[target];if(!plan)throw Error('使い方: node scripts/set-secrets.js instagram|instagram-unified|amazon|amazon-refresh|zoom|googlecalendar');
 console.log(`${plan.title} の設定を Cloudflare Secrets に登録します。チャットやGitHubに秘密値を貼らないでください。`);if(plan.note)console.log(plan.note);
 const env={...process.env,CLOUDFLARE_ACCOUNT_ID:cfg.account_id,WRANGLER_SEND_METRICS:'false'};
 for(const [name,label,,pattern] of plan.fields){
