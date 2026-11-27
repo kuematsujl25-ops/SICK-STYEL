@@ -1,3 +1,4 @@
+import {renderOwnerMedia,bindOwnerMedia} from './owner-media.js';
 import {renderInstagramReview,bindInstagramReview} from './instagram-review.js';
 import {renderKpi} from './monthly-kpi.js';
 let kpiMonth=new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'}).slice(0,7);
@@ -219,7 +220,7 @@ function settings(){return `<div class="settingsgrid"><section class="panel"><h2
 // ---------- Instagram ----------
 function safeLink(value){try{const u=new URL(value);return u.protocol==='https:'&&['www.instagram.com','instagram.com'].includes(u.hostname)?esc(u.href):'#';}catch{return '#';}}
 function instagramView(){const c=ig?.cache;const expired=ig?.expiresAt&&ig.expiresAt<Date.now();const dm=c?.dm;
- return `${renderInstagramReview()}<section class="panel"><div class="panelhead"><h2>接続状態</h2>${expired?'<span class="badge warn">認可期限切れ</span>':statusBadge(ig)}</div><p>Meta公式のInstagramログイン（ビジネス／クリエイターアカウント）で接続します。Instagramのパスワードをこのアプリに入力・保存することはありません。</p>
+ return `${renderOwnerMedia()}${renderInstagramReview()}<section class="panel"><div class="panelhead"><h2>接続状態</h2>${expired?'<span class="badge warn">認可期限切れ</span>':statusBadge(ig)}</div><p>Meta公式のInstagramログイン（ビジネス／クリエイターアカウント）で接続します。Instagramのパスワードをこのアプリに入力・保存することはありません。</p>
 
  <details class="guide" ${!ig?.configured?'open':''}><summary><b>Instagram連携の手順（5ステップ）</b></summary><ol>
  <li>接続するInstagramを「ビジネス」または「クリエイター」のプロアカウントにします。個人アカウントではInsightsを取得できません。</li>
@@ -402,7 +403,7 @@ async function logout(){try{await api('logout','POST',{});}catch(e){toast(e.mess
 async function refresh(){if(confirm('保存していない入力内容は破棄されます。最新データを読み込みますか？'))try{await load();toast('最新データを読み込みました');}catch(e){toast(e.message);}}
 function bindMetricsPages(){document.querySelectorAll('[data-metricspage]').forEach(b=>b.onclick=()=>{metricsPage=Number(b.dataset.metricspage);render();});}
 function bind(){
- if(section==='instagram')bindInstagramReview({panel:document.querySelector('#ig-metricool-review'),api,esc});
+ if(section==='instagram'){bindOwnerMedia({panel:document.querySelector('#owner-media'),api,esc});bindInstagramReview({panel:document.querySelector('#ig-metricool-review'),api,esc});}
  document.querySelectorAll('[data-shipment-status]').forEach(el=>el.onchange=()=>changeShipmentStatus(el));
  const km=document.querySelector('#kpimonth');if(km)km.onchange=()=>{if(km.value){kpiMonth=km.value;render();}};
  const kf=document.querySelector('#kpiform');if(kf)kf.onsubmit=async e=>{e.preventDefault();try{const v=Object.fromEntries(new FormData(kf));if(v.type==='complete'&&!confirm('対象月の全活動・受注を確認した自己申告を記録しますか？外部ソースの網羅性確認ではなく、履歴不足・品質警告は解除されません。'))return;await persist({...state,salesKpiRecords:[...(state.salesKpiRecords||[]),{...v,id:crypto.randomUUID(),ref:'',amount:v.amount===''?null:Number(v.amount),qty:v.qty===''?null:Number(v.qty),createdAt:new Date().toISOString()}]});}catch(err){document.querySelector('#kpierror').textContent=err.message;}};
