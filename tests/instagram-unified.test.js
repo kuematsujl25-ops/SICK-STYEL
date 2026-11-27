@@ -38,7 +38,7 @@ test('Unified refuses wrong portfolio, account, multiple assets, extra rights, a
  for(const failure of [
   {debug:{app_id:'999999'}},{debug:{scopes:['instagram_basic']}},
   {debug:{scopes:['instagram_basic','instagram_manage_insights','instagram_manage_messages']}},
-  {debug:{expires_at:0}},{debug:{expires_at:expiry()+365*86400}},
+  {debug:{expires_at:0}},{debug:{expires_at:expiry()+365*86400}},{debug:{data_access_expires_at:1}},
   {business:'456789'},{accounts:{data:[{id:'654321',username:'other'}]}},
   {accounts:{data:[{id:'654321',username:'sample_account'},{id:'777777',username:'other'}]}},
   {accounts:{data:[{id:'654321',username:'sample_account'}],paging:{next:'https://example.com'}}},
@@ -71,6 +71,11 @@ test('owner session only, one-shot state, encrypted and read-only Unified sync',
   assert.equal(metrics.followers,123);
   assert.equal(metrics.account.reach,0);assert.equal(metrics.dm,null);
   assert.equal((await safeStatus(store)).readiness.state,'connected');
+  const {provider:_,...legacy}=p;
+  await store.put('instagram-private',legacy);
+  assert.equal((await safeStatus(store)).provider,'legacy');
+  assert.equal((await safeStatus(store)).apiVersion,'v26.0');
+  await store.put('instagram-private',p);
   assert.ok((await disconnect(store)).warning.includes('Meta Business Suite'));
  });
 });

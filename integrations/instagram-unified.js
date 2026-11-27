@@ -37,9 +37,11 @@ export async function exchangeUnified(settings,code,remote,now=Date.now()){
  debugURL.searchParams.set('input_token',access);
  const {data}=await remote(debugURL,{method:'GET',headers:{Authorization:`Bearer ${settings.appId}|${settings.secret}`},redirect:'error',cache:'no-store'});
  const actual=Array.isArray(data?.scopes)?data.scopes:[];
- const expiresAt=Number(data?.expires_at)*1000;
+ const tokenExpires=Number(data?.expires_at)*1000;
+ const dataExpiry=data?.data_access_expires_at==null?0:Number(data.data_access_expires_at)*1000;
+ const expiresAt=dataExpiry>0?Math.min(tokenExpires,dataExpiry):tokenExpires;
  if(data?.is_valid!==true||String(data.app_id)!==settings.appId||!unifiedScopes.every(s=>actual.includes(s))||
-    actual.some(s=>!unifiedScopes.includes(s)&&!optionalScopes.includes(s))||!Number.isSafeInteger(expiresAt)||expiresAt<=now||expiresAt>now+sixtyDays+60000){
+    actual.some(s=>!unifiedScopes.includes(s)&&!optionalScopes.includes(s))||!Number.isSafeInteger(tokenExpires)||tokenExpires>now+sixtyDays+60000||!Number.isSafeInteger(dataExpiry)||dataExpiry<0||expiresAt<=now){
    throw Error('承認された読み取り権限・アプリ・60日以内の期限を確認できません');
  }
  const read=(path,params)=>unifiedGraph(path,access,params,remote);
