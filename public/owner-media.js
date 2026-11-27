@@ -1,6 +1,8 @@
 const ROOT='/api/owner-media/files';
 const PANEL='owner-media';
 const dateFmt=new Intl.DateTimeFormat('ja-JP',{timeZone:'Asia/Tokyo',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
+const trackLabels={instagram:'Instagram内で追加',embedded:'動画に入っている音を使用',silent:'BGMを追加しない'};
+const musicText=m=>m&&Object.hasOwn(trackLabels,m.mode)?trackLabels[m.mode]+(m.mode==='instagram'&&m.track?'：'+m.track:''):'';
 const statuses={draft:'未送信',queued:'受け取り待ち',received:'受け取り済み',complete:'対応完了'};
 export const renderOwnerMedia=()=>`<section class="panel owner-media" id="${PANEL}">
  <div class="panelhead"><h2>素材・Dotへの依頼</h2><span class="badge">本人専用</span></div>
@@ -15,6 +17,8 @@ export const renderOwnerMedia=()=>`<section class="panel owner-media" id="${PANE
   <label>依頼の種類<select name="type"><option>制作</option><option>修正</option><option>投稿予約</option></select></label>
   <label>対象素材<select name="assetId"><option value="">素材を指定しない</option></select></label>
   <label class="owner-media-date" hidden>希望日時（日本時間）<input type="datetime-local" name="scheduledJst"></label>
+  <label class="owner-media-music" hidden>投稿時の音楽<select name="musicMode" disabled><option value="">未指定</option><option value="instagram">Instagram内で追加</option><option value="embedded">動画に入っている音を使用</option><option value="silent">BGMを追加しない</option></select></label>
+  <label class="owner-media-track" hidden>曲名・アーティスト <input name="musicTrack" type="text" maxlength="160" placeholder="例：曲名 / アーティスト名" disabled></label>
   <label>依頼内容<textarea name="note" placeholder="例：冒頭5秒をもう少し強く。タイトルを大きくしてほしい。" rows="3" required maxlength="900"></textarea></label>
   <div class="actions"><button class="primary" type="submit">依頼を保存</button></div>
   <p class="owner-media-help note">依頼を保存しても自動で予約・公開はされません。</p>
@@ -22,12 +26,12 @@ export const renderOwnerMedia=()=>`<section class="panel owner-media" id="${PANE
  <div class="actions"><h3>依頼履歴</h3><button class="owner-media-refresh" type="button">依頼状況を更新</button></div><div class="owner-media-history"></div>
  </section>`;
 export function ownerRequestText(r,fileName){
- return ['【SICK STYLEアプリからの依頼】','依頼：'+r.type,'依頼ID：'+r.id,r.scheduledJst?'希望：'+r.scheduledJst.replace('T',' ')+'（日本時間）':null,r.assetId?'対象素材：'+(fileName||r.assetId)+'（必要に応じてファイルを添付）':null,'',r.note,'',r.type==='投稿予約'?'投稿内容・日時を確認してから進めてください。':null].filter(v=>v!==null&&v!==undefined).join('\n').replace(/\n{3,}/g,'\n\n').trim();
+ return ['【SICK STYLEアプリからの依頼】','依頼：'+r.type,'依頼ID：'+r.id,r.scheduledJst?'希望：'+r.scheduledJst.replace('T',' ')+'（日本時間）':null,r.assetId?'対象素材：'+(fileName||r.assetId)+'（必要に応じてファイルを添付）':null,musicText(r.music)?'音楽：'+musicText(r.music):null,'',r.note,'',r.type==='投稿予約'?'投稿内容・日時を確認してから進めてください。':null].filter(v=>v!==null&&v!==undefined).join('\n').replace(/\n{3,}/g,'\n\n').trim();
 }
 export function bindOwnerMedia({panel,api,esc}){
  if(!panel)return;
  const find=s=>panel.querySelector(s),statusEl=find('.owner-media-status'),form=find('form'),upload=find('.owner-media-upload'),more=find('.owner-media-more'),gallery=find('.owner-media-gallery');
- const asset=form.elements.assetId,date=form.elements.scheduledJst,submit=form.querySelector('button[type=submit]'),history=find('.owner-media-history');
+ const asset=form.elements.assetId,date=form.elements.scheduledJst,musicMode=form.elements.musicMode,musicTrack=form.elements.musicTrack,submit=form.querySelector('button[type=submit]'),history=find('.owner-media-history');
  let files=[],requests=[],cursor=null,requestId=crypto.randomUUID(),available=false,bridge=false;
  const setStatus=(v)=>{statusEl.textContent=v;};
  const fmt=d=>dateFmt.format(new Date(d));
@@ -40,7 +44,7 @@ export function bindOwnerMedia({panel,api,esc}){
   for(const button of gallery.querySelectorAll('[data-owner-use]'))button.onclick=()=>{asset.value=button.dataset.ownerUse;form.elements.type.value=button.hasAttribute('data-owner-schedule')?'投稿予約':'修正';mode();(date.required?date:form.elements.note).focus();};
  }
  function paintHistory(){
-  history.innerHTML=requests.length?requests.map(r=>`<article class="owner-media-request"><div><b>${esc(r.type)}</b> <span class="badge">${statuses[r.state]||statuses.draft}</span> <small>${fmt(r.createdAt)}</small></div>${r.scheduledJst?'<small>希望日時 '+esc(r.scheduledJst.replace('T',' '))+' JST</small>':''}<p>${esc(r.note)}</p>${r.result?'<p><b>Dotからの結果</b><br>'+esc(r.result)+'</p>':''}${bridge&&r.state==='draft'?'<button class="primary" type="button" data-owner-send="'+esc(r.id)+'">Dotに送る</button>':''}<button type="button" data-owner-copy="${esc(r.id)}">指示をコピー</button><textarea class="owner-media-copy" rows="5" hidden readonly aria-label="コピーする指示"></textarea></article>`).join(''):'<p class="note">依頼はまだありません。</p>';
+  history.innerHTML=requests.length?requests.map(r=>`<article class="owner-media-request"><div><b>${esc(r.type)}</b> <span class="badge">${statuses[r.state]||statuses.draft}</span> <small>${fmt(r.createdAt)}</small></div>${r.scheduledJst?'<small>希望日時 '+esc(r.scheduledJst.replace('T',' '))+' JST</small>':''}${musicText(r.music)?'<p><b>音楽：</b>'+esc(musicText(r.music))+'</p>':''}<p>${esc(r.note)}</p>${r.result?'<p><b>Dotからの結果</b><br>'+esc(r.result)+'</p>':''}${bridge&&r.state==='draft'?'<button class="primary" type="button" data-owner-send="'+esc(r.id)+'">Dotに送る</button>':''}<button type="button" data-owner-copy="${esc(r.id)}">指示をコピー</button><textarea class="owner-media-copy" rows="5" hidden readonly aria-label="コピーする指示"></textarea></article>`).join(''):'<p class="note">依頼はまだありません。</p>';
   for(const button of history.querySelectorAll('[data-owner-send]'))button.onclick=async()=>{
    button.disabled=true;
    try{
@@ -65,8 +69,11 @@ export function bindOwnerMedia({panel,api,esc}){
  function mode(){
   const scheduled=form.elements.type.value==='投稿予約';
   date.required=scheduled;asset.required=scheduled;date.parentElement.hidden=!scheduled;
+  musicMode.disabled=!scheduled;musicMode.parentElement.hidden=!scheduled;
+  const needsTrack=scheduled&&musicMode.value==='instagram';
+  musicTrack.disabled=!needsTrack;musicTrack.required=needsTrack;musicTrack.parentElement.hidden=!needsTrack;
  }
- form.elements.type.onchange=mode;mode();
+ form.elements.type.onchange=mode;musicMode.onchange=mode;mode();
  more.onclick=async()=>{more.disabled=true;try{await loadFiles(true);}catch(e){setStatus(e.message);}finally{more.disabled=false;}};
  upload.onchange=async()=>{
   const file=upload.files[0];if(!file)return;
@@ -80,7 +87,7 @@ export function bindOwnerMedia({panel,api,esc}){
  };
  form.onsubmit=async(event)=>{
   event.preventDefault();submit.disabled=true;const d=new FormData(form);
-  try{const record=await api('owner-media/requests','POST',{id:requestId,type:d.get('type'),assetId:d.get('assetId')||null,scheduledJst:d.get('type')==='投稿予約'?d.get('scheduledJst'):null,note:d.get('note')});
+  try{const record=await api('owner-media/requests','POST',{id:requestId,type:d.get('type'),assetId:d.get('assetId')||null,scheduledJst:d.get('type')==='投稿予約'?d.get('scheduledJst'):null,note:d.get('note'),...(d.get('musicMode')?{music:{mode:d.get('musicMode'),track:d.get('musicTrack')||''}}:{})});
    requests=[record,...requests.filter(x=>x.id!==record.id)];paintHistory();form.reset();mode();requestId=crypto.randomUUID();setStatus('依頼を保存しました。Dotにはまだ送信していません。');
   }catch(e){if(e.body?.error?.includes('別の依頼ID'))requestId=crypto.randomUUID();setStatus(e.message);}finally{submit.disabled=false;}
  };

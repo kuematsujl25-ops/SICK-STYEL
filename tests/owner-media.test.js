@@ -57,3 +57,16 @@ test('owner requests are idempotent, use future JST dates, and do not enqueue pu
  const handoff=ownerRequestText(saved,'素材.mp4');
  assert.match(handoff,/09:01（日本時間）/);assert.match(handoff,/素材.mp4/);assert.match(handoff,/確認してから/);
 });
+test('optional publication music is saved with the request and copied without authorizing publication',async()=>{
+ const store=mockStore(),now=Date.parse('2026-11-27T00:00:00Z');
+ const r={id:randomUUID(),type:'投稿予約',note:'fixture',assetId:'8000000000000-'+randomUUID(),scheduledJst:'2026-11-27T10:00',music:{mode:'instagram',track:'  曲 / アーティスト  '}};
+ await assert.rejects(addOwnerRequest(store,{...r,music:{mode:'instagram',track:''}},now),/曲名/);
+ await assert.rejects(addOwnerRequest(store,{...r,music:{mode:'silent',track:'spoof'}},now),/曲名/);
+ await assert.rejects(addOwnerRequest(store,{...r,type:'修正',scheduledJst:null},now),/音楽/);
+ const saved=await addOwnerRequest(store,r,now);assert.equal(saved.music.track,'曲 / アーティスト');
+ assert.deepEqual(await addOwnerRequest(store,r,now+1),saved);
+ assert.equal((await readOwnerRequests(store)).requests[0].music.mode,'instagram');
+ assert.match(ownerRequestText(saved),/Instagram内で追加：曲 \/ アーティスト/);
+ assert.equal(saved.state,'draft');
+ await assert.rejects(addOwnerRequest(store,{...r,music:{mode:'silent',track:''}},now),{status:409});
+});
