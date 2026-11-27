@@ -76,17 +76,22 @@ export async function pendingConversations(call,access,own,budget,warnings,now=D
  try{
   const since=now-DM_DAYS*86400000;
   const list=await call('me/conversations',access,{platform:'instagram',fields:'updated_time,messages.limit(1){from,created_time}',limit:'25'});
-  const recent=(list.data||[]).filter(c=>Date.parse(c.updated_time)>=since);let pending=0,checked=0,unknown=0;
+  const recent=(list.data||[]).filter(c=>Date.parse(c.updated_time)>=since);let pending=0,checked=0,unknown=0,budgetLimited=false;
   for(const c of recent){
    let last=c.messages?.data?.[0];
-   if(!last?.from){if(budget()<2){unknown++;continue;}try{const m=await call(c.id,access,{fields:'messages'});const id=m.messages?.data?.[0]?.id;last=id?await call(id,access,{fields:'from,created_time'}):null;}catch{last=null;}}
+   if(!last?.from){if(budget()<2){unknown++;budgetLimited=true;continue;}try{const m=await call(c.id,access,{fields:'messages'});const id=m.messages?.data?.[0]?.id;last=id?await call(id,access,{fields:'from,created_time'}):null;}catch{last=null;}}
    if(!last?.from?.id){unknown++;continue;}checked++;const mine=own.ids.includes(String(last.from.id))||(!!own.username&&last.from.username===own.username);if(!mine)pending++;
   }
-  return {pending,checked,unknown,periodDays:DM_DAYS,truncated:!!list.paging?.next,checkedAt:new Date(now).toISOString()};
+  return {pending,checked,unknown,periodDays:DM_DAYS,truncated:!!list.paging?.next,budgetLimited,checkedAt:new Date(now).toISOString()};
  }catch(e){warnings.push('DM（Conversations API）: '+e.message);return null;}
 }
-export async function sync(store){
- const release=await acquireConnectionLease(store);let used=0;let provider='legacy';const call=(id,access,params={})=>{used++;return provider==='unified'?unifiedGraph(id,access,params,remote):graph(id,access,params);};
+// 29 core graph calls (profile, two account insights, media and <=25 reels)
+ // plus at most one legacy token refresh. Reserve optional DM detail last.
+export async function sync(store,{maxRequests=45}={}){
+ if(!Number.isSafeInteger(maxRequests)||maxRequests<30||maxRequests>45)throw Error('Instagramの通信枠が不正です');
+ const release=await acquireConnectionLease(store);let used=0;let provider='legacy';
+ const consume=()=>{if(used>=maxRequests)throw Error('Instagramの通信枠に達しました');used++;};
+ const call=(id,access,params={})=>{consume();return provider==='unified'?unifiedGraph(id,access,params,remote):graph(id,access,params);};
  let cache={};
  try{
   let p=await privateData(store);if(!p)throw Error('Instagramを接続してください');
@@ -98,7 +103,7 @@ export async function sync(store){
   }
   if(p.expiresAt<=Date.now())throw Error('Instagramの認可期限が切れました。再接続してください');
   let {access}=decrypt(p.encrypted);
-  if(provider==='legacy'&&p.expiresAt-Date.now()<7*86400000&&Date.now()-p.issuedAt>86400000){const u=new URL('https://graph.instagram.com/refresh_access_token');u.search=new URLSearchParams({grant_type:'ig_refresh_token',access_token:access});used++;const fresh=await remote(u);if(!fresh.access_token||!fresh.expires_in)throw Error('トークン更新に失敗しました');access=fresh.access_token;p={...p,encrypted:encrypt({access}),issuedAt:Date.now(),expiresAt:Date.now()+fresh.expires_in*1000};await store.put('instagram-private',p);}
+  if(provider==='legacy'&&p.expiresAt-Date.now()<7*86400000&&Date.now()-p.issuedAt>86400000){const u=new URL('https://graph.instagram.com/refresh_access_token');u.search=new URLSearchParams({grant_type:'ig_refresh_token',access_token:access});consume();const fresh=await remote(u);if(!fresh.access_token||!fresh.expires_in)throw Error('トークン更新に失敗しました');access=fresh.access_token;p={...p,encrypted:encrypt({access}),issuedAt:Date.now(),expiresAt:Date.now()+fresh.expires_in*1000};await store.put('instagram-private',p);}
   const warnings=[];let followers=null;
   try{const profile=await call(p.id,access,{fields:provider==='unified'?'id,username,followers_count':'user_id,username,followers_count'});followers=typeof profile.followers_count==='number'?profile.followers_count:null;}catch(e){warnings.push('フォロワー数: '+e.message);}
   // アカウント全体の指標（直近30日・total_value）。100フォロワー未満では follows_and_unfollows は返りません。
@@ -108,14 +113,14 @@ export async function sync(store){
   const media=await call(`${p.id}/media`,access,{fields:'id,caption,media_product_type,timestamp,permalink',limit:'25'});
   if(!Array.isArray(media?.data))throw new MetaError('invalid_response');
   const reels=[]; // Limit the visible scope honestly to the latest 25 media, avoiding unbounded sync work.
-  const source=(media.data||[]).filter(x=>x.media_product_type==='REELS');
+  const source=media.data.slice(0,25).filter(x=>x.media_product_type==='REELS');
   for(let offset=0;offset<source.length;offset+=5){const group=await Promise.all(source.slice(offset,offset+5).map(async m=>{
    const values={};let response;
    try{response=await call(`${m.id}/insights`,access,{metric:'views,reach,total_interactions,likes,comments,saved,shares'});for(const n of ['views','reach','total_interactions','likes','comments','saved','shares'])values[n]=metricValue(response,n);}
    catch(e){for(const n of ['views','reach','total_interactions','likes','comments','saved','shares'])values[n]=null;warnings.push(`リール ${m.id}: ${e.message}`);}
    return {id:m.id,caption:m.caption||'リール',timestamp:m.timestamp,permalink:m.permalink,values};
   }));reels.push(...group);}
-  const dm=provider==='legacy'&&p.granted?.includes('instagram_business_manage_messages')?await pendingConversations(call,access,{ids:[p.id,p.scopedId].filter(Boolean).map(String),username:p.username},()=>45-used,warnings):null;
+  const dm=provider==='legacy'&&p.granted?.includes('instagram_business_manage_messages')?await pendingConversations(call,access,{ids:[p.id,p.scopedId].filter(Boolean).map(String),username:p.username},()=>maxRequests-used,warnings):null;
   const day=new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'});const history=(cache.history||[]).filter(x=>x.date!==day);const previous=history.at(-1);if(followers!==null)history.push({date:day,followers});
   const stamp=new Date().toISOString();const insightsVerified=['reach','views','accounts_engaged','total_interactions','follows','unfollows'].some(k=>Number.isFinite(account[k]))||reels.some(r=>Object.values(r.values).some(Number.isFinite));
   const syncVerified=Number.isFinite(followers)&&insightsVerified;

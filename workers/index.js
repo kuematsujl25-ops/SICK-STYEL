@@ -54,14 +54,12 @@ export default {
     try{await runReport(store,kind,new Date(),async()=>googlecalendar.listToday(store,new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'})));}
     catch(e){console.error(JSON.stringify({event:'scheduled_notification_failed',kind,type:e.name||'unknown'}));}
    };
-   // 09:00 JST（'0 0 * * *'）はInstagram同期と「今日の予定」通知で同じ呼び出しを共有している。
-   // Instagram同期は内部で多くのサブリクエストを使うことがあり、Workers Freeプランの1呼び出しあたり
-   // 50件の上限に、通知配信（Googleカレンダー取得＋登録端末へのPush送信）分を合わせると達しうる
-   // （Codex独立レビュー指摘）。ユーザー向けの初回通知を優先し、バックグラウンドの
-   // Instagram同期を後に回す。通知の一時失敗は既存の分単位ジョブが短時間内に再試行する。
+   // 09:00 JST shares this invocation's 50 external subrequests on Workers Free.
+   // Reserve 15 for at most six Calendar requests and five Push sends, plus margin.
+   // Keep notification delivery first; Instagram retains profile/reels before optional DM details.
    if(kind==='morning')await sendReport();
    if(event.cron==='0 0 * * *'){
-    try{if((await instagram.safeStatus(store)).connected)await instagram.sync(store);}
+    try{if((await instagram.safeStatus(store)).connected)await instagram.sync(store,{maxRequests:35});}
     catch{console.error(JSON.stringify({event:'scheduled_sync_failed',service:'instagram'}));}
    }
    if(kind&&kind!=='morning')await sendReport();

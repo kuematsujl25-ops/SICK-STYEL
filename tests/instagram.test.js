@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {createHmac,randomBytes} from 'node:crypto';
 import {createStore} from '../lib/store.js';
+import {withRuntime} from '../lib/runtime.js';
 import {encrypt,decrypt,hash} from '../lib/security.js';
 import {breakdownValues,begin,connect,metricValue,verifySignature,receiveWebhook,safeStatus,sync,disconnect} from '../integrations/instagram.js';
 
@@ -44,3 +45,36 @@ test('認可stateのセッション固定・暗号化・同期・DMの重複/順
 });
 
 test('フォロー/フォロー解除の内訳を解析',()=>{assert.deepEqual(breakdownValues({data:[{name:'follows_and_unfollows',total_value:{breakdowns:[{dimension_keys:['follow_type'],results:[{dimension_values:['FOLLOWER'],value:12},{dimension_values:['NON_FOLLOWER'],value:3}]}]}}]},'follows_and_unfollows'),{FOLLOWER:12,NON_FOLLOWER:3});assert.equal(breakdownValues({data:[]},'follows_and_unfollows'),null);});
+
+
+test('shared morning budget preserves complete profile and reel reads before optional legacy DM details',async t=>{
+ const dir=await mkdtemp(path.join(tmpdir(),'ss-ig-budget-')),store=await createStore({DATA_DIR:dir});
+ const real=global.fetch;let calls=0;
+ t.after(async()=>{global.fetch=real;store.close();await rm(dir,{recursive:true,force:true});});
+ const now=Date.now();
+ global.fetch=async(url,options)=>{
+  calls++;assert.equal(options.redirect,'error');
+  const u=new URL(url), endpoint=u.pathname.split('/').pop();
+  let data={};
+  if(endpoint==='refresh_access_token')data={access_token:'fixture-next',expires_in:5184000};
+  else if(endpoint==='media')data={data:Array.from({length:26},(_,i)=>({id:String(10000+i),media_product_type:'REELS'}))};
+  else if(endpoint==='insights')data={data:[{name:'reach',total_value:{value:20}}]};
+  else if(endpoint==='conversations')data={data:Array.from({length:25},(_,i)=>({id:String(20000+i),updated_time:new Date(now).toISOString()}))};
+  else if(endpoint==='12345')data={followers_count:321};
+  else if(u.searchParams.get('fields')==='messages')data={messages:{data:[{id:'30000'}]}};
+  else if(endpoint==='30000')data={from:{id:'99999'}};
+  return Response.json(data);
+ };
+ await withRuntime({TOKEN_ENCRYPTION_KEY:randomBytes(32).toString('base64')},async()=>{
+  await store.put('instagram-private',{id:'12345',username:'sample',encrypted:encrypt({access:'fixture-old'}),issuedAt:now-2*86400000,expiresAt:now+86400000,granted:['instagram_business_manage_messages']});
+  const result=await sync(store,{maxRequests:35});
+  assert.equal(calls,35);
+  assert.equal(result.syncVerified,true);
+  assert.equal(result.followers,321);
+  assert.equal(result.reels.length,25);
+  assert.equal(result.dm.checked,2);
+  assert.equal(result.dm.unknown,23);
+  assert.equal(result.dm.budgetLimited,true);
+  assert.equal(result.dm.truncated,false);
+ });
+});
