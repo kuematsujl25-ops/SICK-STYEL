@@ -5,8 +5,8 @@ import {runInNewContext} from 'node:vm';
 // Evaluate the real scheduled handler with integration boundaries replaced by
 // controlled jobs. Cloudflare HTTP imports cannot be loaded by Node directly.
 const source=readFileSync('workers/index.js','utf8').replace(/^import .*;\n/gm,'').replace('export default {','globalThis.worker = {');
-function scheduledHarness(reminders,recurring,proactive=async()=>{},retryReports=async()=>{}){
- const context={Date,Promise,console,fetch:()=>{},createServer:()=>({}),httpServerHandler:()=>({}),handler:()=>{},createD1Store:()=>({}),withRuntime:(_,fn)=>fn(),runProactive:proactive,runMeetingReminders:reminders,retryScheduledReports:retryReports,runRecurringTasks:recurring};runInNewContext(readFileSync('lib/scheduled-minute.js','utf8').replace(/^import .*;\n/gm,'').replace('export async function','async function')+'\n'+source,context);return context.worker;
+function scheduledHarness(reminders,recurring,proactive=async()=>{},retryReports=async()=>{},overrides={}){
+ const context={Date,Promise,console,fetch:()=>{},createServer:()=>({}),httpServerHandler:()=>({}),handler:()=>{},createD1Store:()=>({}),withRuntime:(_,fn)=>fn(),runProactive:proactive,runMeetingReminders:reminders,retryScheduledReports:retryReports,runRecurringTasks:recurring,...overrides};runInNewContext(readFileSync('lib/scheduled-minute.js','utf8').replace(/^import .*;\n/gm,'').replace('export async function','async function')+'\n'+source,context);return context.worker;
 }
 test('quarter-hour recurring failure waits for existing reminder delivery before rejecting',async()=>{
  let finishReminder;const reminder=new Promise(resolve=>{finishReminder=resolve;});let called=false,settled=false,protectedWork;
@@ -39,4 +39,16 @@ test('existing minute cron invokes report retry independently of meeting reminde
  await worker.scheduled({cron:'* * * * *',scheduledTime:Date.parse('2026-11-27T11:02:00Z')},{DB:{}},{waitUntil:p=>work=p});
  await assert.rejects(work,/reminder failed/);
  assert.equal(checked,'2026-11-27T11:02:00.000Z');
+});
+
+
+test('daily report stays first and passes a bounded Graph budget to Instagram in the shared invocation',async()=>{
+ const order=[];
+ const worker=scheduledHarness(async()=>{},async()=>{},undefined,undefined,{
+  scheduledKind:()=> 'morning',
+  runReport:async()=>{order.push('report');},
+  instagram:{safeStatus:async()=>({connected:true}),sync:async(_store,options)=>{order.push('instagram');assert.equal(options.maxRequests,35);}}
+ });
+ let work;await worker.scheduled({cron:'0 0 * * *',scheduledTime:Date.parse('2026-11-27T00:00:00Z')},{DB:{}},{waitUntil:p=>work=p});
+ await work;assert.deepEqual(order,['report','instagram']);
 });

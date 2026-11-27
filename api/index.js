@@ -2,7 +2,7 @@ import {instagramCallbackDiagnostic} from '../integrations/instagram-unified.js'
 import {OwnerMediaError,readOwnerRequests,addOwnerRequest,validAssetId,bridgeConfigured,bridgeAuthorized,updateOwnerRequest} from '../lib/owner-media-requests.js';
 import {InstagramReviewError,REVIEW_LIMIT,readInstagramReview,saveInstagramReview} from '../lib/instagram-review.js';
 import {prepareTaskRetention} from '../lib/task-retention.js';
-import {importSalesEvents,readSalesLedger,voidSalesEvent,configureSalesOwner,salesStatus,mapSalesPeer,InstagramImportError} from '../lib/instagram-sales-import.js';
+import {importSalesEvents,readSalesLedger,voidSalesEvent,configureSalesOwner,salesStatus,mapSalesPeer,classifyImportOnlyPeer,InstagramImportError} from '../lib/instagram-sales-import.js';
 import {salesKpiProjection} from '../lib/instagram-sales-kpi.js';
 import {instagramPreviewPage} from '../lib/instagram-preview-page.js';
 import {retainKpiHistory,restoreKpiHistory,KpiValidationError} from '../lib/monthly-kpi.js';
@@ -123,6 +123,7 @@ export default async function handler(req,res){
    if(route==='/api/instagram-sales/import'&&req.method==='POST')return json(res,200,await importSalesEvents(store,await body(req),owner));
    if(route==='/api/instagram-sales/void'&&req.method==='POST')return json(res,200,await voidSalesEvent(store,await body(req),owner));
    if(route==='/api/instagram-sales/mapping'&&req.method==='POST')return json(res,200,await mapSalesPeer(store,await body(req),owner));
+   if(route==='/api/instagram-sales/import-only'&&req.method==='POST')return json(res,200,await classifyImportOnlyPeer(store,await body(req),owner));
    if(route==='/api/instagram-sales/events'&&req.method==='GET')return json(res,200,await readSalesLedger(store,owner));
    if(route==='/api/instagram-sales/kpi'&&req.method==='GET'){
     const ledger=await readSalesLedger(store,owner),workspace=await revisionOf(store);

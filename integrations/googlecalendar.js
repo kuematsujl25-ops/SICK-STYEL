@@ -37,9 +37,9 @@ export async function connect(store,session,url){
  const data={email:null,encrypted:encrypt({refresh:raw.refresh_token}),issuedAt:Date.now(),connectedAt:new Date().toISOString(),scope:String(raw.scope||'')};
  await store.put('googlecalendar-private',data);return data;
 }
-async function accessToken(store,p){
+async function accessToken(store,p,{strictRedirect=false}={}){
  const form=new URLSearchParams({grant_type:'refresh_token',refresh_token:decrypt(p.encrypted).refresh,client_id:runtime().GOOGLE_CLIENT_ID,client_secret:runtime().GOOGLE_CLIENT_SECRET});
- const fresh=await remote('token_refresh','https://oauth2.googleapis.com/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:form});
+ const fresh=await remote('token_refresh','https://oauth2.googleapis.com/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:form,...(strictRedirect?{redirect:'error'}:{})});
  if(!fresh.access_token)throw Error('Googleトークンの更新に失敗しました。再接続してください');
  return fresh.access_token;
 }
@@ -75,14 +75,14 @@ export async function deleteEvent(store,eventId,calendarId='primary'){
 export async function listToday(store,day){
  if(!/^\d{4}-\d{2}-\d{2}$/.test(day))throw Error('対象日が不正です');
  const p=await privateData(store);if(!p)return {connected:false,events:[]};
- const access=await accessToken(store,p);
+ const access=await accessToken(store,p,{strictRedirect:true});
  const timeMin=new Date(day+'T00:00:00+09:00').toISOString();
  const next=new Date(Date.parse(timeMin)+86400000).toISOString();
  const u=new URL('https://www.googleapis.com/calendar/v3/calendars/primary/events');
  u.search=new URLSearchParams({timeMin,timeMax:next,singleEvents:'true',orderBy:'startTime',maxResults:'2500'});
  const events=[],seen=new Set();
  for(let page=0;page<5;page++){
-  const r=await remote('list_events',u.href,{headers:{Authorization:'Bearer '+access}});
+  const r=await remote('list_events',u.href,{headers:{Authorization:'Bearer '+access},redirect:'error'});
   if(r.items!==undefined&&!Array.isArray(r.items))throw new GoogleCalendarError('invalid_response',null,'list_events');
   events.push(...(r.items||[]));
   if(!r.nextPageToken)return {connected:true,events};
