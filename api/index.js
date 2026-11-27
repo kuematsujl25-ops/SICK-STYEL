@@ -1,5 +1,5 @@
 import {instagramCallbackDiagnostic} from '../integrations/instagram-unified.js';
-import {OwnerMediaError,readOwnerRequests,addOwnerRequest,validAssetId,bridgeConfigured,bridgeAuthorized,updateOwnerRequest} from '../lib/owner-media-requests.js';
+import {OwnerMediaError,readOwnerRequests,addOwnerRequest,validAssetId,bridgeConfigured,bridgeAuthorized,updateOwnerRequest,archivedMedia} from '../lib/owner-media-requests.js';
 import {InstagramReviewError,REVIEW_LIMIT,readInstagramReview,saveInstagramReview} from '../lib/instagram-review.js';
 import {prepareTaskRetention} from '../lib/task-retention.js';
 import {importSalesEvents,readSalesLedger,voidSalesEvent,configureSalesOwner,salesStatus,mapSalesPeer,classifyImportOnlyPeer,InstagramImportError} from '../lib/instagram-sales-import.js';
@@ -108,6 +108,7 @@ export default async function handler(req,res){
    let input;try{input=await body(req);}catch{return json(res,400,{error:'依頼の形式が正しくありません。'});}
    if(route.endsWith('/send')){if(!bridgeConfigured(runtime().OWNER_DOT_BRIDGE_TOKEN))return json(res,503,{error:'Dotへの受け渡しが未接続です。'});return json(res,200,await updateOwnerRequest(store,input,'send'));}
    if(input?.assetId!==null&&(!validAssetId(input?.assetId)||!await runtime().OWNER_MEDIA?.head('owner-news/'+input.assetId)))return json(res,400,{error:'登録済みの素材を選び直してください。'});
+   if(input?.assetId&&(await archivedMedia(store,[input.assetId])).has(input.assetId))return json(res,409,{error:'一覧から削除した素材は、復元してから依頼してください。'});
    return json(res,201,await addOwnerRequest(store,input));
   }catch(e){if(e instanceof OwnerMediaError)return json(res,e.status,{error:e.message});throw e;}
  }

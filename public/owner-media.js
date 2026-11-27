@@ -12,6 +12,7 @@ export const renderOwnerMedia=()=>`<section class="panel owner-media" id="${PANE
   <div class="actions"><label>素材を登録 <input class="owner-media-upload" type="file" accept="image/jpeg,image/png,image/webp,video/mp4" disabled></label></div>
   <p class="note">JPG、PNG、WebP、MP4 ／ 25 MBまで ／ 非公開</p>
   <div class="owner-media-gallery" aria-label="素材一覧"></div><button class="owner-media-more" type="button" hidden>さらに表示</button>
+  <details class="owner-media-archived" hidden><summary>削除した素材を表示・復元</summary><p class="note">素材は完全には削除されません。送信済みの依頼やInstagramには影響しません。</p><div class="owner-media-gallery" aria-label="削除した素材"></div><button class="owner-media-archived-more" type="button" hidden>さらに表示</button></details>
  </div>
  <form class="owner-media-form">
   <label>依頼の種類<select name="type"><option>制作</option><option>修正</option><option>投稿予約</option></select></label>
@@ -31,17 +32,45 @@ export function ownerRequestText(r,fileName){
 export function bindOwnerMedia({panel,api,esc}){
  if(!panel)return;
  const find=s=>panel.querySelector(s),statusEl=find('.owner-media-status'),form=find('form'),upload=find('.owner-media-upload'),more=find('.owner-media-more'),gallery=find('.owner-media-gallery');
+ const archived=find('.owner-media-archived'),archivedGallery=archived.querySelector('.owner-media-gallery'),archivedMore=archived.querySelector('button');
  const asset=form.elements.assetId,date=form.elements.scheduledJst,musicMode=form.elements.musicMode,musicTrack=form.elements.musicTrack,submit=form.querySelector('button[type=submit]'),history=find('.owner-media-history');
- let files=[],requests=[],cursor=null,requestId=crypto.randomUUID(),available=false,bridge=false;
+ let files=[],requests=[],cursor=null,requestId=crypto.randomUUID(),available=false,bridge=false,archivedFiles=[],archivedCursor=null;
  const setStatus=(v)=>{statusEl.textContent=v;};
  const fmt=d=>dateFmt.format(new Date(d));
+ function thumb(f){return f.type==='video/mp4'?'<video controls playsinline preload="none" src="'+ROOT+'/'+esc(f.id)+'" aria-label="'+esc(f.name)+'"></video>':'<img loading="lazy" alt="'+esc(f.name)+'" src="'+ROOT+'/'+esc(f.id)+'">';}
  function paintFiles(){
   const selected=asset.value;
   asset.innerHTML='<option value="">素材を指定しない</option>'+files.map(f=>`<option value="${esc(f.id)}">${esc(f.name)}</option>`).join('');
   if(files.some(f=>f.id===selected))asset.value=selected;
-  gallery.innerHTML=files.length?files.map(f=>`<article class="owner-media-card"><div class="owner-media-frame">${f.type==='video/mp4'?'<video controls playsinline preload="none" src="'+ROOT+'/'+esc(f.id)+'" aria-label="'+esc(f.name)+'"></video>':'<img loading="lazy" alt="'+esc(f.name)+'" src="'+ROOT+'/'+esc(f.id)+'">'}</div><b>${esc(f.name)}</b><small>${fmt(f.createdAt)} ・ ${(f.bytes/(1024*1024)).toFixed(1)} MB</small><button type="button" data-owner-use="${esc(f.id)}">修正を依頼</button><button type="button" data-owner-use="${esc(f.id)}" data-owner-schedule>投稿予約を依頼</button></article>`).join(''):(available?'<p class="note">登録済みの素材はまだありません。</p>':'');
+  gallery.innerHTML=files.length?files.map(f=>`<article class="owner-media-card"><div class="owner-media-frame">${thumb(f)}</div><b>${esc(f.name)}</b><small>${fmt(f.createdAt)} ・ ${(f.bytes/(1024*1024)).toFixed(1)} MB</small><button type="button" data-owner-use="${esc(f.id)}">修正を依頼</button><button type="button" data-owner-use="${esc(f.id)}" data-owner-schedule>投稿予約を依頼</button><button type="button" class="secondary" data-owner-archive="${esc(f.id)}">投稿しない・一覧から削除</button></article>`).join(''):(available?'<p class="note">登録済みの素材はこのページにありません。</p>':'');
   more.hidden=!cursor;
   for(const button of gallery.querySelectorAll('[data-owner-use]'))button.onclick=()=>{asset.value=button.dataset.ownerUse;form.elements.type.value=button.hasAttribute('data-owner-schedule')?'投稿予約':'修正';mode();(date.required?date:form.elements.note).focus();};
+  for(const button of gallery.querySelectorAll('[data-owner-archive]'))button.onclick=()=>changeArchive(button,button.dataset.ownerArchive,'archived');
+ }
+ function paintArchived(){
+  archivedGallery.innerHTML=archivedFiles.length?archivedFiles.map(f=>`<article class="owner-media-card"><div class="owner-media-frame">${thumb(f)}</div><b>${esc(f.name)}</b><button type="button" data-owner-restore="${esc(f.id)}">素材一覧へ復元</button></article>`).join(''):'<p class="note">削除した素材はこのページにありません。</p>';
+  archivedMore.hidden=!archivedCursor;
+  for(const button of archivedGallery.querySelectorAll('[data-owner-restore]'))button.onclick=()=>changeArchive(button,button.dataset.ownerRestore,'active');
+ }
+ async function loadArchived(append=false){
+  const data=await api('owner-media/files?view=archived'+(append&&archivedCursor?'&cursor='+encodeURIComponent(archivedCursor):''));
+  archivedCursor=data.cursor;
+  archivedFiles=append?[...new Map([...archivedFiles,...data.files].map(f=>[f.id,f])).values()]:data.files;
+  paintArchived();
+ }
+ async function changeArchive(button,id,state){
+  button.disabled=true;
+  try{
+   const res=await fetch(ROOT+'/'+encodeURIComponent(id),{method:'PATCH',credentials:'same-origin',headers:{'X-Sickstyle-Media-State':state}});
+   const data=await res.json();
+   if(!res.ok||data.id!==id||data.state!==state)throw Error(data.error||'素材を更新できませんでした。');
+   if(state==='archived'){files=files.filter(f=>f.id!==id);paintFiles();}
+   else{archivedFiles=archivedFiles.filter(f=>f.id!==id);paintArchived();}
+   try{await Promise.all([loadFiles(),...(archived.open?[loadArchived()]:[])]);}
+   catch{setStatus('素材の状態は更新しましたが、一覧の更新に失敗しました。画面を再読み込みしてください。');return;}
+   setStatus(state==='archived'?'素材を一覧から削除しました。「削除した素材を表示・復元」から戻せます。':'素材を一覧へ復元しました。');
+   (state==='archived'?archived.querySelector('summary'):upload).focus();
+  }catch(e){setStatus(e.message);}finally{button.disabled=false;}
  }
  function paintHistory(){
   history.innerHTML=requests.length?requests.map(r=>`<article class="owner-media-request"><div><b>${esc(r.type)}</b> <span class="badge">${statuses[r.state]||statuses.draft}</span> <small>${fmt(r.createdAt)}</small></div>${r.scheduledJst?'<small>希望日時 '+esc(r.scheduledJst.replace('T',' '))+' JST</small>':''}${musicText(r.music)?'<p><b>音楽：</b>'+esc(musicText(r.music))+'</p>':''}<p>${esc(r.note)}</p>${r.result?'<p><b>Dotからの結果</b><br>'+esc(r.result)+'</p>':''}${bridge&&r.state==='draft'?'<button class="primary" type="button" data-owner-send="'+esc(r.id)+'">Dotに送る</button>':''}<button type="button" data-owner-copy="${esc(r.id)}">指示をコピー</button><textarea class="owner-media-copy" rows="5" hidden readonly aria-label="コピーする指示"></textarea></article>`).join(''):'<p class="note">依頼はまだありません。</p>';
@@ -63,7 +92,7 @@ export function bindOwnerMedia({panel,api,esc}){
   const data=await api('owner-media/files'+(append&&cursor?'?cursor='+encodeURIComponent(cursor):''));
   available=data.available;cursor=data.cursor;
   files=append?[...new Map([...files,...data.files].map(x=>[x.id,x])).values()]:data.files;
-  upload.disabled=!available;
+  upload.disabled=!available;archived.hidden=!available;
   paintFiles();
  }
  function mode(){
@@ -75,6 +104,8 @@ export function bindOwnerMedia({panel,api,esc}){
  }
  form.elements.type.onchange=mode;musicMode.onchange=mode;mode();
  more.onclick=async()=>{more.disabled=true;try{await loadFiles(true);}catch(e){setStatus(e.message);}finally{more.disabled=false;}};
+ archived.ontoggle=()=>{if(archived.open)loadArchived().catch(e=>setStatus(e.message));};
+ archivedMore.onclick=async()=>{archivedMore.disabled=true;try{await loadArchived(true);}catch(e){setStatus(e.message);}finally{archivedMore.disabled=false;}};
  upload.onchange=async()=>{
   const file=upload.files[0];if(!file)return;
   if(file.size>25*1024*1024){setStatus('ファイルは25 MBまでです。');upload.value='';return;}
