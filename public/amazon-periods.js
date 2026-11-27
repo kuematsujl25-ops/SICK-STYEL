@@ -5,7 +5,16 @@
 // 同期のたびに日付をキーにマージして蓄積し、月次推移・前月同期間比較に使える長期履歴を保つ（最大2年）。
 export function mergeDailyHistory(oldHistory,newDaily){
  const byDate=new Map((oldHistory||[]).map(d=>[d.date,d]));
- for(const d of newDaily||[])byDate.set(d.date,d);
+ for(const d of newDaily||[]){
+  const old=byDate.get(d.date);
+  if(!old){byDate.set(d.date,d);continue;}
+  const next={...d};
+  for(const key of ['sales','orders','units']){
+   if(!Number.isFinite(d[key])&&Number.isFinite(old[key]))next[key]=old[key];
+  }
+  if(!Number.isFinite(d.sales)&&Number.isFinite(old.sales))next.currency=old.currency;
+  byDate.set(d.date,next);
+ }
  return [...byDate.values()].sort((a,b)=>a.date.localeCompare(b.date)).slice(-730);
 }
 export function daysInMonth(month){const [y,m]=month.split('-').map(Number);return new Date(Date.UTC(y,m,0)).getUTCDate();}
