@@ -37,14 +37,16 @@ node scripts/generate-vapid.js
 CLIの場合は `npx wrangler secret put VAPID_PUBLIC_KEY --name sickstyle-manager` などを1件ずつ利用し、値は対話入力する。**秘密キーをシェルコマンドの引数に直書きしない。**
 設定するとCloudflare WorkerのVersionが新しくなる可能性があるため、作業前後のVersion・トラフィックを必ず確認する。Free枠・料金条件も本人が確認する。
 
-## Step 3: Cron Triggersの追加
+## Step 3: Cron Triggersの確認・必要時のみ追加
+既存の本番Workerでは2026-11-27に5件の設定済みを確認済みです。コード専用反映はCronを書き換えず、事前確認と切り替え前にCloudflareの読み取りAPIで `wrangler.jsonc` との一致を確認します。一致している場合は何もしません。不一致や新環境の場合のみ、変更内容と無料枠を確認し、管理者の別途承認を得てからダッシュボードで編集してください。
+
 CloudflareのCronは**UTC**。
 既存の `0 0 * * *` と `10 0 * * *` は絶対に消さず、ダッシュボードの Worker → Settings → Triggers に次の2件を**追加**する。
 - `0 11 * * *` = 20:00 JST（Amazon同期後の売上速報）
 - `0 13 * * *` = 22:00 JST（Amazon同期後の分析）
 
 9:00 JSTは既存の `0 0 * * *` を共有し、Instagram同期と今日の予定通知を実行する。新Cronが追加されない限り、20時/22時の通知は実行されない。
-`wrangler.jsonc`にも4件すべてを宣言しており、コードと設定が一致することを確認する。Cloudflareの伝播には遅延があり得る。
+全5件は上記4件と、会議リマインドの `* * * * *`（毎分）。個別の用途は下記を参照。無関係なCronは無断で削除せず、Cloudflareの伝播後に `wrangler.jsonc` と照合する。
 
 ## Step 4: 端末の通知ON
 1. SICKSTYLE管理アプリでログイン →「設定・バックアップ → 通知センター」。

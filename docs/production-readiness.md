@@ -42,7 +42,10 @@ npm run deploy:preflight
 
 事前確認は本番コードを変更しない。本人の事実確認、現在のVersion配分の取得、D1全体の読み取りエクスポート、ローカルSQLiteへの復元と完全性確認、復旧コマンドの記録を行う。SQLには秘密情報や業務情報が含まれるため、`data/deployment-backups/`は私有とし、チャットやGitHubへ送らない。
 
-Secrets/Variables・DBスキーマ・Cron・ルートの保持はコード専用Version方式と本人の設定点検で確認する。Cloudflare側の設定値の自動差分検査までは実装していない。未確認ならNで止める。古いWorkerがv2/分割形式を扱えない場合は、コードRollbackだけではAI機能が戻らない。旧Versionの実体と、AI停止・データ保全・復旧方針を先に確認する。
+Secrets/Variables・DBスキーマ・Cron・ルートの保持はコード専用Version方式と本人の設定点検で確認する。Cronは事前確認と本番切り替え前に読み取りAPIで設定と照合する。その他のCloudflare設定には自動差分検査を行わない。未確認ならNで止める。古いWorkerがv2/分割形式を扱えない場合は、コードRollbackだけではAI機能が戻らない。旧Versionの実体と、AI停止・データ保全・復旧方針を先に確認する。
+
+**既存 Worker の Cron 確認（2026-11-27）**：Cloudflare の読み取り API（`GET /accounts/{account_id}/workers/scripts/{script_name}/schedules`）で、稼働中の `sickstyle-manager` に `* * * * *`、`0 0 * * *`、`10 0 * * *`、`0 11 * * *`、`0 13 * * *`（UTC）の全5件が存在し、`wrangler.jsonc` と一致することを確認した。コード専用反映で `triggers` を一時設定から除外するのは、これらの既存設定を保つため。確認は実行結果や通知到達の保証ではない。別環境への初回導入や実際に差異がある場合は、[通知セットアップ](notifications-setup.md#step-3-cron-triggersの確認必要時のみ追加)の独立した承認手順を使用する。
+
 
 1時間以内に同じSHAの事前確認を満たす場合だけ実行する。
 

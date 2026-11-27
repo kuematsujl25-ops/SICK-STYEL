@@ -4,6 +4,14 @@ import {mergeDailyHistory,daysInMonth,monthlyTotals,addMonths,dailyRowsForMonth,
 
 const d=(date,sales,orders=1)=>({date,sales,currency:'JPY',orders,units:orders});
 
+test('partial refresh never erases verified daily fields, but observed zero replaces old values',()=>{
+ const old={date:'2026-10-15',sales:1000,orders:2,units:3,currency:'JPY'};
+ const partial={date:old.date,sales:null,orders:0,units:null,currency:'USD'};
+ const [row]=mergeDailyHistory([old],[partial]);
+ assert.deepEqual(row,{...old,orders:0});
+ assert.equal(partial.sales,null);
+ assert.equal(mergeDailyHistory([old],[{...partial,sales:0,currency:'JPY'}])[0].sales,0);
+});
 test('mergeDailyHistory accumulates across rolling 31-day windows instead of losing prior months', () => {
  const septWindow=[d('2026-09-01',100),d('2026-09-02',200)];
  const octWindow=[d('2026-10-01',300),d('2026-10-02',400)];
