@@ -1,3 +1,4 @@
+import {normalizeReplyDraft} from '../../lib/instagram-reply-drafts.js';
 import {randomBytes} from 'node:crypto';
 import {constants} from 'node:fs';
 import {lstat,mkdir,open} from 'node:fs/promises';
@@ -47,6 +48,8 @@ export async function bridgeRequest(action,input,token,request=fetch){
   if(action==='complete'&&(typeof input.result!=='string'||!input.result.trim()||input.result.length>1800))throw Error('結果の内容を確認してください。');
   method='POST';headers['Content-Type']='application/json';
   body=JSON.stringify(action==='receive'?{id:input.id}:{id:input.id,result:input.result});
+ }else if(action==='instagram-reply-drafts'){
+  method='POST';headers['Content-Type']='application/json';body=JSON.stringify(normalizeReplyDraft(input));
  }else if(action==='download'){
   if(!validAssetId(input?.id))throw Error('素材IDが無効です。');
   path='files/'+input.id;
@@ -73,6 +76,7 @@ export async function bridgeRequest(action,input,token,request=fetch){
   return {bytes,type};
  }
  const data=await res.json();
+ if(action==='instagram-reply-drafts'&&(data?.id!==input.id||typeof data.created!=='boolean'))throw Error('返信案の登録応答が不正です。');
  if(action==='queue'&&(!Array.isArray(data?.requests)||data.requests.length>10||data.requests.some(r=>!validMediaId(r?.id)||!['queued','received'].includes(r.state)||!['制作','修正','投稿予約'].includes(r.type)||typeof r.note!=='string'||r.note.length>900||(r.assetId!==null&&!validAssetId(r.assetId)))))throw Error('依頼一覧の応答が不正です。');
  if(action==='upload'&&!validAssetId(data?.id))throw Error('素材登録の応答が不正です。');
  if((action==='receive'||action==='complete')&&(data?.id!==input.id||data.state!==(action==='receive'?'received':'complete')))throw Error('依頼状況の応答が不正です。');

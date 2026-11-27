@@ -310,3 +310,7 @@ main:not(.auth) details>summary,dialog details>summary{min-height:44px;cursor:po
 .ig-review-import{margin-top:1rem;padding-top:0.75rem;border-top:1px solid color-mix(in srgb,currentColor 20%,transparent)}
 .ig-auto-ranked .grow{min-width:0;overflow-wrap:anywhere}
 #ig-metricool-review .metricmini small{display:block}
+
+.ig-reply-draft{border-top:1px solid color-mix(in srgb,currentColor 20%,transparent);padding:1rem 0}
+.ig-reply-draft h3{margin:0}
+.ig-reply-body{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.65}
