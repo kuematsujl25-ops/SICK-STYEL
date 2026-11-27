@@ -1,3 +1,4 @@
+import {ownerMediaStorage} from '../lib/owner-media-storage.js';
 import {runMinuteJobs} from '../lib/scheduled-minute.js';
 import * as amazonAds from '../integrations/amazon-ads.js';
 import {createServer} from 'node:http';
@@ -26,6 +27,10 @@ export default {
   if(!url.pathname.startsWith('/api/'))return secured(await env.ASSETS.fetch(request));
   if(env.MAINTENANCE_MODE==='true')return secured(Response.json({error:'無料枠保護のため停止中です。管理者が状態を確認しています。'},{status:503,headers:{'Cache-Control':'no-store'}}));
   if(!env.DB)return secured(Response.json({error:'永続データベースが未設定です'},{status:503}));
+  if(/^\/api\/owner-media\/(?:dot\/)?files(?:\/|$)/.test(url.pathname)){
+   try{return secured(await ownerMediaStorage(request,{store:createD1Store(env.DB),bucket:env.OWNER_MEDIA,origin:env.APP_ORIGIN||url.origin,bridgeToken:env.OWNER_DOT_BRIDGE_TOKEN}));}
+   catch{return secured(Response.json({error:'素材の保存先に接続できません。'},{status:503,headers:{'Cache-Control':'no-store'}}));}
+  }
   return withRuntime({...env,CLOUDFLARE:true,APP_ORIGIN:env.APP_ORIGIN||url.origin,STORE:createD1Store(env.DB)},async()=>secured(await api.fetch(request,env,ctx)));
  },
  async scheduled(event,env,ctx){

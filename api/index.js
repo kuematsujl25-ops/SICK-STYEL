@@ -1,3 +1,4 @@
+import {OwnerMediaError,readOwnerRequests,addOwnerRequest,validAssetId,bridgeConfigured,bridgeAuthorized,updateOwnerRequest} from '../lib/owner-media-requests.js';
 import {InstagramReviewError,REVIEW_LIMIT,readInstagramReview,saveInstagramReview} from '../lib/instagram-review.js';
 import {prepareTaskRetention} from '../lib/task-retention.js';
 import {importSalesEvents,readSalesLedger,voidSalesEvent,configureSalesOwner,salesStatus,mapSalesPeer,InstagramImportError} from '../lib/instagram-sales-import.js';
@@ -58,6 +59,15 @@ export default async function handler(req,res){
   if(req.headers.origin&&req.headers.origin!==allowed)return json(res,403,{error:'許可されていないアクセスです'});
   if(req.headers['sec-fetch-site']==='cross-site')return json(res,403,{error:'許可されていないアクセスです'});
  }
+ if(route==='/api/owner-media/dot/queue'||route==='/api/owner-media/dot/receive'||route==='/api/owner-media/dot/complete'){
+  if(!bridgeAuthorized(runtime().OWNER_DOT_BRIDGE_TOKEN,req.headers.authorization))return json(res,401,{error:'認証が必要です。'});
+  if(req.headers.origin||req.headers.cookie)return json(res,403,{error:'機械連携専用です。'});
+  if(route.endsWith('/queue')&&req.method==='GET')return json(res,200,{requests:(await readOwnerRequests(store)).requests.filter(r=>r.state==='queued'||r.state==='received').reverse().slice(0,10)});
+  if(req.method!=='POST'||route.endsWith('/queue'))return json(res,405,{error:'この操作には対応していません。'});
+  if(req._sickstyleRaw.length>8192)return json(res,413,{error:'送信内容が大きすぎます。'});
+  try{return json(res,200,await updateOwnerRequest(store,await body(req),route.endsWith('/receive')?'receive':'complete'));}
+  catch(e){if(e instanceof OwnerMediaError)return json(res,e.status,{error:e.message});if(e instanceof SyntaxError)return json(res,400,{error:'依頼の形式が正しくありません。'});throw e;}
+ }
  const configured=!!(await store.query('SELECT id FROM ss_users WHERE id=1'))[0];
  const rawToken=(req.headers.cookie||'').split(';').map(x=>x.trim()).find(x=>x.startsWith('session='))?.slice(8)||'';const sessionHash=hash(rawToken);
  const session=(await store.query('SELECT expires FROM ss_sessions WHERE token=$1 AND expires>$2',[sessionHash,Date.now()]))[0];const authorized=!!session;
@@ -88,6 +98,19 @@ export default async function handler(req,res){
  const redirect=location=>{res.writeHead(303,{Location:location,'Cache-Control':'no-store'});res.end();};
  if(['/api/amazon/login','/api/amazon/callback','/api/instagram/callback','/api/zoom/callback','/api/googlecalendar/callback'].includes(route)&&req.method==='GET'&&!authorized)return redirect('/?auth=required');
  if(!authorized)return json(res,401,{error:'ログインしてください'});
+ if(route==='/api/owner-media/requests'||route==='/api/owner-media/requests/send'){
+  if(req.method==='GET'&&route==='/api/owner-media/requests')return json(res,200,{...await readOwnerRequests(store),bridge:bridgeConfigured(runtime().OWNER_DOT_BRIDGE_TOKEN)});
+  if(req.method!=='POST')return json(res,405,{error:'この操作には対応していません。'});
+  if(req.headers.origin!==(runtime().APP_ORIGIN||`http://${req.headers.host}`))return json(res,403,{error:'許可されていないアクセスです。'});
+  if(req._sickstyleRaw.length>8192)return json(res,413,{error:'依頼の文字数を減らしてください。'});
+  try{
+   let input;try{input=await body(req);}catch{return json(res,400,{error:'依頼の形式が正しくありません。'});}
+   if(route.endsWith('/send')){if(!bridgeConfigured(runtime().OWNER_DOT_BRIDGE_TOKEN))return json(res,503,{error:'Dotへの受け渡しが未接続です。'});return json(res,200,await updateOwnerRequest(store,input,'send'));}
+   if(input?.assetId!==null&&(!validAssetId(input?.assetId)||!await runtime().OWNER_MEDIA?.head('owner-news/'+input.assetId)))return json(res,400,{error:'登録済みの素材を選び直してください。'});
+   return json(res,201,await addOwnerRequest(store,input));
+  }catch(e){if(e instanceof OwnerMediaError)return json(res,e.status,{error:e.message});throw e;}
+ }
+ if(route==='/api/owner-media/files'&&req.method==='GET'&&!runtime().CLOUDFLARE)return json(res,200,{available:false,files:[],cursor:null});
  // Confirmed metadata only. No Instagram calls or message bodies are accepted here.
  if(route==='/api/instagram-sales'||route.startsWith('/api/instagram-sales/')){
   if(!['GET','HEAD'].includes(req.method)&&req.headers.origin!==(runtime().APP_ORIGIN||`http://${req.headers.host}`))return json(res,403,{error:'same_origin_required'});
