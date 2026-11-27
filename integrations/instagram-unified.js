@@ -3,12 +3,14 @@
 export const unifiedScopes=Object.freeze(['instagram_basic','instagram_manage_insights']);
 const optionalScopes=['public_profile']; // Meta supplies this by default; it is not requested here.
 const id=v=>typeof v==='string'&&/^\d{5,30}$/.test(v);
+const accountIdOf=v=>typeof v==='number'&&Number.isSafeInteger(v)?String(v):v;
+export const normalizeInstagramHandle=v=>typeof v==='string'?v.trim().replace(/^@/,'').toLowerCase():'';
 const name=v=>typeof v==='string'&&/^[a-z0-9_.]{1,30}$/.test(v);
 const graphBase='https://graph.facebook.com/v27.0';
 const sixtyDays=60*86400000;
 
 // Only fixed diagnostic labels and bounded numeric Meta codes may leave the callback.
-const callbackSteps=new Set(['state_mode','state_session','meta_declined','missing_code','code_exchange','token_debug','token_identity','token_scope','token_expiry','portfolio_lookup','portfolio_policy','account_lookup','account_policy','account_missing','account_multiple','account_identity','account_paging','account_shape','connection_conflict','save_connection']);
+const callbackSteps=new Set(['state_mode','state_session','meta_declined','missing_code','code_exchange','token_debug','token_identity','token_scope','token_expiry','portfolio_lookup','portfolio_policy','account_lookup','account_policy','account_missing','account_multiple','account_identity','account_profile_lookup','account_profile_identity','account_paging','account_shape','connection_conflict','save_connection']);
 export class InstagramCallbackError extends Error{
  constructor(step,message,source){
   super(message);
@@ -55,18 +57,28 @@ async function verifyAssignedAccount(read,expectedUsername){
   if(!Array.isArray(assigned?.data))throw new InstagramCallbackError('account_shape','Metaの共有アカウント一覧の形式を確認できません');
   for(const row of assigned.data){
    // Meta documents string IDs. A number is verifiable only if exactly representable.
-   const accountId=typeof row?.id==='number'&&Number.isSafeInteger(row.id)?String(row.id):row?.id;
+   const accountId=accountIdOf(row?.id);
    if(!id(accountId))throw new InstagramCallbackError('account_shape','Metaの共有アカウントIDを確認できません');
-   const username=typeof row.username==='string'?row.username.trim().replace(/^@/,'').toLowerCase():'';
-   if(accounts.has(accountId)&&accounts.get(accountId)!==username)throw new InstagramCallbackError('account_identity','Metaから返された共有アカウント名が一致しません');
-   accounts.set(accountId,username);
+   const username=normalizeInstagramHandle(row.username);
+   if(row.username!=null&&typeof row.username!=='string')throw new InstagramCallbackError('account_shape','共有アカウント名の形式を確認できません');
+   const known=accounts.get(accountId);
+   if(known&&username&&known!==username)throw new InstagramCallbackError('account_identity','Metaから返された共有アカウント名が一致しません');
+   accounts.set(accountId,username||known||'');
    if(accounts.size>1)throw new InstagramCallbackError('account_multiple','複数のInstagramアカウントが共有されています');
   }
   if(!assigned.paging?.next){
    if(!accounts.size)throw new InstagramCallbackError('account_missing','Metaから共有済みInstagramアカウントが返りませんでした');
-   const [id,username]=accounts.entries().next().value;
-   if(username!==expectedUsername)throw new InstagramCallbackError('account_identity','Metaから返された共有アカウント名が設定と一致しません');
-   return {id,username};
+   const [accountId,username]=accounts.entries().next().value;
+   if(username&&username!==expectedUsername)throw new InstagramCallbackError('account_identity','Metaから返された共有アカウント名が設定と一致しません');
+   // The assignment is authoritative for membership. If its row omits the
+   // handle, check only that exact account's profile using the same token.
+   // Never substitute a different account or bypass a known mismatch.
+   if(!username){
+    const profile=await atCallbackStep('account_profile_lookup',()=>read(accountId,{fields:'id,username'}));
+    if(accountIdOf(profile?.id)!==accountId||normalizeInstagramHandle(profile?.username)!==expectedUsername)
+     throw new InstagramCallbackError('account_profile_identity','共有アカウントのプロフィールを照合できません');
+   }
+   return {id:accountId,username:expectedUsername};
   }
   const cursor=assigned.paging?.cursors?.after;
   if(typeof cursor!=='string'||!/^[A-Za-z0-9_+=/.-]{1,512}$/.test(cursor)||seen.has(cursor))
