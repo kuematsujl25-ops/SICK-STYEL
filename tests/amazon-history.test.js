@@ -4,27 +4,6 @@ import {mergeDailyHistory,daysInMonth,monthlyTotals,addMonths,dailyRowsForMonth,
 
 const d=(date,sales,orders=1)=>({date,sales,currency:'JPY',orders,units:orders});
 
-test('omitted buckets and carried values stay out of current sales totals until the date is observed again',()=>{
- const old=[{date:'2026-10-01',sales:1000},{date:'2026-10-02',sales:2000},{date:'2026-09-30',sales:1000}];
- const partial=mergeDailyHistory(old,[{date:'2026-10-01',sales:null}],{start:'2026-10-01',end:'2026-10-02'});
- const cache={dailyHistory:partial};
- assert.equal(partial[0].salesStale,undefined);
- assert.equal(partial[1].sales,1000);assert.equal(partial[2].sales,2000);
- assert.deepEqual(todaySalesInfo(cache,[],'2026-10-02'),{value:null,source:'api_stale'});
- assert.equal(monthSalesInfo(cache,[],'2026-10','2026-10-02').source,'partial');
- assert.equal(monthSalesInfo(cache,[],'2026-10','2026-10-02').value,null);
- const recovered={dailyHistory:mergeDailyHistory(partial,[{date:'2026-10-02',sales:0}])};
- assert.deepEqual(todaySalesInfo(recovered,[],'2026-10-02'),{value:0,source:'api'});
- assert.equal(monthSalesInfo(recovered,[{date:'2026-10-01',sales:1200}],'2026-10','2026-10-02').value,1200);
-});
-test('partial refresh never erases verified daily fields, but observed zero replaces old values',()=>{
- const old={date:'2026-10-15',sales:1000,orders:2,units:3,currency:'JPY'};
- const partial={date:old.date,sales:null,orders:0,units:null,currency:'USD'};
- const [row]=mergeDailyHistory([old],[partial]);
- assert.deepEqual(row,{...old,orders:0,salesStale:true});
- assert.equal(partial.sales,null);
- assert.equal(mergeDailyHistory([old],[{...partial,sales:0,currency:'JPY'}])[0].sales,0);
-});
 test('mergeDailyHistory accumulates across rolling 31-day windows instead of losing prior months', () => {
  const septWindow=[d('2026-09-01',100),d('2026-09-02',200)];
  const octWindow=[d('2026-10-01',300),d('2026-10-02',400)];

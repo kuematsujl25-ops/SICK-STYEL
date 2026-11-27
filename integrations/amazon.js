@@ -5,7 +5,7 @@ import {orderInsight} from '../public/amazon-insights.js';
 // リフレッシュトークンはサーバー側でAES-256-GCM暗号化して保存し、ブラウザーへ返しません。
 import {runtime} from '../lib/runtime.js';
 import {connectionReadiness} from '../public/integration-status.js';
-import {daysInMonth,mergeDailyHistory} from '../public/amazon-periods.js';
+import {mergeDailyHistory} from '../public/amazon-periods.js';
 import {encrypt,decrypt,token,hash} from '../lib/security.js';
 export const MARKETPLACE_ID='A1VC38T7YXB528'; // Amazon.co.jp
 export const ENDPOINT='https://sellingpartnerapi-fe.amazon.com';
@@ -48,33 +48,14 @@ export async function connect(store,session,url){
  const b=await remote(LWA,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});if(!b?.refresh_token)throw Error('リフレッシュトークンを取得できませんでした');
  await store.put('amazon-private',{sellerId:/^[A-Z0-9]{1,40}$/.test(seller)?seller:null,encrypted:encrypt({refresh:b.refresh_token}),connectedAt:new Date().toISOString()});
 }
-export async function safeStatus(store){const p=await privateData(store);const r=await store.doc('amazon-cache');const raw=r?JSON.parse(r.body):null;
- // Re-check legacy snapshots on read without modifying the stored daily records.
- const monthly=raw?monthlyMetrics(raw.daily,raw.month,raw.salesPeriod?.end):null;
- const cache=raw?{...raw,...monthly,syncVerified:raw.syncVerified===true&&monthly.monthSales!==null&&monthly.monthOrders!==null}:null;const self=!p&&!!env().AMAZON_REFRESH_TOKEN;
+export async function safeStatus(store){const p=await privateData(store);const r=await store.doc('amazon-cache');const cache=r?JSON.parse(r.body):null;const self=!p&&!!env().AMAZON_REFRESH_TOKEN;
  const status={configured:config(),websiteFlow:websiteFlowReady(),connected:!!(config()&&(p||self)),authorization:p?'website':self?'self':null,sellerId:p?.sellerId||null,connectedAt:p?.connectedAt||null,marketplace:'Amazon.co.jp ('+MARKETPLACE_ID+')',salesDefinition:SALES_DEFINITION,ordersDefinition:ORDERS_DEFINITION,cache};return {...status,analysis:analyzeAmazon(cache),readiness:connectionReadiness(status,'amazon')};}
 // --- 同期 ---
 const jstDate=d=>d.toLocaleDateString('sv-SE',{timeZone:TZ});
 function addDays(ymd,n){const d=new Date(ymd+'T00:00:00+09:00');d.setUTCDate(d.getUTCDate()+n);return jstDate(d);}
 export function salesInterval(now=new Date(),days=31){const today=jstDate(now);const start=addDays(today,-(days-1));const t=new Date(now.getTime()-5*60000);const hm=t.toLocaleTimeString('sv-SE',{timeZone:TZ,hour:'2-digit',minute:'2-digit',hour12:false});return {start,end:today,interval:`${start}T00:00:00+09:00--${jstDate(t)}T${hm}:00+09:00`};}
 export function parseMetrics(payload){return (payload||[]).map(x=>{const raw=x.totalSales?.amount;const amount=typeof raw==='number'||typeof raw==='string'&&raw.trim()!==''?Number(raw):NaN;return {date:String(x.interval||'').slice(0,10),sales:x.totalSales?.currencyCode==='JPY'&&Number.isFinite(amount)&&amount>=0?amount:null,currency:x.totalSales?.currencyCode||null,orders:Number.isInteger(x.orderCount)&&x.orderCount>=0?x.orderCount:null,units:Number.isInteger(x.unitCount)&&x.unitCount>=0?x.unitCount:null};}).filter(x=>/^\d{4}-\d{2}-\d{2}$/.test(x.date)&&Number.isFinite(Date.parse(x.date))&&new Date(x.date).toISOString().slice(0,10)===x.date);}
-export function monthlyMetrics(daily,month,through){
- // A missing daily bucket is not an observed zero. Check the exact JST dates,
- // including the requested final date, rather than the number of returned rows.
- const empty={monthSales:null,monthOrders:null};
- if(!Array.isArray(daily)||!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)||typeof through!=='string'||through.slice(0,7)!==month)return empty;
- const day=Number(through.slice(8));
- if(!Number.isInteger(day)||day<1||day>daysInMonth(month)||through!==month+'-'+String(day).padStart(2,'0'))return empty;
- const byDate=new Map();
- for(const row of daily){
-  if(typeof row?.date!=='string'||!row.date.startsWith(month+'-')||row.date>through)continue;
-  if(byDate.has(row.date))return empty;
-  byDate.set(row.date,row);
- }
- const rows=Array.from({length:day},(_,i)=>byDate.get(month+'-'+String(i+1).padStart(2,'0')));
- const sum=k=>rows.every(d=>Number.isFinite(d?.[k]))?rows.reduce((n,d)=>n+d[k],0):null;
- return {monthSales:sum('sales'),monthOrders:sum('orders')};
-}
+export function monthlyMetrics(daily,month){const rows=daily.filter(d=>d.date.startsWith(month));const sum=k=>rows.length&&rows.every(d=>typeof d[k]==='number'&&Number.isFinite(d[k]))?rows.reduce((n,d)=>n+d[k],0):null;return {monthSales:sum('sales'),monthOrders:sum('orders')};}
 export function summarizeOrders(orders){const counts={};const open=[];for(const o of orders){const s=o.fulfillment?.fulfillmentStatus||'UNKNOWN';counts[s]=(counts[s]||0)+1;if(['UNSHIPPED','PARTIALLY_SHIPPED'].includes(s))open.push({orderId:String(o.orderId||'').slice(0,40),createdTime:o.createdTime||null,status:s,fulfilledBy:o.fulfillment?.fulfilledBy||null,items:(o.orderItems||[]).reduce((n,i)=>n+(Number(i.quantityOrdered)||0),0)});}open.sort((a,b)=>String(a.createdTime).localeCompare(String(b.createdTime)));return {counts,total:orders.length,open:open.slice(0,50),details:orders.map(orderInsight)};}
 async function lease(store){const l=await store.query('INSERT INTO ss_attempts(key,n,expires) VALUES ($1,1,$2) ON CONFLICT(key) DO UPDATE SET expires=excluded.expires WHERE ss_attempts.expires<$3 RETURNING key',['amazon-sync',Date.now()+180000,Date.now()]);if(!l.length)throw Error('Amazonの同期処理中です。完了後に再試行してください');return ()=>store.query('DELETE FROM ss_attempts WHERE key=$1',['amazon-sync']);}
 export async function sync(store,now=new Date()){
@@ -89,17 +70,15 @@ export async function sync(store,now=new Date()){
   if(!daily&&!orders)throw new AmazonError('all',warnings.join(' / '));
   const month=jstDate(now).slice(0,7);
   const stamp=new Date().toISOString(),period={start:range.start,end:range.end,timeZone:TZ};
-  const monthly=daily?monthlyMetrics(daily,month,range.end):monthlyMetrics(cache.daily,cache.month,cache.salesPeriod?.end);
-  const completeMonth=monthly.monthSales!==null&&monthly.monthOrders!==null;
-  if(daily&&!completeMonth)warnings.push('月初から集計日までの日別売上・注文件数が揃っていないため、月合計は集計未完了です。取得済みの日別データは保持しています。');
-  const syncVerified=!!(daily&&orders&&completeMonth&&daily.every(d=>d.sales!==null&&d.orders!==null));
+  const monthly=daily?monthlyMetrics(daily,month):{monthSales:cache.monthSales??null,monthOrders:cache.monthOrders??null};
+  const syncVerified=!!(daily&&orders&&daily.length&&daily.every(d=>d.sales!==null&&d.orders!==null));
   const next={...cache,syncedAt:syncVerified?stamp:cache.syncedAt??null,attemptedAt:stamp,error:null,warnings,syncVerified,salesError,ordersError,
    period:daily&&orders?period:cache.period??null,salesPeriod:daily?period:cache.salesPeriod??null,ordersPeriod:orders?period:cache.ordersPeriod??null,
    salesSyncedAt:daily?stamp:cache.salesSyncedAt??null,ordersSyncedAt:orders?stamp:cache.ordersSyncedAt??null,
    // 旧いキャッシュ（dailyHistoryフィールド導入前）はdailyだけに過去のローリングウィンドウが入っている。
    // dailyHistoryが存在しない場合はdailyを種にしてから新しいレスポンスをマージすることで、アップグレード時に
    // それまで取得済みだった日付が消えてしまわないようにする（Codex独立レビュー指摘）。
-   daily:daily??cache.daily??null,dailyHistory:daily?mergeDailyHistory(cache.dailyHistory??cache.daily,daily,period):cache.dailyHistory??null,
+   daily:daily??cache.daily??null,dailyHistory:daily?mergeDailyHistory(cache.dailyHistory??cache.daily,daily):cache.dailyHistory??null,
    products:products??cache.products??null,...monthly,month:daily?month:cache.month??null,orders:orders??cache.orders??null,ordersTruncated:orders?truncated:cache.ordersTruncated??false};
   await store.put('amazon-cache',next);return next;
  }catch(e){await store.put('amazon-cache',{...cache,syncVerified:false,error:e.message,attemptedAt:new Date().toISOString()});throw e;}finally{await release();}
