@@ -144,13 +144,13 @@ function render(){
 function sourceTag(api){return `<span class="source ${api?'api':''}">${api?'公式API':'手入力'}</span>`;}
 function overview(){
  const t=today();const overdue=state.tasks.filter(x=>!x.deletedAt&&!x.done&&x.due<t).length;
- const selectedSales=selectAmazonSales(amz,state.metrics,month());const amzMonth=selectedSales.source==='api';
+ const selectedSales=selectAmazonSales(amz,state.metrics,t);const amzMonth=selectedSales.source==='api';
  const pending=state.shipments.filter(s=>!['発送済み','配達完了'].includes(s.status));const done=state.tasks.filter(x=>!x.deletedAt&&x.done).length;
  const latest=[...state.metrics].filter(m=>m.instagramEntered!==false).sort((a,b)=>b.date.localeCompare(a.date))[0];
  const igApi=ig?.connected&&typeof ig.cache?.followers==='number';
  const amzOpen=amazonOpenOrders(amz);
  return `<div class="stats">
- <article><small>今月のAmazon売上</small><strong>${selectedSales.value===null?'未取得':yen(selectedSales.value)}</strong><span>${amzMonth?'売上の最終成功 '+fmtTime(selectedSales.syncedAt)+(selectedSales.stale?'（最新取得は失敗）':''):selectedSales.source==='manual'?'手入力・CSVのみ（API値と合算しません）':'売上の記録は未取得'}</span>${sourceTag(amzMonth)}</article>
+ <article><small>今月のAmazon売上</small><strong>${selectedSales.value===null?(selectedSales.source==='partial'?'集計未完了':'未取得'):yen(selectedSales.value)}</strong><span>${sourceLabel(selectedSales.source)} · ${selectedSales.daysCovered}/${selectedSales.daysExpected}日分${selectedSales.stale?'（最新取得は失敗）':''}</span>${amzMonth||selectedSales.source==='manual'?sourceTag(amzMonth):''}</article>
  <article><small>タスク完了</small><strong>${done}<em> / ${state.tasks.filter(x=>!x.deletedAt).length}</em></strong><span>${overdue?'期限超過 '+overdue+' 件':'期限超過なし'}</span></article>
  <article><small>発送待ち（アプリ登録分）</small><strong>${pending.length}<em> 件</em></strong><span>${pending.filter(s=>s.due<t).length} 件が期限超過${amzOpen!==null?` · Amazon未発送 ${amzOpen} 件`:amz?.connected?' · Amazon未発送 未取得':''}</span></article>
  <article><small>Instagramフォロワー</small><strong>${igApi?num(ig.cache.followers):latest?Number(latest.followers).toLocaleString('ja-JP'):'—'}</strong><span>${igApi?(typeof ig.cache.delta==='number'?`前回記録比 ${ig.cache.delta>0?'+':''}${ig.cache.delta.toLocaleString('ja-JP')}`:'増減は次回以降の同期で表示'):latest?latest.date+' の記録':'未記録'}</span>${sourceTag(igApi)}</article></div>
@@ -261,8 +261,8 @@ function bindInstagram(){const connect=document.querySelector('#igconnect');if(c
 const statusJa={PENDING:'保留（支払い確認待ち）',UNSHIPPED:'未発送',PARTIALLY_SHIPPED:'一部発送済み',SHIPPED:'発送済み',CANCELLED:'キャンセル',UNFULFILLABLE:'出荷不能',PENDING_AVAILABILITY:'予約注文（入荷待ち）',INVOICE_UNCONFIRMED:'請求書未確認'};
 // ---------- Amazon: 期間・出典処理（JST、欠損を0で埋めない） ----------
 // 純粋関数（amazonView rendering用）はpublic/amazon-periods.jsに集約し、node:testで直接ユニットテストする。
-function barDiv(dateOrMonth,value,max,extraClass){
- if(value===null)return `<div class="bar missing ${extraClass||''}" title="${esc(dateOrMonth)}: 未取得"></div>`;
+function barDiv(dateOrMonth,value,max,extraClass,missingLabel='未取得'){
+ if(value===null)return `<div class="bar missing ${extraClass||''}" title="${esc(dateOrMonth)}: ${esc(missingLabel)}"></div>`;
  const pct=Math.max(2,Math.round(value/max*100));const step=Math.max(0,Math.min(20,Math.round(pct/5)));
  return `<div class="bar h${step} ${extraClass||''}" title="${esc(dateOrMonth)}: ${yen(value)}"></div>`;
 }
@@ -282,15 +282,15 @@ function amazonView(){const c=amz?.cache;const o=c?.orders;const t=today();const
  <section class="panel"><div class="panelhead"><h2>月の売上</h2><label>対象月<input type="month" id="amzmonth" value="${esc(targetMonth)}" max="${esc(month())}"></label></div>
  ${(()=>{const info=monthSalesInfo(c,state.metrics,targetMonth,t);const todayInfo=isCurrent?todaySalesInfo(c,state.metrics,t):null;const prior=priorPeriodSales(c,state.metrics,targetMonth,isCurrent?Number(t.slice(8,10)):daysInMonth(targetMonth));
   return `<div class="stats igstats">
-  <article><small>${esc(targetMonth)}の売上${info.incomplete?'（進行中・未完了月）':''}</small><strong>${info.value===null?'未取得':yen(info.value)}</strong><span>${sourceLabel(info.source)}${info.daysCovered?` · ${info.daysCovered}/${info.daysExpected}日分`:''}</span>${info.source==='api'?sourceTag(true):''}</article>
+  <article><small>${esc(targetMonth)}の売上${info.incomplete?'（進行中・未完了月）':''}</small><strong>${info.value===null?(info.source==='partial'?'集計未完了':'未取得'):yen(info.value)}</strong><span>${sourceLabel(info.source)}${info.daysCovered?` · ${info.daysCovered}/${info.daysExpected}日分`:''}</span>${info.source==='api'?sourceTag(true):''}</article>
   ${todayInfo?`<article><small>今日の売上（${esc(t)}）</small><strong>${todayInfo.value===null?'未取得':yen(todayInfo.value)}</strong><span>${sourceLabel(todayInfo.source)}</span></article>`:''}
   <article><small>前月同期間（${esc(prior.month)}・${prior.daysExpected}日分）</small><strong>${prior.value===null?'未取得':yen(prior.value)}</strong><span>${info.value!==null&&prior.value!==null?(info.value-prior.value>=0?'+':'')+yen(info.value-prior.value)+' の差':'両方のデータが揃うと比較できます'}</span></article>
   </div>
-  <p class="note">売上の定義: ${esc(amz?.salesDefinition||'Amazon Sales APIの注文日（日本時間）ベース。返品・返金・手数料は控除前。')}「未取得」は0円ではなく、API・手入力のいずれにも記録がないことを示します。「一部のみ取得（未確定）」は月内の一部の日しか記録がない状態で、欠けている日を0円とみなさず、月の合計には採用していません（日別の棒グラフで欠けている日を確認できます）。「Sales API＋手入力（混在）」は日ごとにAPI優先・欠けている日だけ手入力で埋めて月を揃えた合計です。</p>`;})()}
+  <p class="note">売上の定義: ${esc(amz?.salesDefinition||'Amazon Sales APIの注文日（日本時間）ベース。返品・返金・手数料は控除前。')}「未取得」は0円ではなく、採用できる日別売上がない状態です。「一部のみ取得（未確定）」は月内の一部の日しか記録がない状態で、欠けている日や最新未確認の前回値を0円とみなさず、月の合計には採用していません（日別の棒グラフで欠けている日を確認できます）。「Sales API＋手入力（混在）」は日ごとにAPI優先・欠けている日だけ手入力で埋めて月を揃えた合計です。</p>`;})()}
  </section>
  <section class="panel"><div class="panelhead"><h2>売上の棒グラフ</h2><div class="actions" role="tablist"><button class="${amzUI.chartMode==='daily'?'primary':'secondary'}" data-amzchart="daily">日別（${esc(targetMonth)}）</button><button class="${amzUI.chartMode==='monthly'?'primary':'secondary'}" data-amzchart="monthly">月別（直近12か月）</button></div></div>
  ${amzUI.chartMode==='daily'?(()=>{const rows=fullMonthRows(c,state.metrics,targetMonth,t);const max=Math.max(1,...rows.map(r=>r.value||0));
-   return `<div class="barchart" role="img" aria-label="日別売上の棒グラフ">${rows.map(r=>barDiv(r.date,r.value,max,r.date===t?'today':'')).join('')}</div><p class="note">棒の高さは対象月内の最大売上日を100%とした相対表示（5%刻み）です。点線の棒は「未取得」（0円ではありません）。</p>`;})()
+   return `<div class="barchart" role="img" aria-label="日別売上の棒グラフ">${rows.map(r=>barDiv(r.date,r.value,max,r.date===t?'today':'',r.source==='api_stale'?sourceLabel(r.source):'未取得')).join('')}</div><p class="note">棒の高さは対象月内の最大売上日を100%とした相対表示（5%刻み）です。点線の棒は「未取得」（0円ではありません）。</p>`;})()
   :(()=>{const months=recentMonths(t,12);const rows=months.map(m=>{const info=monthSalesInfo(c,state.metrics,m,t);return {month:m,...info};});const max=Math.max(1,...rows.map(r=>r.value||0));
    return `<div class="barchart" role="img" aria-label="月別売上の棒グラフ（直近12か月）">${rows.map(r=>barDiv(r.month,r.value,max,r.month===month()?'today':'')).join('')}</div><p class="note">右端が今月（進行中・未完了月）です。データが揃っていない過去月は「未取得」（点線）で、0円として扱っていません。</p>`;})()}
  </section>

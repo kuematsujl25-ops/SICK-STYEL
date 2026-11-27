@@ -14,22 +14,30 @@ import * as instagram from '../integrations/instagram.js';
 import {connectionReadiness,selectAmazonSales,syncMessage} from '../public/integration-status.js';
 import {registrationPlan} from '../scripts/lib/integration-plan.js';
 const stamp='2026-10-18T00:00:00Z';
-const status={configured:true,connected:true,cache:{syncVerified:true,syncedAt:stamp,salesSyncedAt:stamp,month:'2026-10',monthSales:5000}};
+const status={configured:true,connected:true,cache:{syncVerified:true,syncedAt:stamp,salesSyncedAt:stamp,month:'2026-10',monthSales:5000,dailyHistory:[{date:'2026-10-01',sales:5000}]}};
 test('stored authorization is not a successful connection',()=>assert.equal(connectionReadiness({configured:true,connected:true},'amazon').state,'sync_unverified'));
 test('unconfigured service is authentication pending',()=>assert.equal(connectionReadiness({configured:false,connected:false},'instagram').state,'awaiting_auth'));
 test('expired Instagram requires reauthorization even with old data',()=>assert.equal(connectionReadiness({...status,expiresAt:1},'instagram').state,'awaiting_auth'));
 test('verified external reads permit connected label',()=>assert.equal(connectionReadiness(status,'amazon').state,'connected'));
 test('partial failure cannot be labelled connected',()=>assert.equal(connectionReadiness({...status,cache:{...status.cache,salesError:'network'}},'amazon').state,'sync_unverified'));
 test('legacy cache without proof remains unverified',()=>assert.equal(connectionReadiness({...status,cache:{syncedAt:stamp}},'amazon').state,'sync_unverified'));
-test('API and CSV/manual figures are never added',()=>assert.equal(selectAmazonSales(status,[{date:'2026-10-01',sales:5000}],'2026-10').value,5000));
-test('previous month API data cannot replace this month manual data',()=>assert.deepEqual(selectAmazonSales(status,[{date:'2026-11-01',sales:300}],'2026-11'),{value:300,source:'manual',syncedAt:null,stale:false}));
-test('no values is missing, not measured zero',()=>assert.equal(selectAmazonSales(null,[],'2026-10').value,null));
-test('observed zero remains measured zero',()=>assert.equal(selectAmazonSales({...status,cache:{...status.cache,monthSales:0}},[],'2026-10').value,0));
-test('old cache without Sales timestamp is not a verified API value',()=>assert.equal(selectAmazonSales({...status,cache:{month:'2026-10',monthSales:100}},[],'2026-10').source,'missing'));
-test('stale API value retains source and failure marker',()=>assert.equal(selectAmazonSales({...status,cache:{...status.cache,salesError:'fail'}},[],'2026-10').stale,true));
+test('API wins per day; the same day is never counted twice',()=>assert.equal(selectAmazonSales(status,[{date:'2026-10-01',sales:999}],'2026-10-01').value,5000));
+test('previous month API data cannot replace this month manual data',()=>{const info=selectAmazonSales(status,[{date:'2026-11-01',sales:300}],'2026-11-01');assert.equal(info.value,300);assert.equal(info.source,'manual');});
+test('no values is missing, not measured zero',()=>assert.equal(selectAmazonSales(null,[],'2026-10-01').value,null));
+test('observed zero remains measured zero',()=>assert.equal(selectAmazonSales({...status,cache:{...status.cache,dailyHistory:[{date:'2026-10-01',sales:0}]}},[],'2026-10-01').value,0));
+test('legacy cached total cannot substitute for missing elapsed dates',()=>{const info=selectAmazonSales(status,[],'2026-10-02');assert.equal(info.value,null);assert.equal(info.source,'partial');assert.equal(info.daysCovered,1);});
+test('one manual day cannot substitute for a partial month',()=>assert.equal(selectAmazonSales(null,[{date:'2026-10-02',sales:123}],'2026-10-02').value,null));
+test('API and manual records can cover different dates without double counting',()=>{const info=selectAmazonSales(status,[{date:'2026-10-01',sales:123},{date:'2026-10-02',sales:300}],'2026-10-02');assert.equal(info.value,5300);assert.equal(info.source,'mixed');});
+test('stale API value retains source and failure marker',()=>assert.equal(selectAmazonSales({...status,cache:{...status.cache,salesError:'fail'}},[],'2026-10-01').stale,true));
 test('partial result is not announced as successful sync',()=>assert.match(syncMessage({cache:{syncVerified:false}}),/同期未検証/));
-test('monthly missing metric is null rather than false zero',()=>assert.deepEqual(amazon.monthlyMetrics([{date:'2026-10-01',sales:null,orders:0}],'2026-10'),{monthSales:null,monthOrders:0}));
-test('empty monthly result stays unacquired',()=>assert.equal(amazon.monthlyMetrics([],'2026-10').monthSales,null));
+test('monthly missing metric is null rather than false zero',()=>assert.deepEqual(amazon.monthlyMetrics([{date:'2026-10-01',sales:null,orders:0}],'2026-10','2026-10-01'),{monthSales:null,monthOrders:0}));
+test('missing middle day, final day, or unproven date prevents both monthly totals',()=>{
+ const d=n=>({date:'2026-10-0'+n,sales:n,orders:n});
+ for(const rows of [[],[d(1),d(3)],[d(1),d(2)],[d(1),d(2),d(2)]])
+  assert.deepEqual(amazon.monthlyMetrics(rows,'2026-10','2026-10-03'),{monthSales:null,monthOrders:null});
+ assert.deepEqual(amazon.monthlyMetrics([d(1),d(2),d(3),d(4)],'2026-10','2026-10-03'),{monthSales:6,monthOrders:6});
+ assert.equal(amazon.monthlyMetrics([d(1)],'2026-10').monthSales,null);
+});
 test('foreign currency is not reported as yen',()=>assert.equal(amazon.parseMetrics([{interval:'2026-10-01',totalSales:{amount:'500',currencyCode:'USD'}}])[0].sales,null));
 test('invalid date and negative counts are not accepted',()=>{assert.equal(amazon.parseMetrics([{interval:'2026-02-31'}]).length,0);assert.equal(amazon.parseMetrics([{interval:'2026-10-01',orderCount:-1}])[0].orders,null)});
 test('blank monetary amount stays unacquired',()=>assert.equal(amazon.parseMetrics([{interval:'2026-10-01',totalSales:{amount:'',currencyCode:'JPY'}}])[0].sales,null));
@@ -39,13 +47,31 @@ async function fixture(t){
  const env={AMAZON_LWA_CLIENT_ID:'fixture-client',AMAZON_LWA_CLIENT_SECRET:'fixture-secret',AMAZON_REFRESH_TOKEN:'fixture-refresh',TOKEN_ENCRYPTION_KEY:randomBytes(32).toString('base64'),APP_ORIGIN:'https://example.workers.dev'};
  return {store,env};
 }
-function mockAmazon({salesFail=false,ordersFail=false,malformed=false,currency='JPY'}={}){
+function mockAmazon({salesFail=false,ordersFail=false,malformed=false,currency='JPY',missingDay=null}={}){
  global.fetch=async(url,options={})=>{const u=new URL(url);if(u.hostname==='api.amazon.com'){assert.equal(options.method,'POST');return Response.json({access_token:'fixture-access'});}assert.equal(u.hostname,'sellingpartnerapi-fe.amazon.com');assert.equal(options.method,undefined,'SP-API reads only');
- if(u.pathname.includes('orderMetrics'))return salesFail?Response.json({errors:[{code:'Unauthorized'}]},{status:403}):Response.json({payload:[{interval:'2026-10-16',totalSales:{amount:'5000',currencyCode:currency},orderCount:2,unitCount:2}]});
+ if(u.pathname.includes('orderMetrics'))return salesFail?Response.json({errors:[{code:'Unauthorized'}]},{status:403}):Response.json({payload:Array.from({length:16},(_,i)=>({interval:'2026-10-'+String(i+1).padStart(2,'0'),totalSales:{amount:i===15?5000:0,currencyCode:currency},orderCount:i===15?2:0,unitCount:i===15?2:0})).filter((_,i)=>i+1!==missingDay)});
  if(u.pathname.includes('/orders'))return ordersFail?Response.json({errors:[{code:'QuotaExceeded'}]},{status:429}):Response.json(malformed?{}:{orders:[{orderId:'fixture-order',fulfillment:{fulfillmentStatus:'UNSHIPPED'}}]});
  throw Error('Unexpected external destination');};
 }
 test('Sales failure across month boundary preserves original sales month and timestamp',async t=>{const {store,env}=await fixture(t);await withRuntime(env,async()=>{mockAmazon();const first=await amazon.sync(store,new Date('2026-10-16T05:00:00Z'));mockAmazon({salesFail:true});const next=await amazon.sync(store,new Date('2026-11-01T05:00:00Z'));assert.equal(next.month,'2026-10');assert.equal(next.monthSales,5000);assert.equal(next.salesSyncedAt,first.salesSyncedAt);assert.equal(next.salesPeriod.start,first.salesPeriod.start);assert.notEqual(next.ordersPeriod.start,first.ordersPeriod.start);assert.equal(next.syncVerified,false);assert.ok(next.salesError);assert.equal(next.syncedAt,first.syncedAt);assert.equal((await amazon.safeStatus(store)).readiness.state,'sync_unverified');});});
+test('partial Sales response retains daily records but cannot report a monthly total or verified sync',async t=>{
+ const {store,env}=await fixture(t);
+ await withRuntime(env,async()=>{
+  mockAmazon({missingDay:8});const next=await amazon.sync(store,new Date('2026-10-16T05:00:00Z'));
+  assert.equal(next.dailyHistory.length,15);assert.equal(next.monthSales,null);assert.equal(next.monthOrders,null);
+  assert.equal(next.syncVerified,false);assert.match(next.warnings.join(' '),/集計未完了/);
+ });
+});
+test('reading a legacy partial cache hides its old totals without rewriting the record',async t=>{
+ const {store,env}=await fixture(t);
+ await withRuntime(env,async()=>{
+  const old={month:'2026-10',monthSales:5000,monthOrders:2,syncVerified:true,salesPeriod:{end:'2026-10-16'},daily:[{date:'2026-10-16',sales:5000,orders:2}]};
+  await store.put('amazon-cache',old);
+  const {cache}=await amazon.safeStatus(store);
+  assert.equal(cache.monthSales,null);assert.equal(cache.monthOrders,null);assert.equal(cache.syncVerified,false);assert.deepEqual(cache.daily,old.daily);
+  assert.deepEqual(JSON.parse((await store.doc('amazon-cache')).body),old);
+ });
+});
 test('Orders failure retains old orders period and marks it stale',async t=>{const {store,env}=await fixture(t);await withRuntime(env,async()=>{mockAmazon();const first=await amazon.sync(store,new Date('2026-10-16T05:00:00Z'));mockAmazon({ordersFail:true});const next=await amazon.sync(store,new Date('2026-10-17T05:00:00Z'));assert.deepEqual(next.orders,first.orders);assert.deepEqual(next.ordersPeriod,first.ordersPeriod);assert.ok(next.ordersError);assert.equal(next.syncVerified,false);assert.equal(next.ordersSyncedAt,first.ordersSyncedAt);});});
 test('malformed Orders response is not false zero orders',async t=>{const {store,env}=await fixture(t);await withRuntime(env,async()=>{mockAmazon({malformed:true});const next=await amazon.sync(store,new Date('2026-10-16T05:00:00Z'));assert.equal(next.orders,null);assert.ok(next.ordersError);assert.equal(next.syncVerified,false);});});
 test('dailyHistory survives across month boundaries even though Sales API only ever returns a rolling 31-day window',async t=>{

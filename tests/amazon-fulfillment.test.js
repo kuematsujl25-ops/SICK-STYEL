@@ -15,7 +15,7 @@ test('Amazon fulfillment is requested on every page, persisted, reloaded and ret
  global.fetch=async(url)=>{
   const u=new URL(url);
   if(u.hostname==='api.amazon.com')return Response.json({access_token:'test-access'});
-  if(u.pathname==='/sales/v1/orderMetrics')return Response.json({payload:[{interval:'2026-10-16T00:00:00+09:00--2026-10-17T00:00:00+09:00',totalSales:{amount:500,currencyCode:'JPY'},orderCount:2,unitCount:2}]});
+  if(u.pathname==='/sales/v1/orderMetrics')return Response.json({payload:Array.from({length:16},(_,i)=>({interval:'2026-10-'+String(i+1).padStart(2,'0'),totalSales:{amount:(i===15?500:0),currencyCode:'JPY'},orderCount:i===15?2:0,unitCount:i===15?2:0}))});
   assert.equal(u.pathname,'/orders/2026-01-01/orders');
   assert.equal(u.searchParams.get('includedData'),'FULFILLMENT,PACKAGES');
   assert.equal(u.searchParams.get('maxResultsPerPage'),'100');pages++;
