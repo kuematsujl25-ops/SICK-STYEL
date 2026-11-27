@@ -45,13 +45,33 @@ test('Unified refuses wrong portfolio, account, multiple assets, extra rights, a
  ])await assert.rejects(exchangeUnified(expects,'fixture-code',fake(failure)));
 });
 
+test('checks every assignment page without using Meta paging URLs or accepting any other account',async()=>{
+ const normal=fake();
+ const correct={id:'654321',username:'@SAMPLE_ACCOUNT'};
+ const run=(pages)=>async(u,req)=>{
+  if(!u.pathname.endsWith('/assigned_instagram_accounts'))return normal(u,req);
+  assert.equal(u.origin,'https://graph.facebook.com');
+  assert.equal(u.searchParams.has('access_token'),false);
+  assert.equal(req.headers.Authorization,'Bearer fixture-user-token');
+  const page=u.searchParams.get('after')===null?0:u.searchParams.get('after')==='opaque_A'?1:2;
+  return pages[page];
+ };
+ const paging={next:'https://example.com/?access_token=must-not-follow',cursors:{after:'opaque_A'}};
+ const result=await exchangeUnified(expects,'fixture-code',run([{data:[correct],paging},{data:[]}]));
+ assert.equal(result.id,'654321');assert.equal(result.username,'sample_account');
+ await assert.rejects(exchangeUnified(expects,'fixture-code',run([{data:[correct],paging},{data:[{id:'999999',username:'other'}]}])),{step:'account_multiple'});
+ await assert.rejects(exchangeUnified(expects,'fixture-code',run([{data:[correct],paging},{data:[],paging}])),{step:'account_paging'});
+ await assert.rejects(exchangeUnified(expects,'fixture-code',run([{data:[{id:Number.MAX_SAFE_INTEGER+1,username:'sample_account'}]}])),{step:'account_shape'});
+ await assert.rejects(exchangeUnified(expects,'fixture-code',run([{data:[{id:'654321',username:'other'}]}])),{step:'account_identity'});
+});
+
 test('callback diagnoses failure stages without exposing tokens, Meta messages or URLs',async()=>{
  const expected=[
   [{debug:{app_id:'111111'}},'token_identity'],
   [{debug:{scopes:['instagram_basic']}},'token_scope'],
   [{debug:{expires_at:0}},'token_expiry'],
   [{business:'456789'},'portfolio_policy'],
-  [{accounts:{data:[]}},'account_policy'],
+  [{accounts:{data:[]}},'account_missing'],
  ];
  for(const [fixture,step] of expected)await assert.rejects(exchangeUnified(expects,'fixture-code',fake(fixture)),error=>{
   assert.deepEqual(instagramCallbackDiagnostic(error),{step,metaCode:null});

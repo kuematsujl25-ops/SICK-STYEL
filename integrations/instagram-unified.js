@@ -8,7 +8,7 @@ const graphBase='https://graph.facebook.com/v27.0';
 const sixtyDays=60*86400000;
 
 // Only fixed diagnostic labels and bounded numeric Meta codes may leave the callback.
-const callbackSteps=new Set(['state_mode','state_session','meta_declined','missing_code','code_exchange','token_debug','token_identity','token_scope','token_expiry','portfolio_lookup','portfolio_policy','account_lookup','account_policy','connection_conflict','save_connection']);
+const callbackSteps=new Set(['state_mode','state_session','meta_declined','missing_code','code_exchange','token_debug','token_identity','token_scope','token_expiry','portfolio_lookup','portfolio_policy','account_lookup','account_policy','account_missing','account_multiple','account_identity','account_paging','account_shape','connection_conflict','save_connection']);
 export class InstagramCallbackError extends Error{
  constructor(step,message,source){
   super(message);
@@ -45,6 +45,36 @@ export function unifiedGraph(path,access,params,remote){
  for(const [k,v] of Object.entries(params))u.searchParams.set(k,v);
  return remote(u,{method:'GET',headers:{Authorization:`Bearer ${access}`}});
 }
+// Verify exactly one distinct Instagram account in the complete assigned set.
+// Use only Meta's cursor as an opaque value with a pinned Graph origin and path.
+// Never follow the paging.next URL, which can contain credentials or another host.
+async function verifyAssignedAccount(read,expectedUsername){
+ let after;const seen=new Set(),accounts=new Map();
+ for(let page=0;page<4;page++){
+  const assigned=await atCallbackStep('account_lookup',()=>read('me/assigned_instagram_accounts',{fields:'id,username',limit:'2',...(after?{after}:{})}));
+  if(!Array.isArray(assigned?.data))throw new InstagramCallbackError('account_shape','Metaの共有アカウント一覧の形式を確認できません');
+  for(const row of assigned.data){
+   // Meta documents string IDs. A number is verifiable only if exactly representable.
+   const accountId=typeof row?.id==='number'&&Number.isSafeInteger(row.id)?String(row.id):row?.id;
+   if(!id(accountId))throw new InstagramCallbackError('account_shape','Metaの共有アカウントIDを確認できません');
+   const username=typeof row.username==='string'?row.username.trim().replace(/^@/,'').toLowerCase():'';
+   if(accounts.has(accountId)&&accounts.get(accountId)!==username)throw new InstagramCallbackError('account_identity','Metaから返された共有アカウント名が一致しません');
+   accounts.set(accountId,username);
+   if(accounts.size>1)throw new InstagramCallbackError('account_multiple','複数のInstagramアカウントが共有されています');
+  }
+  if(!assigned.paging?.next){
+   if(!accounts.size)throw new InstagramCallbackError('account_missing','Metaから共有済みInstagramアカウントが返りませんでした');
+   const [id,username]=accounts.entries().next().value;
+   if(username!==expectedUsername)throw new InstagramCallbackError('account_identity','Metaから返された共有アカウント名が設定と一致しません');
+   return {id,username};
+  }
+  const cursor=assigned.paging?.cursors?.after;
+  if(typeof cursor!=='string'||!/^[A-Za-z0-9_+=/.-]{1,512}$/.test(cursor)||seen.has(cursor))
+   throw new InstagramCallbackError('account_paging','共有アカウント一覧の続きを安全に確認できません');
+  seen.add(cursor);after=cursor;
+ }
+ throw new InstagramCallbackError('account_paging','共有アカウント一覧の続きを安全に確認できません');
+}
 export async function exchangeUnified(settings,code,remote,now=Date.now()){
  const exchange=new URL(`${graphBase}/oauth/access_token`);
  exchange.search=new URLSearchParams({client_id:settings.appId,client_secret:settings.secret,code,redirect_uri:settings.redirect});
@@ -64,10 +94,6 @@ export async function exchangeUnified(settings,code,remote,now=Date.now()){
  const read=(path,params)=>unifiedGraph(path,access,params,remote);
  const business=await atCallbackStep('portfolio_lookup',()=>read('me',{fields:'client_business_id'}));
  if(business.client_business_id!==settings.businessId)throw new InstagramCallbackError('portfolio_policy','許可されたビジネスポートフォリオと一致しません');
- const assigned=await atCallbackStep('account_lookup',()=>read('me/assigned_instagram_accounts',{fields:'id,username',limit:'2'}));
- const account=assigned?.data?.[0];
- if(!Array.isArray(assigned?.data)||assigned.data.length!==1||assigned.paging?.next||!id(account?.id)||account.username?.toLowerCase()!==settings.username){
-  throw new InstagramCallbackError('account_policy','許可されたInstagramアカウント1件だけを選択してください');
- }
+ const account=await verifyAssignedAccount(read,settings.username);
  return {access,id:account.id,username:account.username,granted:[...unifiedScopes],expiresAt,businessId:settings.businessId,configId:settings.configId};
 }
