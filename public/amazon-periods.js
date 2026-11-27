@@ -33,14 +33,14 @@ export function sourceLabel(src){return {api:'Sales API（自動同期）',manua
 // 指定した月の日別行を、API日次履歴（優先）と手入力/CSVのmetricsで日付ごとにマージする。
 // 全部または何もない、ではなく「APIがある日はAPI、ない日だけ手入力で埋める」。
 export function dailyRowsForMonth(c,metrics,targetMonth){
- const apiByDate=new Map((c?.dailyHistory||[]).filter(x=>x.date.startsWith(targetMonth)).map(x=>[x.date,x]));
+ const apiByDate=new Map((c?.dailyHistory??c?.daily??[]).filter(x=>x.date.startsWith(targetMonth)).map(x=>[x.date,x]));
  const manualByDate=new Map((metrics||[]).filter(m=>m.date.startsWith(targetMonth)).map(m=>[m.date,m]));
  const dates=new Set([...apiByDate.keys(),...manualByDate.keys()]);
  // APIの履歴行は存在するが売上がnull（例: 取得できなかった日・非JPY通貨の除外等）のことがあり、その場合は
  // 手入力/CSVの値があればそちらを優先する。「行がある＝API値を信頼してよい」ではない（Codex独立レビュー指摘。
  // todaySalesInfo()は既に同じ優先順位で正しく判定しており、ここを合わせる）。
  return [...dates].sort().map(date=>{
-  const a=apiByDate.get(date);if(a&&typeof a.sales==='number')return {date,value:a.sales,source:'api'};
+  const a=apiByDate.get(date);if(a&&Number.isFinite(a.sales))return {date,value:a.sales,source:'api'};
   const m=manualByDate.get(date);if(m&&Number.isFinite(m.sales))return {date,value:m.sales,source:'manual'};
   return {date,value:null,source:a?'api_partial':'missing'};
  });
@@ -51,8 +51,8 @@ export function dailyRowsForMonth(c,metrics,targetMonth){
 export function monthSalesInfo(c,metrics,targetMonth,t){
  const isCurrent=t?targetMonth===t.slice(0,7):false;
  const expected=isCurrent?Number(t.slice(8,10)):daysInMonth(targetMonth);
- const rows=dailyRowsForMonth(c,metrics,targetMonth).filter(r=>Number(r.date.slice(8,10))<=expected);
- const complete=rows.length>=expected&&rows.every(r=>r.value!==null);
+ const rows=fullMonthRows(c,metrics,targetMonth,t);
+ const complete=expected>0&&rows.length===expected&&rows.every(r=>Number.isFinite(r.value));
  if(complete){
   const sources=new Set(rows.map(r=>r.source));
   const source=sources.size===1?[...sources][0]:'mixed';
@@ -61,8 +61,8 @@ export function monthSalesInfo(c,metrics,targetMonth,t){
  return {value:null,source:rows.some(r=>r.value!==null)?'partial':'missing',incomplete:false,daysCovered:rows.filter(r=>r.value!==null).length,daysExpected:expected};
 }
 export function todaySalesInfo(c,metrics,t){
- const apiRow=(c?.dailyHistory||[]).find(x=>x.date===t);
- if(apiRow&&typeof apiRow.sales==='number')return {value:apiRow.sales,source:'api'};
+ const apiRow=(c?.dailyHistory??c?.daily??[]).find(x=>x.date===t);
+ if(apiRow&&Number.isFinite(apiRow.sales))return {value:apiRow.sales,source:'api'};
  const manualRow=(metrics||[]).find(m=>m.date===t);
  if(manualRow&&Number.isFinite(manualRow.sales))return {value:manualRow.sales,source:'manual'};
  return {value:null,source:apiRow?'api_partial':'missing'};
