@@ -1,3 +1,4 @@
+import {fetchNoRedirect} from '../lib/fetch-no-redirect.js';
 import {runtime} from '../lib/runtime.js';
 import {encrypt,decrypt,token,hash} from '../lib/security.js';
 // 本人（管理者）のGoogleカレンダーをOAuth（Authorization Code, offline access）で認可する。
@@ -10,7 +11,7 @@ const callback=()=>new URL('/api/googlecalendar/callback',runtime().APP_ORIGIN).
 // lib/meeting-sync.jsが「予定の作成リクエスト自体が送られた後の失敗（曖昧・uncertain）」と「それより前の
 // 段階（トークン更新等、作成リクエスト未送信で確実に未作成）」を区別するために使う（Codex独立レビュー指摘）。
 export class GoogleCalendarError extends Error{constructor(code,message,stage,httpStatus=null){super(message||`Googleカレンダー API エラー (${code})。権限・期限を確認してください。`);this.code=code;this.stage=stage||null;this.httpStatus=httpStatus;}}
-async function remote(stage,url,options={}){let response;try{response=await fetch(url,{...options,signal:AbortSignal.timeout(12000)});}catch{throw new GoogleCalendarError('通信失敗',undefined,stage);}
+async function remote(stage,url,options={},request=fetch){let response;try{response=await request(url,{...options,signal:AbortSignal.timeout(12000)});}catch{throw new GoogleCalendarError('通信失敗',undefined,stage);}
  if(response.status===204)return {};
  let b=null;try{b=await response.json();}catch{}
  if(!response.ok){const code=b?.error?.code||response.status;const hint=response.status===401?'認可が失効しています。再接続してください。':response.status===403?'権限不足、または認可が取り消されています。':response.status===429?'Googleの呼び出し上限です。しばらくして再試行してください。':'';throw new GoogleCalendarError(code,b?.error?.message?`Googleカレンダー API エラー (${code}): ${b.error.message}。${hint}`:undefined,stage,response.status);}
@@ -39,7 +40,7 @@ export async function connect(store,session,url){
 }
 async function accessToken(store,p,{strictRedirect=false}={}){
  const form=new URLSearchParams({grant_type:'refresh_token',refresh_token:decrypt(p.encrypted).refresh,client_id:runtime().GOOGLE_CLIENT_ID,client_secret:runtime().GOOGLE_CLIENT_SECRET});
- const fresh=await remote('token_refresh','https://oauth2.googleapis.com/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:form,...(strictRedirect?{redirect:'error'}:{})});
+ const fresh=await remote('token_refresh','https://oauth2.googleapis.com/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:form},strictRedirect?fetchNoRedirect:fetch);
  if(!fresh.access_token)throw Error('Googleトークンの更新に失敗しました。再接続してください');
  return fresh.access_token;
 }
@@ -82,7 +83,7 @@ export async function listToday(store,day){
  u.search=new URLSearchParams({timeMin,timeMax:next,singleEvents:'true',orderBy:'startTime',maxResults:'2500'});
  const events=[],seen=new Set();
  for(let page=0;page<5;page++){
-  const r=await remote('list_events',u.href,{headers:{Authorization:'Bearer '+access},redirect:'error'});
+  const r=await remote('list_events',u.href,{headers:{Authorization:'Bearer '+access}},fetchNoRedirect);
   if(r.items!==undefined&&!Array.isArray(r.items))throw new GoogleCalendarError('invalid_response',null,'list_events');
   events.push(...(r.items||[]));
   if(!r.nextPageToken)return {connected:true,events};

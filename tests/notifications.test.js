@@ -190,7 +190,7 @@ test('scheduled push retries only transiently failed devices, preserves in-app e
   let topic;
   const send=async(url,init)=>{
    const name=url.split('/').pop();
-   assert.equal(init.redirect,'error');assert.match(init.headers.Topic,/^[a-f0-9]{32}$/);
+   assert.equal(init.redirect,'manual');assert.match(init.headers.Topic,/^[a-f0-9]{32}$/);
    topic??=init.headers.Topic;assert.equal(init.headers.Topic,topic);
    calls[name]++;
    return new Response(null,{status:name==='transient'&&calls[name]===1?503:name==='expired'?410:201});
