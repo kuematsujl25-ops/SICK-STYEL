@@ -3,8 +3,12 @@
 
 // Sales APIは常に直近31日分しか返さないため、月をまたぐと先月分が窓から外れて失われる。
 // 同期のたびに日付をキーにマージして蓄積し、月次推移・前月同期間比較に使える長期履歴を保つ（最大2年）。
-export function mergeDailyHistory(oldHistory,newDaily){
+export function mergeDailyHistory(oldHistory,newDaily,period){
  const byDate=new Map((oldHistory||[]).map(d=>[d.date,d]));
+ const returned=new Set((newDaily||[]).map(d=>d.date));
+ if(period?.start&&period?.end)for(const [date,old] of byDate){
+  if(date>=period.start&&date<=period.end&&!returned.has(date)&&Number.isFinite(old.sales))byDate.set(date,{...old,salesStale:true});
+ }
  for(const d of newDaily||[]){
   const old=byDate.get(d.date);
   if(!old){byDate.set(d.date,d);continue;}
@@ -12,11 +16,12 @@ export function mergeDailyHistory(oldHistory,newDaily){
   for(const key of ['sales','orders','units']){
    if(!Number.isFinite(d[key])&&Number.isFinite(old[key]))next[key]=old[key];
   }
-  if(!Number.isFinite(d.sales)&&Number.isFinite(old.sales))next.currency=old.currency;
+  if(!Number.isFinite(d.sales)&&Number.isFinite(old.sales)){next.currency=old.currency;next.salesStale=true;}
   byDate.set(d.date,next);
  }
  return [...byDate.values()].sort((a,b)=>a.date.localeCompare(b.date)).slice(-730);
 }
+export const hasFreshSales=row=>Number.isFinite(row?.sales)&&row.salesStale!==true;
 export function daysInMonth(month){const [y,m]=month.split('-').map(Number);return new Date(Date.UTC(y,m,0)).getUTCDate();}
 // 完了済みの月はその月の全日数がhistoryに揃っていない限りnull（欠損を0円で埋めない）。
 // 進行中の月（today指定時）は、現在までの経過日数ぶんだけ揃っていれば「未完了」として実数を返す。
@@ -26,7 +31,7 @@ export function monthlyTotals(history,months,today){
   const rows=(history||[]).filter(d=>d.date.startsWith(month));
   const isCurrent=month===currentMonth;
   const expected=isCurrent?Number(today.slice(8,10)):daysInMonth(month);
-  const complete=rows.length>=expected&&rows.every(d=>typeof d.sales==='number'&&Number.isFinite(d.sales));
+  const complete=rows.length>=expected&&rows.every(hasFreshSales);
   return {month,sales:complete?rows.reduce((n,d)=>n+d.sales,0):null,daysCovered:rows.length,daysExpected:expected,incomplete:isCurrent,partial:!isCurrent&&rows.length>0&&rows.length<expected};
  });
 }
@@ -38,7 +43,7 @@ export function recentMonths(today,n=12){
  return out;
 }
 export function addMonths(ym,delta){const [y,m]=ym.split('-').map(Number);const d=new Date(Date.UTC(y,m-1+delta,1));return d.getUTCFullYear()+'-'+String(d.getUTCMonth()+1).padStart(2,'0');}
-export function sourceLabel(src){return {api:'Sales API（自動同期）',manual:'手入力・CSV',mixed:'Sales API＋手入力（混在）',api_partial:'API一部取得（未確定）',partial:'一部のみ取得（未確定）',missing:'未取得'}[src]||src;}
+export function sourceLabel(src){return {api:'Sales API（自動同期）',manual:'手入力・CSV',mixed:'Sales API＋手入力（混在）',api_partial:'API一部取得（未確定）',api_stale:'前回値あり・最新未確認',partial:'一部のみ取得（未確定）',missing:'未取得'}[src]||src;}
 // 指定した月の日別行を、API日次履歴（優先）と手入力/CSVのmetricsで日付ごとにマージする。
 // 全部または何もない、ではなく「APIがある日はAPI、ない日だけ手入力で埋める」。
 export function dailyRowsForMonth(c,metrics,targetMonth){
@@ -49,9 +54,9 @@ export function dailyRowsForMonth(c,metrics,targetMonth){
  // 手入力/CSVの値があればそちらを優先する。「行がある＝API値を信頼してよい」ではない（Codex独立レビュー指摘。
  // todaySalesInfo()は既に同じ優先順位で正しく判定しており、ここを合わせる）。
  return [...dates].sort().map(date=>{
-  const a=apiByDate.get(date);if(a&&Number.isFinite(a.sales))return {date,value:a.sales,source:'api'};
+  const a=apiByDate.get(date);if(hasFreshSales(a))return {date,value:a.sales,source:'api'};
   const m=manualByDate.get(date);if(m&&Number.isFinite(m.sales))return {date,value:m.sales,source:'manual'};
-  return {date,value:null,source:a?'api_partial':'missing'};
+  return {date,value:null,source:a?.salesStale?'api_stale':a?'api_partial':'missing'};
  });
 }
 // 月の合計は「API日次履歴 ∪ 手入力/CSV」の日別マージ（dailyRowsForMonthと同じ基準）で求める。
@@ -67,14 +72,14 @@ export function monthSalesInfo(c,metrics,targetMonth,t){
   const source=sources.size===1?[...sources][0]:'mixed';
   return {value:rows.reduce((n,r)=>n+r.value,0),source,incomplete:isCurrent,daysCovered:rows.length,daysExpected:expected};
  }
- return {value:null,source:rows.some(r=>r.value!==null)?'partial':'missing',incomplete:false,daysCovered:rows.filter(r=>r.value!==null).length,daysExpected:expected};
+ return {value:null,source:rows.some(r=>r.value!==null||r.source==='api_stale')?'partial':'missing',incomplete:false,daysCovered:rows.filter(r=>r.value!==null).length,daysExpected:expected};
 }
 export function todaySalesInfo(c,metrics,t){
  const apiRow=(c?.dailyHistory??c?.daily??[]).find(x=>x.date===t);
- if(apiRow&&Number.isFinite(apiRow.sales))return {value:apiRow.sales,source:'api'};
+ if(hasFreshSales(apiRow))return {value:apiRow.sales,source:'api'};
  const manualRow=(metrics||[]).find(m=>m.date===t);
  if(manualRow&&Number.isFinite(manualRow.sales))return {value:manualRow.sales,source:'manual'};
- return {value:null,source:apiRow?'api_partial':'missing'};
+ return {value:null,source:apiRow?.salesStale?'api_stale':apiRow?'api_partial':'missing'};
 }
 // 日別グラフ表示専用：対象月の暦日すべて（進行中の月は経過日まで）に1本ずつ行を作る。
 // dailyRowsForMonthはデータのある日だけを返す（集計用）ため、グラフでは欠けている日も
