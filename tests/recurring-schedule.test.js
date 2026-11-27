@@ -5,8 +5,8 @@ import {runInNewContext} from 'node:vm';
 // Evaluate the real scheduled handler with integration boundaries replaced by
 // controlled jobs. Cloudflare HTTP imports cannot be loaded by Node directly.
 const source=readFileSync('workers/index.js','utf8').replace(/^import .*;\n/gm,'').replace('export default {','globalThis.worker = {');
-function scheduledHarness(reminders,recurring,proactive=async()=>{}){
- const context={Date,Promise,console,fetch:()=>{},createServer:()=>({}),httpServerHandler:()=>({}),handler:()=>{},createD1Store:()=>({}),withRuntime:(_,fn)=>fn(),runProactive:proactive,runMeetingReminders:reminders,runRecurringTasks:recurring};runInNewContext(readFileSync('lib/scheduled-minute.js','utf8').replace(/^import .*;\n/gm,'').replace('export async function','async function')+'\n'+source,context);return context.worker;
+function scheduledHarness(reminders,recurring,proactive=async()=>{},retryReports=async()=>{}){
+ const context={Date,Promise,console,fetch:()=>{},createServer:()=>({}),httpServerHandler:()=>({}),handler:()=>{},createD1Store:()=>({}),withRuntime:(_,fn)=>fn(),runProactive:proactive,runMeetingReminders:reminders,retryScheduledReports:retryReports,runRecurringTasks:recurring};runInNewContext(readFileSync('lib/scheduled-minute.js','utf8').replace(/^import .*;\n/gm,'').replace('export async function','async function')+'\n'+source,context);return context.worker;
 }
 test('quarter-hour recurring failure waits for existing reminder delivery before rejecting',async()=>{
  let finishReminder;const reminder=new Promise(resolve=>{finishReminder=resolve;});let called=false,settled=false,protectedWork;
@@ -29,4 +29,14 @@ test('morning proactive checks share existing cron without changing recurring or
  let checks=0,reminders=0;const worker=scheduledHarness(async()=>{reminders++;},async()=>{},async()=>{checks++;});
  for(const time of ['2026-10-30T23:00:00Z','2026-10-30T23:15:00Z','2026-10-30T23:30:00Z','2026-10-31T00:00:00Z']){let work;await worker.scheduled({cron:'* * * * *',scheduledTime:Date.parse(time)},{DB:{}},{waitUntil:p=>work=p});await work;}
  assert.equal(checks,2);assert.equal(reminders,4);
+});
+
+
+test('existing minute cron invokes report retry independently of meeting reminders',async()=>{
+ let checked;
+ const worker=scheduledHarness(async()=>{throw Error('reminder failed');},async()=>{},async()=>{},async(_store,at)=>{checked=at.toISOString();});
+ let work;
+ await worker.scheduled({cron:'* * * * *',scheduledTime:Date.parse('2026-11-27T11:02:00Z')},{DB:{}},{waitUntil:p=>work=p});
+ await assert.rejects(work,/reminder failed/);
+ assert.equal(checked,'2026-11-27T11:02:00.000Z');
 });

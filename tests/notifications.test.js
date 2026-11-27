@@ -6,7 +6,7 @@ import path from 'node:path';
 import {randomBytes} from 'node:crypto';
 import {createStore} from '../lib/store.js';
 import {withRuntime} from '../lib/runtime.js';
-import {scheduledKind,reportFor,runReport,listNotifications,emit,aiUpdated,subscribe,unsubscribe,status,markRead} from '../lib/notifications.js';
+import {scheduledKind,reportFor,runReport,retryScheduledReports,listNotifications,emit,aiUpdated,subscribe,unsubscribe,status,markRead} from '../lib/notifications.js';
 import {validateSubscription,pushRequest,base64url,unbase64url} from '../lib/web-push.js';
 import {empty} from '../lib/domain.js';
 
@@ -171,4 +171,48 @@ test('Edge WNS購読を限定許可し、偽装ホスト・認証情報・非HTT
  const keys={p256dh:'B'+'A'.repeat(86),auth:'A'.repeat(22)};
  assert.equal(validateSubscription({endpoint:'https://wns2-region.notify.windows.com/w/?token=dummy',keys}).endpoint,'https://wns2-region.notify.windows.com/w/?token=dummy');
  for(const endpoint of ['https://evilnotify.windows.com/w/','https://wns.notify.windows.com.evil.invalid/w/','http://wns.notify.windows.com/w/','https://user:pass@wns.notify.windows.com/w/','https://wns.notify.windows.com:444/w/'])assert.throws(()=>validateSubscription({endpoint,keys}));
+});
+
+
+test('scheduled push retries only transiently failed devices, preserves in-app event and ignores old reports',async t=>{
+ const dir=await mkdtemp(path.join(tmpdir(),'sickstyle-report-retry-'));
+ const store=await createStore({DATA_DIR:dir});t.after(async()=>{store.close();await rm(dir,{recursive:true,force:true});});
+ const vapid=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']);
+ const peer=await crypto.subtle.generateKey({name:'ECDH',namedCurve:'P-256'},true,['deriveBits']);
+ const publicKey=base64url(new Uint8Array(await crypto.subtle.exportKey('raw',vapid.publicKey)));
+ const peerKey=base64url(new Uint8Array(await crypto.subtle.exportKey('raw',peer.publicKey)));
+ const {d}=await crypto.subtle.exportKey('jwk',vapid.privateKey);
+ const env={VAPID_PUBLIC_KEY:publicKey,VAPID_PRIVATE_KEY:d,VAPID_SUBJECT:'mailto:test@example.com',TOKEN_ENCRYPTION_KEY:randomBytes(32).toString('base64')};
+ await withRuntime(env,async()=>{
+  const add=async name=>subscribe(store,{endpoint:'https://fcm.googleapis.com/fcm/send/'+name,keys:{p256dh:peerKey,auth:base64url(randomBytes(16))}});
+  await add('success');await add('transient');await add('expired');
+  const base=new Date('2026-11-27T11:00:00Z'),at=n=>new Date(base.getTime()+n*60000),calls={success:0,transient:0,expired:0,new:0};
+  let topic;
+  const send=async(url,init)=>{
+   const name=url.split('/').pop();
+   assert.equal(init.redirect,'error');assert.match(init.headers.Topic,/^[a-f0-9]{32}$/);
+   topic??=init.headers.Topic;assert.equal(init.headers.Topic,topic);
+   calls[name]++;
+   return new Response(null,{status:name==='transient'&&calls[name]===1?503:name==='expired'?410:201});
+  };
+  const first=()=>runReport(store,'sales',base,undefined,send);
+  const same=await Promise.all([first(),first()]);
+  assert.equal(same.filter(x=>x.created).length,1);
+  assert.deepEqual(calls,{success:1,transient:1,expired:1,new:0});
+  assert.equal((await status(store)).devices,2);
+  await add('new');
+  const event=(await listNotifications(store))[0];await markRead(store,event.id);
+  const retry=()=>retryScheduledReports(store,at(2),send,at(2));
+  await Promise.all([retry(),retry()]);
+  assert.deepEqual(calls,{success:1,transient:2,expired:1,new:0});
+  await retryScheduledReports(store,at(5),send,at(5));
+  await retryScheduledReports(store,at(20),send,at(20));
+  assert.deepEqual(calls,{success:1,transient:2,expired:1,new:0});
+  const notifications=await listNotifications(store);
+  assert.equal(notifications.length,1);assert.ok(notifications[0].readAt);
+  await store.put('notify-event-v1:analysis:2026-11-27',{id:'notify-event-v1:analysis:2026-11-27',kind:'analysis',title:'過去の形式',body:'従来の通知',createdAt:'2026-11-27T13:00:00Z'});
+  const legacyTick=new Date('2026-11-27T13:02:00Z');
+  await retryScheduledReports(store,legacyTick,send,legacyTick);
+  assert.deepEqual(calls,{success:1,transient:2,expired:1,new:0});
+ });
 });
