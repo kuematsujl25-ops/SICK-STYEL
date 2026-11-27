@@ -8,7 +8,7 @@ import {createStore} from '../lib/store.js';
 import {withRuntime} from '../lib/runtime.js';
 import {decrypt} from '../lib/security.js';
 import {begin,config,connect,disconnect,safeStatus,sync} from '../integrations/instagram.js';
-import {exchangeUnified,unifiedGraph,unifiedSettings} from '../integrations/instagram-unified.js';
+import {exchangeUnified,instagramCallbackDiagnostic,unifiedGraph,unifiedSettings} from '../integrations/instagram-unified.js';
 
 const env={INSTAGRAM_LOGIN_MODE:'unified',INSTAGRAM_UNIFIED_APP_ID:'123456',INSTAGRAM_UNIFIED_APP_SECRET:'fixture-app-secret',INSTAGRAM_UNIFIED_CONFIG_ID:'223456',INSTAGRAM_UNIFIED_BUSINESS_ID:'323456',INSTAGRAM_UNIFIED_USERNAME:'sample_account',APP_ORIGIN:'https://example.com',TOKEN_ENCRYPTION_KEY:randomBytes(32).toString('base64'),INSTAGRAM_ENABLE_MESSAGING:'true'};
 const expiry=()=>Math.floor(Date.now()/1000)+86400;
@@ -45,6 +45,33 @@ test('Unified refuses wrong portfolio, account, multiple assets, extra rights, a
  ])await assert.rejects(exchangeUnified(expects,'fixture-code',fake(failure)));
 });
 
+test('callback diagnoses failure stages without exposing tokens, Meta messages or URLs',async()=>{
+ const expected=[
+  [{debug:{app_id:'111111'}},'token_identity'],
+  [{debug:{scopes:['instagram_basic']}},'token_scope'],
+  [{debug:{expires_at:0}},'token_expiry'],
+  [{business:'456789'},'portfolio_policy'],
+  [{accounts:{data:[]}},'account_policy'],
+ ];
+ for(const [fixture,step] of expected)await assert.rejects(exchangeUnified(expects,'fixture-code',fake(fixture)),error=>{
+  assert.deepEqual(instagramCallbackDiagnostic(error),{step,metaCode:null});
+  return true;
+ });
+ for(const [fragment,step] of [['/oauth/access_token','code_exchange'],['/debug_token','token_debug'],['/me','portfolio_lookup'],['/assigned_instagram_accounts','account_lookup']]){
+  const run=fake();
+  await assert.rejects(exchangeUnified(expects,'fixture-code',async(u,req)=>{
+   if(new URL(u).pathname.endsWith(fragment))throw Object.assign(new Error('https://example.com/?token=private-value'),{code:190});
+   return run(u,req);
+  }),error=>{
+   assert.deepEqual(instagramCallbackDiagnostic(error),{step,metaCode:190});
+   assert.ok(!JSON.stringify(error).includes('private-value'));
+   assert.ok(!String(error).includes('private-value'));
+   return true;
+  });
+ }
+ assert.deepEqual(instagramCallbackDiagnostic(Object.assign(new Error('private-value'),{code:190})),{step:'unexpected',metaCode:null});
+});
+
 test('owner session only, one-shot state, encrypted and read-only Unified sync',async t=>{
  const dir=await mkdtemp(join(tmpdir(),'ss-ig-unified-'));
  const store=await createStore({DATA_DIR:dir});
@@ -60,7 +87,7 @@ test('owner session only, one-shot state, encrypted and read-only Unified sync',
   const callback=new URL('/api/instagram/callback',env.APP_ORIGIN);
   callback.searchParams.set('code','fixture-code');
   callback.searchParams.set('state',login.searchParams.get('state'));
-  await assert.rejects(connect(store,'other',callback),/state/);assert.equal(fetches,0);
+  await assert.rejects(connect(store,'other',callback),{step:'state_session'});assert.equal(fetches,0);
   await connect(store,'owner',callback);
   await assert.rejects(connect(store,'owner',callback),/state/);
   const p=JSON.parse((await store.doc('instagram-private')).body);

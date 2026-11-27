@@ -1,3 +1,4 @@
+import {instagramCallbackDiagnostic} from '../integrations/instagram-unified.js';
 import {OwnerMediaError,readOwnerRequests,addOwnerRequest,validAssetId,bridgeConfigured,bridgeAuthorized,updateOwnerRequest} from '../lib/owner-media-requests.js';
 import {InstagramReviewError,REVIEW_LIMIT,readInstagramReview,saveInstagramReview} from '../lib/instagram-review.js';
 import {prepareTaskRetention} from '../lib/task-retention.js';
@@ -251,7 +252,16 @@ export default async function handler(req,res){
  if(route==='/api/instagram/status'&&req.method==='GET')return json(res,200,await instagram.safeStatus(store));
  if(route==='/api/instagram/connect'&&req.method==='POST')return json(res,200,{url:await instagram.begin(store,sessionHash)});
  if(route==='/api/instagram/callback'&&req.method==='GET'){
-  try{await instagram.connect(store,sessionHash,url);redirect('/?instagram=connected');}catch(e){console.error(JSON.stringify({event:'instagram_callback',error:e instanceof instagram.MetaError?e.code:'authorization_failed'}));redirect('/?instagram=error');}return;
+  try{await instagram.connect(store,sessionHash,url);redirect('/?instagram=connected');}
+  catch(e){
+   const {step,metaCode:unifiedCode}=instagramCallbackDiagnostic(e);
+   const metaCode=unifiedCode??(e instanceof instagram.MetaError&&Number.isSafeInteger(e.code)&&e.code>=1&&e.code<=999999?e.code:null);
+   console.error(JSON.stringify({event:'instagram_callback',step,metaCode}));
+   const q=new URLSearchParams({instagram:'error',instagram_step:step});
+   if(metaCode!==null)q.set('instagram_code',String(metaCode));
+   redirect('/?'+q);
+  }
+  return;
  }
  if(route==='/api/instagram/sync'&&req.method==='POST'){await instagram.sync(store);return json(res,200,await instagram.safeStatus(store));}
  if(route==='/api/instagram/disconnect'&&req.method==='POST')return json(res,200,await instagram.disconnect(store));

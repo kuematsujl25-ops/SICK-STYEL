@@ -84,6 +84,12 @@ function updateOverdue(){
 setInterval(()=>{if(state&&!document.hidden)overdue.refresh();},60000);
 document.addEventListener('visibilitychange',()=>{if(state&&!document.hidden)overdue.refresh();});
 window.addEventListener('focus',()=>{if(state)overdue.refresh();});
+function instagramCallbackMessage(q){
+ const step=q.get('instagram_step'),code=q.get('instagram_code');
+ const messages={state_mode:'認可の戻り情報が一致しません',state_session:'認可の期限切れ、または別のログイン画面に戻っています',meta_declined:'Metaが認可を完了しませんでした',missing_code:'Metaから認可コードが届きませんでした',code_exchange:'Metaの認可コード交換に失敗しました',token_debug:'Metaで認可情報を照会できませんでした',token_identity:'対象のアプリに発行された有効な認可を確認できませんでした',token_scope:'承認された読み取り権限が設定と一致しません',token_expiry:'認可が期限切れ、または60日以内の有効期限を確認できませんでした',portfolio_lookup:'Metaでポートフォリオを照会できませんでした',portfolio_policy:'指定のビジネスポートフォリオと一致しません',account_lookup:'Metaで共有アカウントを照会できませんでした',account_policy:'指定のInstagramアカウント1件だけを確認できませんでした',connection_conflict:'既存の接続と一致しません',save_connection:'アプリに接続を保存できませんでした'};
+ const message=Object.hasOwn(messages,step)?messages[step]:'Instagramの認可を完了できませんでした';
+ return message+(/^\d{1,6}$/.test(code||'')?'（Metaコード '+code+'）':'')+'。';
+}
 async function load(){
  const s=await api('session');configured=s.configured;setupAllowed=s.setupAllowed;storageKind=s.storage;hosted=s.hosted;
  if(!s.authenticated)return auth();
@@ -92,7 +98,7 @@ async function load(){
  const q=new URLSearchParams(location.search);
  if(q.has('meetings')){section='meetings';render();}
  if(q.has('notifications')){section='settings';render();}
- if(q.has('instagram')){section='instagram';render();toast(q.get('instagram')==='connected'?'Instagramの認可が完了しました。「今すぐ同期」で読み取りを検証してください。':'Instagramの認可を完了できませんでした。設定・権限を確認して再接続してください。');}
+ if(q.has('instagram')){section='instagram';render();toast(q.get('instagram')==='connected'?'Instagramの認可が完了しました。「今すぐ同期」で読み取りを検証してください。':instagramCallbackMessage(q));}
  if(q.has('amazon')){section='amazon';render();toast(q.get('amazon')==='connected'?'Amazonの認可が完了しました。「今すぐ同期」でデータを取得してください。':'Amazonの認可を完了できませんでした。アプリ設定・リダイレクトURIを確認してください。');}
  if(q.has('zoom')){section='settings';render();const zStage=q.get('zoom_stage'),zCode=q.get('zoom_code');const diag=zStage&&/^[a-z_]{1,30}$/.test(zStage)&&zCode&&/^[a-zA-Z0-9_-]{1,40}$/.test(zCode)?'（'+zStage+' / '+zCode+'）':'';toast(q.get('zoom')==='connected'?'Zoomの認可が完了しました。会議タブからMTGを作成できます。':'Zoomの認可未完了'+diag+'。設定を確認してください。');}
  if(q.has('googlecalendar')){section='settings';render();toast(q.get('googlecalendar')==='connected'?'Googleカレンダーの認可が完了しました。':'Googleカレンダーの認可を完了できませんでした。アプリ設定・リダイレクトURIを確認してください。');}
