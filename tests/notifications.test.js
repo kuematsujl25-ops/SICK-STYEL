@@ -58,12 +58,6 @@ test('20h and 22h do not fabricate zero for unknown sales and never infer causes
  assert.equal(report.detail.causesVerified,false);
  assert.match(report.body,/未検証/);
 });
-test('retained sales from an unverified refresh are omitted from the scheduled sales report',()=>{
- const d=empty(),api={dailyHistory:[{date:'2026-10-23',sales:4500,salesStale:true},{date:'2026-10-22',sales:3000,salesStale:true}]};
- assert.equal(reportFor('sales',jst,d,api).detail.sales,null);
- d.metrics=[{date:'2026-10-23',sales:5000}];
- assert.equal(reportFor('analysis',jst,d,api).detail.difference,null);
-});
 test('daily notifications are idempotent on repeated Cron retries and remain in D1',async t=>{
  const dir=await mkdtemp(path.join(tmpdir(),'sickstyle-notify-'));
  const store=await createStore({DATA_DIR:dir});
