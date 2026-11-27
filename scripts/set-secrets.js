@@ -5,10 +5,11 @@ import {readFileSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {ask,secret,requireTerminal} from './lib/prompt.js';
 import {registrationPlan} from './lib/integration-plan.js';
+import {bridgeKey,bridgeRequest,origin as bridgeOrigin,prepareBridgeKey,worker as bridgeWorker} from './lib/owner-dot-bridge.js';
 process.chdir(fileURLToPath(new URL('../',import.meta.url)));
 const cfg=JSON.parse(readFileSync('wrangler.jsonc','utf8'));const origin=cfg.vars?.APP_ORIGIN;
 const [target,...flags]=process.argv.slice(2);
-if(flags.some(f=>!['--plan','--apply'].includes(f))||new Set(flags).size!==flags.length||flags.length>1)throw Error('使い方: node scripts/set-secrets.js instagram|instagram-unified|amazon|amazon-refresh|zoom|googlecalendar [--plan|--apply]');
+if(flags.some(f=>!['--plan','--apply'].includes(f))||new Set(flags).size!==flags.length||flags.length>1)throw Error('使い方: node scripts/set-secrets.js owner-dot-bridge|instagram|instagram-unified|amazon|amazon-refresh|zoom|googlecalendar [--plan|--apply]');
 const registration=registrationPlan(cfg,target);
 if(!flags.includes('--apply')){console.log(JSON.stringify(registration,null,2));process.exit(0);}
 requireTerminal();
@@ -16,6 +17,23 @@ console.log('本番Secretsへの即時反映を伴います。Issue #2では現�
 console.log('変更先Worker: '+registration.worker+' / '+registration.origin);
 console.log('変更する設定名: '+[...registration.requiredNames,...registration.optionalNames].join(', '));
 if(await ask('承認済みの場合だけ REGISTER '+registration.worker+' と入力: ')!=='REGISTER '+registration.worker)throw Error('登録を中止しました。変更はありません。');
+if(target==='owner-dot-bridge'){
+ if(registration.origin!==bridgeOrigin||registration.worker!==bridgeWorker)throw Error('対象の本番Workerと接続先が一致しません。');
+ const env={...process.env,CLOUDFLARE_ACCOUNT_ID:cfg.account_id,WRANGLER_SEND_METRICS:'false',CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV:'false'};
+ const wrangler=(args,input)=>spawnSync(process.execPath,['node_modules/wrangler/bin/wrangler.js',...args],{input,encoding:'utf8',env});
+ const list=wrangler(['secret','list','--name',bridgeWorker,'--format','json']);
+ if(list.status!==0)throw Error('対象Workerの設定を確認できません。何も更新していません。');
+ const names=JSON.parse(list.stdout);
+ if(!Array.isArray(names))throw Error('対象Workerの設定を確認できません。何も更新していません。');
+ const token=await prepareBridgeKey();
+ if(!names.some(x=>x?.name===bridgeKey)){
+  const result=wrangler(['secret','put',bridgeKey,'--name',bridgeWorker],token+'\n');
+  if(result.status!==0)throw Error('Dot接続キーの登録を確認できません。本番設定を確認してください。');
+ }
+ await bridgeRequest('queue',null,token);
+ console.log('Dot接続キーと受信口を確認しました。投稿・予約は行っていません。');
+ process.exit(0);
+}
 const plans={
  'instagram-unified':{title:'Instagram統合ログイン（読み取りのみ）',fields:[
   ['INSTAGRAM_UNIFIED_APP_ID','Meta App ID（数字）',false,/^\d{5,30}$/],
@@ -32,7 +50,7 @@ const plans={
  zoom:{title:'Zoom（団体営業MTGの自動発行）',fields:[['ZOOM_CLIENT_ID','Zoom OAuthアプリ Client ID',false,/^[A-Za-z0-9_-]{8,64}$/],['ZOOM_CLIENT_SECRET','Zoom OAuthアプリ Client Secret（非表示で入力）',true,/^[A-Za-z0-9_-]{8,128}$/]],note:`Zoom App MarketplaceのOAuthアプリ（ユーザー認可が必要なタイプ）で、Redirect URLに次を登録済みか確認してください:\n  ${origin}/api/zoom/callback\nScopesはmeeting:write:meeting / meeting:update:meeting / meeting:delete:meeting / meeting:read:meeting / user:read:userの最小権限のみにしてください（user:read:user:meはZoomの表記ゆれで実在する場合がありますが、integrations/zoom.jsはuser:read:userの表記を要求します）。`},
  googlecalendar:{title:'Googleカレンダー（団体営業MTGの自動登録）',fields:[['GOOGLE_CLIENT_ID','Google OAuthクライアントID（.apps.googleusercontent.com で終わる）',false,/^\d+-[0-9a-zA-Z]+\.apps\.googleusercontent\.com$/],['GOOGLE_CLIENT_SECRET','Google OAuthクライアントシークレット（非表示で入力）',true,/^\S{10,100}$/]],note:`Google Cloud ConsoleのOAuthクライアント（ウェブアプリケーション）で、承認済みのリダイレクトURIに次を登録済みか確認してください:\n  ${origin}/api/googlecalendar/callback\nスコープは https://www.googleapis.com/auth/calendar.events のみ。OAuth同意画面の公開ステータスは「本番環境」にしてください（「テスト中」のままだとリフレッシュトークンが7日で失効します）。`},
 };
-const plan=plans[target];if(!plan)throw Error('使い方: node scripts/set-secrets.js instagram|instagram-unified|amazon|amazon-refresh|zoom|googlecalendar');
+const plan=plans[target];if(!plan)throw Error('使い方: node scripts/set-secrets.js owner-dot-bridge|instagram|instagram-unified|amazon|amazon-refresh|zoom|googlecalendar');
 console.log(`${plan.title} の設定を Cloudflare Secrets に登録します。チャットやGitHubに秘密値を貼らないでください。`);if(plan.note)console.log(plan.note);
 const env={...process.env,CLOUDFLARE_ACCOUNT_ID:cfg.account_id,WRANGLER_SEND_METRICS:'false'};
 for(const [name,label,,pattern] of plan.fields){

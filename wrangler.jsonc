@@ -23,6 +23,12 @@
       "migrations_dir": "migrations"
     }
   ],
+  "r2_buckets": [
+    {
+      "binding": "OWNER_MEDIA",
+      "bucket_name": "sickstyle-owner-media"
+    }
+  ],
   "vars": {
     "COOKIE_SECURE": "true",
     "RECURRING_TASKS_ENABLED": "false",

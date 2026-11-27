@@ -19,7 +19,7 @@ export const renderOwnerMedia=()=>`<section class="panel owner-media" id="${PANE
   <div class="actions"><button class="primary" type="submit">依頼を保存</button></div>
   <p class="owner-media-help note">依頼を保存しても自動で予約・公開はされません。</p>
  </form>
- <h3>依頼履歴</h3><div class="owner-media-history"></div>
+ <div class="actions"><h3>依頼履歴</h3><button class="owner-media-refresh" type="button">依頼状況を更新</button></div><div class="owner-media-history"></div>
  </section>`;
 export function ownerRequestText(r,fileName){
  return ['【SICK STYLEアプリからの依頼】','依頼：'+r.type,'依頼ID：'+r.id,r.scheduledJst?'希望：'+r.scheduledJst.replace('T',' ')+'（日本時間）':null,r.assetId?'対象素材：'+(fileName||r.assetId)+'（必要に応じてファイルを添付）':null,'',r.note,'',r.type==='投稿予約'?'投稿内容・日時を確認してから進めてください。':null].filter(v=>v!==null&&v!==undefined).join('\n').replace(/\n{3,}/g,'\n\n').trim();
@@ -35,9 +35,9 @@ export function bindOwnerMedia({panel,api,esc}){
   const selected=asset.value;
   asset.innerHTML='<option value="">素材を指定しない</option>'+files.map(f=>`<option value="${esc(f.id)}">${esc(f.name)}</option>`).join('');
   if(files.some(f=>f.id===selected))asset.value=selected;
-  gallery.innerHTML=files.length?files.map(f=>`<article class="owner-media-card"><div class="owner-media-frame">${f.type==='video/mp4'?'<video controls playsinline preload="none" src="'+ROOT+'/'+esc(f.id)+'" aria-label="'+esc(f.name)+'"></video>':'<img loading="lazy" alt="'+esc(f.name)+'" src="'+ROOT+'/'+esc(f.id)+'">'}</div><b>${esc(f.name)}</b><small>${fmt(f.createdAt)} ・ ${(f.bytes/(1024*1024)).toFixed(1)} MB</small><button type="button" data-owner-use="${esc(f.id)}">この素材で依頼</button></article>`).join(''):(available?'<p class="note">登録済みの素材はまだありません。</p>':'');
+  gallery.innerHTML=files.length?files.map(f=>`<article class="owner-media-card"><div class="owner-media-frame">${f.type==='video/mp4'?'<video controls playsinline preload="none" src="'+ROOT+'/'+esc(f.id)+'" aria-label="'+esc(f.name)+'"></video>':'<img loading="lazy" alt="'+esc(f.name)+'" src="'+ROOT+'/'+esc(f.id)+'">'}</div><b>${esc(f.name)}</b><small>${fmt(f.createdAt)} ・ ${(f.bytes/(1024*1024)).toFixed(1)} MB</small><button type="button" data-owner-use="${esc(f.id)}">修正を依頼</button><button type="button" data-owner-use="${esc(f.id)}" data-owner-schedule>投稿予約を依頼</button></article>`).join(''):(available?'<p class="note">登録済みの素材はまだありません。</p>':'');
   more.hidden=!cursor;
-  for(const button of gallery.querySelectorAll('[data-owner-use]'))button.onclick=()=>{asset.value=button.dataset.ownerUse;form.elements.note.focus();};
+  for(const button of gallery.querySelectorAll('[data-owner-use]'))button.onclick=()=>{asset.value=button.dataset.ownerUse;form.elements.type.value=button.hasAttribute('data-owner-schedule')?'投稿予約':'修正';mode();(date.required?date:form.elements.note).focus();};
  }
  function paintHistory(){
   history.innerHTML=requests.length?requests.map(r=>`<article class="owner-media-request"><div><b>${esc(r.type)}</b> <span class="badge">${statuses[r.state]||statuses.draft}</span> <small>${fmt(r.createdAt)}</small></div>${r.scheduledJst?'<small>希望日時 '+esc(r.scheduledJst.replace('T',' '))+' JST</small>':''}<p>${esc(r.note)}</p>${r.result?'<p><b>Dotからの結果</b><br>'+esc(r.result)+'</p>':''}${bridge&&r.state==='draft'?'<button class="primary" type="button" data-owner-send="'+esc(r.id)+'">Dotに送る</button>':''}<button type="button" data-owner-copy="${esc(r.id)}">指示をコピー</button><textarea class="owner-media-copy" rows="5" hidden readonly aria-label="コピーする指示"></textarea></article>`).join(''):'<p class="note">依頼はまだありません。</p>';
@@ -84,7 +84,10 @@ export function bindOwnerMedia({panel,api,esc}){
    requests=[record,...requests.filter(x=>x.id!==record.id)];paintHistory();form.reset();mode();requestId=crypto.randomUUID();setStatus('依頼を保存しました。Dotにはまだ送信していません。');
   }catch(e){if(e.body?.error?.includes('別の依頼ID'))requestId=crypto.randomUUID();setStatus(e.message);}finally{submit.disabled=false;}
  };
- Promise.allSettled([loadFiles(),api('owner-media/requests').then(d=>{requests=d.requests;bridge=d.bridge===true;find('.owner-media-help').textContent=bridge?'保存した依頼の「Dotに送る」で受け渡しを開始します。予約・公開は自動では行いません。':'Dotへの直接連携は未接続です。「指示をコピー」で、いつものDotチャットに貼って送信できます。';paintHistory();})]).then(results=>{
+ async function loadRequests(){const d=await api('owner-media/requests');requests=d.requests;bridge=d.bridge===true;find('.owner-media-help').textContent=bridge?'保存した依頼の「Dotに送る」で受け渡しを開始します。予約・公開は自動では行いません。':'Dotへの直接連携は未接続です。「指示をコピー」で、いつものDotチャットに貼って送信できます。';paintHistory();}
+ const refresh=find('.owner-media-refresh');
+ refresh.onclick=async()=>{refresh.disabled=true;try{await loadRequests();setStatus('依頼状況を更新しました。');}catch(e){setStatus(e.message);}finally{refresh.disabled=false;}};
+ Promise.allSettled([loadFiles(),loadRequests()]).then(results=>{
   const err=results.find(r=>r.status==='rejected');setStatus(err?err.reason.message:available?'':'素材の非公開保存先は未接続です。依頼の保存は利用できます。');
  });
 }
