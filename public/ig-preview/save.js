@@ -2,6 +2,7 @@ import {persistenceBatches} from './model.js';
 // Explicit, same-origin persistence of confirmed metadata only. No browser/Instagram access.
 const $=id=>document.getElementById(id);
 let staged=[],status=null,sampleMode=false,busy=false;
+const linkageMessages={identity_mapping_required:'未確認の相手がいます',import_only_reconfirmation_required:'手入力の送信先が変わりました。「取り込みのみ」を再確認してください',manual_correction_conflict:'手入力で取り消した記録と重複しています',first_dm_date_conflict:'初回DMの日付が一致しません'};
 const names={new_dm:'新規DM',reply:'返信',zoom_invite:'Zoom案内'};
 async function api(path,data){
  const r=await fetch('/api/instagram-sales/'+path,{method:data?'POST':'GET',credentials:'same-origin',cache:'no-store',headers:data?{'Content-Type':'application/json'}:{},...(data?{body:JSON.stringify(data)}:{})});
@@ -15,16 +16,33 @@ async function refresh(){
  status=await api('status');$('saved-owner').textContent=status.configured?'保存対象 @'+status.owner:'保存対象は未設定です。';
  if(!status.configured){$('saved-kpi').textContent='未取得';enabled();return;}
  const [kpi,ledger]=await Promise.all([api('kpi?month='+encodeURIComponent($('month').value)),api('events')]);
- $('saved-kpi').textContent='保存済み・部分確認：'+describe(kpi.imported.monthly)+'。初回DM月コホート：'+describe(kpi.imported.cohort)+'。'+(kpi.combined?'既存手入力との対応確認済み合算：'+describe(kpi.combined.monthly):'手入力との合算保留：'+kpi.linkageReason);
- $('saved-rows').replaceChildren();const voids=new Set(ledger.voids.map(v=>v.key));
+ $('saved-kpi').textContent='保存済み・部分確認：'+describe(kpi.imported.monthly)+'。初回DM月コホート：'+describe(kpi.imported.cohort)+'。'+(kpi.combined?'既存手入力との対応確認済み合算：'+describe(kpi.combined.monthly):'手入力との合算保留：'+(linkageMessages[kpi.linkageReason]||'対応を確認してください'));
+ $('saved-rows').replaceChildren();const voids=new Set(ledger.voids.map(v=>v.key));const displayedPeers=new Set();
  for(const e of ledger.events){
   const row=document.createElement('div'),label=document.createElement('p');label.textContent=`@${e.peer} / ${names[e.type]} / ${e.date} JST / ${e.source} / ${voids.has(e.key)?'取消済み':'確認済み'}`;row.append(label);
   if(!voids.has(e.key)){
    const reason=document.createElement('select');for(const [value,text] of Object.entries({incorrect_date:'日付誤り',incorrect_identity:'相手誤り',incorrect_direction:'方向誤り',not_invitation:'案内ではない',duplicate:'重複'})){const option=document.createElement('option');option.value=value;option.textContent=text;reason.append(option);}
    const cancel=document.createElement('button');cancel.textContent='この記録を取り消す';cancel.onclick=()=>safely(async()=>{if(!confirm('この記録を集計から除外します。根拠と取消履歴は保持します。'))return;await api('void',{owner:status.owner,key:e.key,revision:ledger.revision,reason:reason.value});await refresh();note('取消を記録しました。再取込でも復活しません。');});row.append(reason,cancel);
   }
-  if(Object.hasOwn(ledger.mappings,e.peer)){const mapped=document.createElement('p');mapped.textContent='対応済み営業先ID：'+ledger.mappings[e.peer];row.append(mapped);}
-  else {const party=document.createElement('input');party.placeholder='既存手入力の送信先ID';party.maxLength=100;const link=document.createElement('button');link.textContent='同じ相手と確認して対応付け';link.onclick=()=>safely(async()=>{if(!confirm('既存手入力と同一の相手であることを確認しましたか？'))return;await api('mapping',{owner:status.owner,peer:e.peer,party:party.value,confirmed:true,revision:ledger.revision});await refresh();note('対応付けを保存しました。');});row.append(party,link);}
+  if(!voids.has(e.key)&&!displayedPeers.has(e.peer)){
+   displayedPeers.add(e.peer);
+   if(Object.hasOwn(ledger.mappings,e.peer)){const mapped=document.createElement('p');mapped.textContent='対応済み営業先ID：'+ledger.mappings[e.peer];row.append(mapped);}
+   else {
+    const known=Object.hasOwn(ledger.importOnly??{},e.peer);
+    const separate=document.createElement('button');separate.textContent=known?'取り込みのみを再確認':'手入力にない相手として確認';
+    separate.onclick=()=>safely(async()=>{
+     if(!confirm('@'+e.peer+' は既存の手入力の営業先と重複しないことを確認しましたか？ 確認すると別の1先として集計されます。'))return;
+     await api('import-only',{owner:status.owner,peer:e.peer,importOnly:true,confirmed:true,revision:ledger.revision});await refresh();note('取り込みのみの営業先として確認を保存しました。');
+    });row.append(separate);
+    if(known){
+     const unclassify=document.createElement('button');unclassify.textContent='取り込みのみの確認を取り消す';
+     unclassify.onclick=()=>safely(async()=>{
+      if(!confirm('この相手の取り込みのみの確認を取り消し、合算を保留にしますか？'))return;
+      await api('import-only',{owner:status.owner,peer:e.peer,importOnly:false,confirmed:true,revision:ledger.revision});await refresh();note('確認を取り消しました。取り込んだ記録は残しています。');
+     });row.append(unclassify);
+    } else {const party=document.createElement('input');party.placeholder='既存手入力の送信先ID';party.maxLength=100;const link=document.createElement('button');link.textContent='同じ相手と確認して対応付け';link.onclick=()=>safely(async()=>{if(!confirm('既存手入力と同一の相手であることを確認しましたか？'))return;await api('mapping',{owner:status.owner,peer:e.peer,party:party.value,confirmed:true,revision:ledger.revision});await refresh();note('対応付けを保存しました。');});row.append(party,link);}
+   }
+  }
   $('saved-rows').append(row);
  }
  enabled();

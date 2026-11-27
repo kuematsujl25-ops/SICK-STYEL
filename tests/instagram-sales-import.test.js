@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {validateImport,configureSalesOwner,importSalesEvents,readSalesLedger,voidSalesEvent,mapSalesPeer} from '../lib/instagram-sales-import.js';
+import {validateImport,configureSalesOwner,importSalesEvents,readSalesLedger,voidSalesEvent,mapSalesPeer,classifyImportOnlyPeer} from '../lib/instagram-sales-import.js';
 import {salesKpiProjection} from '../lib/instagram-sales-kpi.js';
 const now='2026-10-31T00:00:00Z';
 const event=(type='reply',date='2026-10-20',peer='example_peer')=>({peer,type,date,direction:type==='reply'?'inbound':'outbound',confirmed:true,historyStartConfirmed:type==='new_dm',firstOutboundConfirmed:type==='new_dm',inviteConfirmed:type==='zoom_invite'});
@@ -69,4 +69,59 @@ test('changed provenance and additional confirmations replay without blocking un
  const r=await importSalesEvents(s,batch([{...event(),historyStartConfirmed:true,firstOutboundConfirmed:true},event('reply','2026-10-21','example_second')]),'example_owner',now);
  assert.equal(r.replayed,1);assert.equal(r.added,1);
  const l=await readSalesLedger(s,'example_owner');assert.equal(l.events[0].source,'manual');assert.equal(l.events.length,2);
+});
+
+
+test('confirmed imported-only parties combine with linked peers without duplicating manual activity',async()=>{
+ const s=await setup();
+ const manual=[{id:'m1',party:'party1',type:'reply',date:'2026-10-20'}];
+ s.rows.set('workspace',{body:JSON.stringify({salesKpiRecords:manual}),revision:4});
+ const previous=await s.doc('workspace');
+ await importSalesEvents(s,batch([event(),event('new_dm','2026-10-19','other_peer'),event('reply','2026-10-20','other_peer')]),'example_owner',now);
+ let ledger=await readSalesLedger(s,'example_owner');
+ await mapSalesPeer(s,{owner:ledger.owner,peer:'example_peer',party:'party1',confirmed:true,revision:ledger.revision},ledger.owner);
+ const classify=async (importOnly=true,extra={})=>{
+  const current=await readSalesLedger(s,'example_owner');
+  return classifyImportOnlyPeer(s,{owner:current.owner,peer:'other_peer',importOnly,confirmed:true,revision:current.revision,...extra},current.owner);
+ };
+ const projection=async records=>{
+  const current=await readSalesLedger(s,'example_owner');
+  return salesKpiProjection(current,records,'2026-10',current.mappings,now);
+ };
+ assert.equal((await projection(manual)).linkageReason,'identity_mapping_required');
+ await reject(()=>classify(true,{confirmed:false}),'invalid_classification');
+ await reject(()=>classify(true,{revision:0}),'stale_revision');
+ await reject(()=>classify(true,{peer:'example_peer'}),'mapping_conflict');
+ await reject(()=>classify(true,{peer:'unseen_peer'}),'peer_not_found');
+ await classify();
+ assert.deepEqual((await projection(manual)).combined.monthly,{new_dm:1,reply:2,zoom_invite:0});
+ assert.deepEqual((await projection(manual)).combined.cohort,{new_dm:1,reply:1,zoom_invite:0});
+ assert.deepEqual(await s.doc('workspace'),previous);
+ ledger=await readSalesLedger(s,'example_owner');
+ await reject(()=>mapSalesPeer(s,{owner:ledger.owner,peer:'other_peer',party:'newparty',confirmed:true,revision:ledger.revision},ledger.owner),'mapping_conflict');
+ const newManual=[...manual,{id:'m2',party:'newparty',type:'reply',date:'2026-10-23'}];
+ s.rows.set('workspace',{body:JSON.stringify({salesKpiRecords:newManual}),revision:5});
+ const paused=await projection(newManual);
+ assert.equal(paused.combined,null);
+ assert.equal(paused.linkageReason,'import_only_reconfirmation_required');
+ assert.equal(paused.imported.monthly.reply,2);
+ await classify();
+ assert.equal((await projection(newManual)).combined.monthly.reply,3);
+ await classify(false);
+ assert.equal((await projection(newManual)).combined,null);
+ ledger=await readSalesLedger(s,'example_owner');
+ assert.equal(ledger.events.length,3);
+ assert.equal(ledger.mappings.example_peer,'party1');
+});
+
+test('classification revision is guarded and canceled evidence cannot be newly classified',async()=>{
+ const s=await setup();
+ await importSalesEvents(s,batch(),'example_owner',now);
+ const l=await readSalesLedger(s,'example_owner');
+ const args={owner:l.owner,peer:'example_peer',importOnly:true,confirmed:true,revision:l.revision};
+ s.races=1;
+ await reject(()=>classifyImportOnlyPeer(s,args,l.owner),'concurrent_change_retry');
+ const current=await readSalesLedger(s,l.owner);
+ await voidSalesEvent(s,{owner:l.owner,key:l.events[0].key,revision:current.revision,reason:'duplicate'},l.owner,now);
+ await reject(()=>classifyImportOnlyPeer(s,{...args,revision:current.revision+1},l.owner),'peer_not_found');
 });
